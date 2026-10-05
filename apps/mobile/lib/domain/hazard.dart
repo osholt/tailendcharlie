@@ -12,6 +12,15 @@ enum HazardType {
   policeActivity,
   speedCamera,
   other,
+
+  /// A rider's one-tap "heads up" to the group (#849). It could be police, a
+  /// camera or anything else, so it deliberately says none of them.
+  ///
+  /// Appended, never reordered, and **never written to the wire under its own
+  /// name**: see [HazardReportWire]. An older build decodes a hazard's `type` with
+  /// `HazardType.values.byName`, which throws on a name it does not know, and the
+  /// journal replays that decode on every restart.
+  alert,
 }
 
 extension HazardTypeLabel on HazardType {
@@ -27,16 +36,20 @@ extension HazardTypeLabel on HazardType {
     HazardType.policeActivity => 'Police activity',
     HazardType.speedCamera => 'Speed camera',
     HazardType.other => 'Other hazard',
+    HazardType.alert => 'Alert',
   };
 }
 
-/// Everything a rider can raise from the app. Enforcement sightings are
-/// included: they are first-hand observations by the rider making the report,
-/// which is a different thing from redistributing a provider's data, and they
-/// are the reports the group most wants to receive.
+/// Everything a rider can raise from the app.
+///
+/// [HazardType.alert] is the one-tap warning that replaced the choice between a
+/// speed camera and the police (#849). It is a first-hand observation by the
+/// rider making it, which is a different thing from redistributing a provider's
+/// data. [HazardType.speedCamera] and [HazardType.policeActivity] are no longer
+/// offered, but stay in the enum: a build that still sends them is in a tester's
+/// hands, and they are still read, warned about and logged as alerts.
 const riderReportableHazardTypes = <HazardType>[
-  HazardType.speedCamera,
-  HazardType.policeActivity,
+  HazardType.alert,
   HazardType.pothole,
   HazardType.looseSurface,
   HazardType.debris,
@@ -85,6 +98,40 @@ extension HazardReportProvenance on HazardReport {
   bool get isStandingRecord =>
       source == HazardSource.externalProvider &&
       standingRecordProviderIds.contains(providerId);
+}
+
+/// How a [HazardReport] is written for, and read from, the wire (#849).
+///
+/// The wire is shared with builds already in testers' hands. 1.0.1+101 decodes a
+/// hazard's `type` with `HazardType.values.byName`, which throws on a name it has
+/// never heard of, and the ride journal replays that decode every time the ride
+/// restarts - so one unknown name in one relayed event would not just drop that
+/// event, it would stop the ride opening on that phone.
+///
+/// An alert is therefore written as an ordinary `other` hazard carrying one extra
+/// key, `kind: alert`. Every older build ignores the key and shows "Other hazard"
+/// at the right place; this build reads the key and knows it for an alert. A
+/// hazard with no `kind` - which is everything an older build writes, police and
+/// cameras included - decodes exactly as it always did.
+abstract final class HazardReportWire {
+  /// The extra key, and the value of it, that makes an `other` hazard an alert.
+  static const kindKey = 'kind';
+  static const alertKind = 'alert';
+
+  /// The `type` an alert carries on the wire: a name every build can decode.
+  static const alertWireType = 'other';
+
+  static String typeFor(HazardType type) =>
+      type == HazardType.alert ? alertWireType : type.name;
+
+  /// The type a decoded hazard has, whatever build wrote it.
+  ///
+  /// The kind marker wins over `type`, so a later build may choose a different
+  /// legacy-safe `type` for an alert without this one misreading it.
+  static HazardType typeFrom(Map<String, Object?> json) =>
+      json[kindKey] == alertKind
+      ? HazardType.alert
+      : HazardType.values.byName(json['type']! as String);
 }
 
 class HazardReport {
@@ -149,7 +196,9 @@ class HazardReport {
   Map<String, Object?> toJson() => {
     'id': id,
     'rideId': rideId,
-    'type': type.name,
+    'type': HazardReportWire.typeFor(type),
+    if (type == HazardType.alert)
+      HazardReportWire.kindKey: HazardReportWire.alertKind,
     'severity': severity.name,
     'position': position.toJson(),
     'reportedAt': reportedAt.toUtc().toIso8601String(),
@@ -166,7 +215,7 @@ class HazardReport {
   factory HazardReport.fromJson(Map<String, Object?> json) => HazardReport(
     id: json['id']! as String,
     rideId: json['rideId']! as String,
-    type: HazardType.values.byName(json['type']! as String),
+    type: HazardReportWire.typeFrom(json),
     severity: HazardSeverity.values.byName(json['severity']! as String),
     position: GeoPoint.fromJson(
       Map<String, Object?>.from(json['position']! as Map),
@@ -199,6 +248,10 @@ class HazardExpiryPolicy {
       // for the whole group, so these expire faster than a road defect.
       HazardType.speedCamera => const Duration(hours: 2),
       HazardType.policeActivity => const Duration(hours: 1),
+      // An alert may be either of those, and a rider cannot say which. It takes
+      // the shorter of the two: a stale one raises a warning for the whole group,
+      // and an hour is long enough for the riders behind to reach it (#849).
+      HazardType.alert => const Duration(hours: 1),
       HazardType.collision ||
       HazardType.stoppedVehicle => const Duration(hours: 2),
       HazardType.looseSurface ||

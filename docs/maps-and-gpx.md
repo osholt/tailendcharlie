@@ -20,7 +20,9 @@ coarser privacy-oriented z17 contribution cells.
 
 The daytime map has two saved settings: **Restrained** applies Tail End
 Charlie's quieter road-first repaint to OpenFreeMap Liberty, while **Original**
-keeps the provider's daytime colours and labels. They use the same vector tile
+keeps the provider's daytime colours and labels, with deeper and wider road
+outlines ([#841](#road-edges-in-daylight-841)) and no POI label that is a source
+identifier ([#860](#provider-labels-never-show-an-identifier-860)). They use the same vector tile
 source and offline tile cache; only their small style-document caches are kept
 separate so switching cannot serve the wrong palette.
 
@@ -86,6 +88,14 @@ only come from the server's separately authenticated moderation pipeline.
 
 Highlights are descriptive planning aids, not safety endorsements. Riders must
 check signs, closures, restrictions, weather, surface and current conditions.
+
+The layers are for choosing where to go, so they are drawn while browsing free
+roam, planning a route and reviewing one, and are hidden while a route is being
+followed, in a started ride or in free roam (#846). The orange and blue
+highlights sat beside the route line and read as part of it. Hiding them never
+changes the rider's saved layer choices - only what is drawn - so they return as
+chosen when navigation ends. The decision is
+`discoveryLayersShownIn` in `lib/features/map/discovery_layer_visibility.dart`.
 
 ## Riding display
 
@@ -171,18 +181,46 @@ The small glance surfaces have fixed homes:
 
 | corner | portrait | landscape |
 | --- | --- | --- |
-| top leading | ride menu; route progress immediately below | ride menu |
-| top centre | — | current time |
-| top trailing | group overview | speed sign |
-| bottom trailing | — | route progress, recovery, junction card, group overview |
+| top leading | ride menu | ride menu |
+| top centre | current time | current time |
+| top trailing | compass and speed sign | compass and speed sign |
+| bottom | the band: everything else | route progress, recovery, junction card, group overview (left and right rails) |
 
-The portrait route-progress card is at most 210 logical pixels wide (and no more
-than 54% of the safe viewport); landscape reuses the existing 230-pixel right
-rail. The portrait card also carries the current time, while landscape keeps the
-clock in its small top-centre position. These are *glances*, never targets. The
-centre and upper-middle remain empty, and moving the group overview out of the
-portrait bottom band stops the camera's forward bias paying for a surface nobody
-acts on.
+**Portrait keeps every navigational surface in the bottom band (#848).** The route
+progress card and the group overview used to float 154 pixels below the top row,
+which on a mounted phone is the middle of the road ahead; a tester on Android
+reported that together they covered the map and the rider's own bike. They are
+now part of the band the camera frames the marker above, and the only things
+above the marker are the three corner glances in the table. The route progress is
+a one-row strip across the top of the band (`RouteProgressPanel.strip`): time and
+distance left and the arrival time, with the next stop on a row of its own only
+when it is a stop before the destination, and the way out of free-roam navigation
+where there is one. The group overview shares the row of targets, hard against the
+trailing edge, so it costs the band almost no height; on a narrow phone it scales
+down rather than overflow. Landscape is unchanged: its rails already kept both
+clear of the rider.
+
+A leader has one more target, TELL GROUP (#854). Beside REPORT it made the targets
+288 points wide and left the overview 81 points on a 393 point phone - the phone
+and the rider it is on for by default - so in portrait the two stack as one 96
+wide column exactly as tall as the SOS-over-LEAVE pair (56 + 8 + 56), REPORT level
+with SOS and TELL GROUP level with LEAVE. A leader's row is then two columns of
+targets and the overview, as everyone else's is: 150 wide on a 393 or 430 point
+phone, 135 on an SE and 120 on a 360 point one, which is the floor the layout test
+asserts. Nobody else has TELL GROUP, so nobody else's REPORT changes - it stays the
+96 point square - and landscape keeps the two side by side.
+
+**The group mini-map can be turned off in Settings (#850), per device.** With no
+choice made it is on for the leader and the Tail End Charlie and off for everyone
+else, and that default follows the rider's role as it changes - hand someone the
+lead mid-ride and the overview appears. Choosing either way is the rider's own and
+outranks the role from then on, until they ask for the role default back. The
+setting stores the choice, never the default it overrode. Hidden, the overview is
+not built at all: the corner it sat in is open map again; where portrait draws it
+full size the band comes down by what it stood above the targets and the camera
+frames the marker lower (on a narrower phone it is scaled to sit inside the row of
+targets and cost the band nothing); and landscape's targets move in to take its
+place.
 
 Route progress is optional in Settings. Distance is projected along the same
 primary route geometry used by navigation. Time remaining and ETA use an
@@ -193,7 +231,8 @@ GPX waypoint ahead along the route; shaping points are not presented as stops,
 and an unnamed final point is labelled Destination.
 
 Everything else is bottom-anchored. Portrait is one band: urgent alerts, the TEC
-gap, then the turn banner, then the targets. Landscape splits into a left rail
+gap, the route progress strip, then the turn banner, then the targets with the
+group overview beside them. Landscape splits into a left rail
 (urgent alerts, TEC gap, turn banner, actions) and a right rail (recovery,
 junction marker card, group overview), leaving the centre column clear. Each rail
 is a single column, so placement stays deterministic and no surface can cover
@@ -275,6 +314,62 @@ after it) and still clamps to the 0.35 floor, because a paused-ride banner, an
 off-course alert, a turn banner with lane guidance and the TEC gap all live at
 once; shortening those belongs to the issues that own them.
 
+#### What bringing the ETA and the overview into the band cost (#848)
+
+The earlier rounds bought the camera look-ahead by moving surfaces *out of* the
+band, and some of that was bought by putting them over the road instead. The
+band is now taller again - by a one-row strip, and by the few pixels the
+overview's rider-count caption stands above the targets - and the road ahead is
+clear. The camera is the same: it measures the band, and the marker sits above it.
+`NavigationCameraPlanner` itself did not change; what changed is that nothing is
+left above the marker for it to miss.
+
+Measured with the Material fonts and the safe areas a phone has (iPhone 15:
+393x852 with 59/34 insets; SE: 375x667 with 20/0), without the development
+basemap's badge. "Rider" has no TEC card, "leader" has one. *Plain* is an
+ordinary turn banner; *rich* is a roundabout with lane guidance and a second turn
+close behind it, which is the tallest the banner gets. "Road ahead" is the space
+between the bottom of the top row and the top of the marker.
+
+| phone, size | banner | rider: band / road ahead | leader: band / road ahead |
+| --- | --- | --- | --- |
+| iPhone 15, Small | plain | 257 / 284 px (33%) | 297 / 244 px (29%) |
+| iPhone 15, Small | rich | 326 / 215 px (25%) | 366 / 175 px (21%) |
+| iPhone 15, Large | plain | 282 / 259 px (30%) | 322 / 219 px (26%) |
+| iPhone 15, Large | rich | 351 / 190 px (22%) | 391 / 150 px (18%) |
+| iPhone SE, Small | plain | 257 / 183 px (27%) | 297 / 143 px (21%) |
+| iPhone SE, Small | rich | 326 / 114 px (17%) | 366 / 87 px (13%) |
+| iPhone SE, Large | rich | 351 / 94 px (14%) | 391 / 62 px (9%) |
+
+The marker is above the band by at least a marker's height and a margin in every
+row, and `portrait_chrome_layout_test.dart` asserts that - for four phones, all
+three sizes, three text scales, rider and leader - along with the stronger
+statement that every navigational surface is below the marker. The worst row,
+a leader on an SE at Large with the richest banner, leaves 62 pixels of road
+ahead; the marker is still uncovered, and the camera gives up look-ahead before
+it gives up the marker.
+
+Before and after, rendered by the widget tests with the Material fonts and each
+phone's safe areas, over the route-only fallback map (so they say nothing about
+the basemap): the marker is pushed to the top of an SE by the floating cards in
+the leader case, and sits clear in the same place after.
+
+![iPhone 15, before and after](images/portrait-band-iphone15.png)
+
+![iPhone SE, before and after](images/portrait-band-iphone-se.png)
+
+![Android 360x800, before and after](images/portrait-band-android.png)
+
+**The chrome stops following the system text size.** The Riding display size
+multiplies the system text scale rather than replacing it, and uncapped, Large at
+a 2.0 system scale made the band 849 pixels tall on an 844-pixel phone: taller
+than the phone, so no framing could keep the marker above it. The chrome now
+follows the system setting up to 1.3 (iOS Dynamic Type's ordinary range, Android's
+Large and Largest), and to a combined 1.65 times the Small size, which is what
+Large already is - so Large holds the system scale at 1.0 and Small and Medium
+keep 1.3. Anyone who wants bigger asks for it by Riding display size.
+`rideChromeTextScaleCeiling` is the one place that says so.
+
 Landscape navigation also shows a compact group overview above the primary
 turn-by-turn map. It uses a second, throttled view of the configured MapLibre
 style, fits the latest known rider locations, distinguishes the local rider,
@@ -339,9 +434,10 @@ and at ride zoom the casing is wider than the whole carriageway. What changed
 adjacency is casing-against-road, which *improved* — 2.50:1 → 4.54:1 over a
 motorway, 1.61:1 → 2.21:1 over a lane. The floor that makes the bare column
 acceptable is the light basemap, which ships and is field-legible: its white and
-cream road fills put the worst of these five lines at 1.04:1, against 1.50:1 on
-the new dark basemap. Daylight is harsher on every one of these colours than
-night now is.
+cream road fills put the worst of these five lines at 1.12:1 (1.00:1 until #841
+re-edged the roads, when the leader trail shared a luminance with the old road
+casing), against 1.50:1 on the new dark basemap. Daylight is harsher on every one
+of these colours than night now is.
 
 ### The full ride-map ink audit
 
@@ -391,9 +487,15 @@ The five route lines are separated by only 1.03–1.75:1 in luminance, which is
 unavoidable when a dark basemap needs every one of them light. Width and dash
 pattern carry that separation and must not be flattened.
 
-The leader's trail is the widest line and is drawn beneath the planned route, so
-the group's ground truth stays visible without hiding the plan. Off-route trails
-are drawn above it, because they are the deviation from it.
+The leader's trail is the widest line, and it is painted over every route line -
+the orange travelled track, the route ahead and an off-route trail - and under the
+rider markers, so a follower can always see the purple line that shows how far
+ahead the leader is. It used to be painted beneath the route lines, which hid it
+wherever the two overlapped (#842). The rejoin route stays on top of it, because
+that is the line the rider is being asked to follow right now. Both ride-map
+renderers (flutter_map on iOS, MapLibre on Android) read one order,
+`RouteTrailStyle.lineOrder`, and the group overview paints the same sequence:
+route, the leader's trail, then riders.
 
 The route ahead is green rather than cyan because cyan belongs to the rejoin
 breadcrumb, and those are the two lines that both mean "go this way" and appear
@@ -402,6 +504,146 @@ because the light basemap's trunk roads are already `#FFEEAA`: the line would
 vanish into the road it is drawn on. The closest remaining pairs by luminance
 alone are route ahead against rejoin (1.16) and route ahead against the leader
 trail (1.03); hue separates the first and width and pattern separate both.
+
+### Rider markers and the native map's image density (#843, #844)
+
+A rider marker is the same size and in the same colours on every map. The
+flutter_map renderer (iOS) draws it with `RiderMarkerBadge`; the MapLibre
+renderer (Android) draws it with two symbol layers - a coloured badge shape and
+the glyph over it - from images the app rasterises and registers. Colours for
+both, and for the group overview, come from `RideMapPalette`
+(`lib/features/map/ride_map_palette.dart`).
+
+**MapLibre divides every registered image by a pixel ratio, and on Android that
+ratio is the device's density.** The plugin decodes Android image bytes with
+`inDensity = 0`, which leaves the bitmap at `Bitmap.getDefaultDensity()` (the
+device's density, not 160), and MapLibre takes `density / 160` as the image's
+pixel ratio. iOS does the same with `UIScreen.scale`. So an image's logical size
+is `width / pixelRatio` before `icon-size` is applied. The Dart side used to
+assume one to one on Android: the badge shape was rasterised at its logical size
+and came out `1 / density` of it, while the glyph's `icon-size` was a constant
+tuned on one phone. At three pixels to a dp that was a tiny coloured disc under a
+bike glyph that was larger than it - the "squashed flies" in Becks's screenshot.
+
+The rule now, in `motorcycle_icon.dart` and `_nativeMarkerPixelRatio`:
+
+- images are rasterised for `MediaQuery.devicePixelRatioOf` (the badge shape at
+  `144 * ratio` pixels), and
+- every `icon-size` is a logical size multiplied by that ratio and divided by the
+  image's own width: `riderGlyphIconSize` (a bike is `riderGlyphBoxFill`, 0.62,
+  of the badge, as `RiderMarkerBadge` draws it) and `riderInitialsIconSize` (an
+  initials or emoji raster is a 128 pixel square mapped onto the badge).
+
+The badge's outline is MapLibre's `icon-halo`, and a halo can only be as wide as
+the shape's distance field holds: the SDF encodes six units outside the edge, the
+shader draws `icon-halo-width / icon-size` of them, and asked for more it fills
+the whole image - the solid dark square (white for the local rider) behind every
+Android rider marker until #843. `riderBadgeHaloWidth` keeps the outline inside
+that, at about one logical pixel on a 34 badge: what the flutter_map badge's two
+pixel stroke shows outside its edge.
+
+The badge shape also faces the camera (`icon-pitch-alignment: viewport`). The
+navigation camera is tilted 51 to 58 degrees, and a symbol that lies on the map
+is foreshortened by that tilt: the disc came out an ellipse about 1.8 times
+wider than tall, with the bike glyph (already facing the camera) standing over it
+and overflowing it. iOS has no tilt and draws a circle. The shape is still
+rotated with the map, so a pointer keeps the rider's heading on the ground as the
+camera turns.
+
+The other-rider badge is a 34 box and the local rider's a 38 box on both
+renderers, so a marker is the size of its iOS twin on any density.
+`rider_marker_density_test.dart` reads the recorded images and layers at seven
+pixel ratios and asserts those logical sizes. One caveat the tests cannot cover:
+if the rider has changed Android's display size, Flutter's ratio moves and the
+bitmap default does not, and a marker is off by that factor like every other
+native symbol.
+
+**The trail arrows and the hazard badges follow the same rule (#900).** They were
+sized by constants tuned on a ratio of about one: the arrows' `icon-size` was 0.15
+and the badges' `1 / hazardMapSymbolRasterScale`, so on a three-pixel phone an
+arrow was about seven logical pixels where iOS draws eighteen, and every camera,
+police sighting, road defect and one-tap alert badge was fourteen where iOS draws
+forty-four. Now:
+
+- an arrow's `icon-size` is `iconGlyphIconSize(glyphSize:, pixelRatio:)`, which
+  makes the glyph `RouteTrailStyle.directionArrowSize` logical pixels - the `size`
+  of the `Icon` flutter_map draws - at any density, on the live map and on a
+  recorded ride's map;
+- a badge's is `hazardMapSymbolIconSize(pixelRatio:)`, which makes it
+  `HazardMapSymbols.extentPixels`, the size of the Flutter badge; and
+- the arrow's dark edge is a second, larger, dark copy of it drawn underneath
+  (`RouteTrailStyle.directionArrowCasingScale`), not an `icon-halo`. The arrow's
+  image is a plain mask rather than a distance field, so a halo of two pixels was
+  nothing at the right size and a solid square behind every arrow at any other,
+  which is what the old constant produced on the emulator.
+
+`arrow_hazard_density_test.dart` reads the recorded images and layers at seven
+pixel ratios and compares the arrow's ink, in logical pixels, with the ink of the
+`Icon` rendered at its size, and each badge's width with the Flutter badge's.
+
+### The leader and the Tail End Charlie are stars (#845)
+
+A rider's colour says who they are (#250); the shape of their marker says what
+they are to the group. The leader and the Tail End Charlie are stars and everyone
+else is a circle, on every map the app draws: the flutter_map markers, the
+MapLibre layers and the group overview's three renderers. The roster's list badge
+and the symbol picker stay circles, because they are not map markers and the
+roster already says "Lead" and "TEC" in words.
+
+**Who is a star** is one pure function,
+`riderMarkerOutlineFor(role:, isEffectiveTec:, inGroup:)` in
+`lib/domain/rider_marker_outline.dart`:
+
+- the lead is a star;
+- the Tail End Charlie *the ride resolved* is a star, whatever their own role
+  says. A leader's accepted request wins over an older self-selection (#128), so
+  two riders can claim the role in the journal while the group has one back; the
+  shell passes `_effectiveTecRiderIds`, not the claim, so the map never draws two
+  backs; and
+- a ride of one (`RideCoordinationMode.solo`) has neither, so its only marker is
+  a circle even though the creator holds the lead role.
+
+The shell reads it per rider when it builds the overlay markers and for this
+phone's own marker in `build`, so a handover, a leader's TEC request being
+accepted or a rider leaving changes the shape on the next update, with nobody
+moving.
+
+**The shapes** are in `RiderMarkerShapePainter`. A resting star has five equal
+points. A moving one turns with the heading like the circle's pointer does, but
+a five-pointed star turns into itself every 72 degrees and could not say which
+way the bike is going, so it leads with one longer point. As a share of the half
+box: resting points reach 1.06, a moving star's four other points 1.02 and its
+front 1.26, and the valleys 0.66 in both. The points reach past the box the
+circle fills on purpose. At 34 pixels a star whose points are no longer than its
+body is wide reads as a pentagon (the first version, at 0.94 against 0.66, did on
+the Android emulator), and a star that were smaller than the circle would be the
+less conspicuous marker.
+
+The valleys are not a style choice either. The glyph inside stays upright while
+the shape turns, so it has to fit at every heading, and
+`rider_marker_outline_test.dart` measures it: every pixel of every bike, at every
+ten degrees of heading, must be inside the shape. At 0.62 a wheel of the scooter
+spills half a pixel; at 0.66 nothing does. The shape's outline and fill are the
+same palette as the circle's (the dark casing, a white edge for this phone's own
+marker), so it reads on the light and the dark basemap for the same reason the
+circle does: the light fill carries it on the dark one and the dark edge on the
+light one.
+
+**On Android** the MapLibre badge layer chooses its image with one expression,
+`riderShapeImageExpression`, from the feature's `outline` property and whether it
+has a `bearing`: four images, circle and star each pointed or neutral. The two
+star images are distance fields that take a frame or two to rasterise, so they
+are registered the first time a marker needs one (`_ensureRiderSymbolImages`),
+not for every ride. The local rider's position source is rewritten when only
+their role changes (`didUpdateWidget`), because it is otherwise only written
+when they move.
+
+**Not covered.** CarPlay and Android Auto do not share this source: their map
+canvases are drawn natively (`CarPlaySceneDelegate.swift`'s `CarPlayRiderAnnotation`
+and `ProjectedMapRenderer.kt`'s `drawRider`) from a snapshot that carries `role`
+and `isTec` per rider, as circles with a ring for the TEC. Stars there are a
+native follow-up and are not claimed. The ride recap draws no rider markers (its
+map has a start and an end), so there is nothing to change.
 
 ### The light basemap
 
@@ -418,6 +660,120 @@ and airport symbol layer are removed. Route geometry remains dominant through
 its near-black casing, which measures above 8:1 against every declared light
 surface. The palette and hierarchy live in
 `MapStyleRepository.lightBasemapPalette` and are held by repository tests.
+
+#### Road edges in daylight (#841)
+
+After the 4 October group ride a tester on Android found roads hard to pick out
+in the light map, and the same was true on iOS in both daytime styles. (The
+Android screenshot attached to #860 draws the provider's POI symbols, which only
+Original draws, so at least that report came from Original.) The cause is the
+road's *edge*, not its fill. No
+palette can separate a white or cream fill from a warm off-white ground: every
+fill measures 1.0–1.2:1 against it. What tells a lane from the field it crosses
+is its casing, and the casing was thin and pale. The provider draws it only
+1.5–2.25 px wider than the road in total — 0.75–1.1 px a side — at the zooms the
+ride camera uses, MapLibre z13.4–14.7 (`NavigationCameraPlanner`). Restrained
+painted every class that casing the same grey, `#C4C5C1`, 1.55:1 against its
+ground. Original's lane edge, `#CFCDCA`, is 1.45:1.
+
+**What changed.** Only the edge, in both styles:
+
+- **Restrained:** each casing takes the colour of its class. They share one
+  lightness, CIE L\* 70.5, and chroma climbs with the class (`#ACADA7` for a lane
+  to `#BBAA8E` for a motorway), so an edge says what it edges the way the fill
+  tints do. Ramps, bridges and tunnels carry the edge of their class.
+- **Original:** a lane's edge, `#CFCDCA`, deepens to `#AEACA9`, the same warm hue
+  at L\* 70.5. The orange edges of the larger roads keep the provider's colour.
+  Ground, fills, symbols and every other layer are the provider's, as #489
+  promised, and so are its labels apart from the identifier guard (#860, below).
+- **Both:** the edge is one pixel wider from zoom 14, 0.75–1.1 px a side becoming
+  1.25–1.6. Each width table is the provider's own stops plus one pixel, so
+  everything below zoom 13 keeps the provider's curve and every zoom from 14 up
+  is exactly one pixel wider.
+- **Not touched:** the ground, every fill, every road *width*, service roads,
+  tracks and paths. #776 widened bright roads on the dark map and field
+  validation found they obscured the route, so the carriageway stays as the
+  provider drew it and only its outline grows.
+
+Measured on the real OpenFreeMap Liberty paint at z14, WCAG 2.1 ratio and CIE L\*
+of the edge against the ground (`#F3F2ED` in Restrained, `#F8F4F0` in Original):
+
+Restrained
+
+| class | fill | edge, before → after | edge : ground | ΔL\* | px a side |
+| --- | --- | --- | --- | --- | --- |
+| lane (minor) | `#FEFDF9` | `#C4C5C1` → `#ACADA7` | 1.55 → **2.02** | 16.1 → **25.0** | 0.75 → **1.25** |
+| tertiary | `#FCF9ED` | `#C4C5C1` → `#AFADA4` | 1.55 → **2.01** | 16.1 → **24.8** | 0.88 → **1.38** |
+| secondary | `#F8F2DD` | `#C4C5C1` → `#B2AC9C` | 1.55 → **2.02** | 16.1 → **25.0** | 0.88 → **1.38** |
+| primary | `#F4E9CF` | `#C4C5C1` → `#B5AC97` | 1.55 → **2.01** | 16.1 → **24.9** | 0.81 → **1.31** |
+| trunk | `#F1E2C2` | `#C4C5C1` → `#B8AB93` | 1.55 → **2.02** | 16.1 → **25.0** | 0.81 → **1.31** |
+| motorway | `#EEDBB6` | `#C4C5C1` → `#BBAA8E` | 1.55 → **2.02** | 16.1 → **25.1** | 0.81 → **1.31** |
+| service, track | `#F7F6F1` | `#C4C5C1`, unchanged | 1.55 | 16.1 | 0.50 |
+
+Original
+
+| class | fill | edge, before → after | edge : ground | ΔL\* | px a side |
+| --- | --- | --- | --- | --- | --- |
+| lane (minor) | `#FFFFFF` | `#CFCDCA` → `#AEACA9` | 1.45 → **2.07** | 13.9 → **26.0** | 0.75 → **1.25** |
+| tertiary, secondary | `#FFEEAA` | `#E9AC77`, colour unchanged | 1.80 | 21.5 | 0.88 → **1.38** |
+| primary, trunk | `#FFEEAA` | `#E9AC77`, colour unchanged | 1.80 | 21.5 | 0.81 → **1.31** |
+| motorway | `#FFCC88` | `#E9AC77`, colour unchanged | 1.80 | 21.5 | 0.81 → **1.31** |
+| service, track | `#FFFFFF` | `#CFCDCA`, unchanged | 1.45 | 13.9 | 0.50 |
+
+The edge width is the same at the other riding zooms: a lane gains half a pixel a
+side at each of z13.85, 14.0, 14.65 and 16 (0.89 → 1.31, 0.75 → 1.25, 0.77 →
+1.27, 0.81 → 1.31), a secondary road 0.86 → 1.28 to 1.13 → 1.63. Against the
+darkest ground a road crosses at riding zoom, a building, a Restrained edge
+rises from 1.27:1 to 1.64–1.65:1 and an Original lane edge from 1.13:1 to 1.61:1.
+`light_basemap_road_edges_test.dart` recomputes every figure here from the
+recorded provider paint (`test/fixtures/openfreemap_liberty_roads.json`), so the
+tables cannot drift from the style.
+
+**The route, and why the edge is not darker.** L\* 70.5 is as dark as an edge can
+be while the route's own near-black casing, `#10151C`, still measures 8:1 against
+it (8.07–8.15:1 across the seven Restrained edges, 8.09:1 for the Original lane).
+A test holds that above 8:1 against every colour either light style paints on a
+road, because the route has to stay the strongest line on the map. A darker edge
+would carry further in glare; it would also start to compete with the route.
+Nothing a route line or a marker is drawn *over* got lighter or darker except
+these edges. The one contrast that moved is the route casing against a road
+casing, from 10.56:1 against the old `#C4C5C1` to about 8.1:1. The worst bare
+pair of route colour and light surface rose from 1.00:1 to 1.12:1, only because
+the leader trail no longer shares a luminance with the road casing.
+
+**What glare does to this** is a model, not a measurement. A phone in direct sun
+adds a roughly constant veiling luminance to every pixel. That compresses any
+*ratio* but leaves a luminance *difference* alone, so the figure to watch is the
+luminance gap between edge and ground, which grows from 0.33 to 0.47 for a
+Restrained lane and from 0.30 to 0.50 for an Original lane. With a veil of half
+the screen's white, the edge's Weber contrast (gap over ground plus veil) rises
+from 0.24 to 0.34 in Restrained (+42%) and from 0.21 to 0.35 in Original (+67%).
+A white fill never could have carried this: it sits within 1.1:1 of the ground
+at any veil.
+
+**What it looks like.** Real OpenFreeMap tiles through the repainted style, in
+the app, on the iOS Simulator (iPhone 15 Pro, iOS 17.5) and the Android emulator
+(Android 14), before and after. Each is a debug build of this change and of the
+commit it branched from, with the simulated location set over a market town. The
+home map opens at zoom 14, which is inside the riding range, with no tilt. The
+lanes that were white threads are outlined, in both styles, on both platforms.
+
+![iOS, Restrained and Original, before and after](images/light-basemap-road-edges-ios.png)
+
+![Android, Restrained and Original, before and after](images/light-basemap-road-edges-android.png)
+
+The frames below are **not** the app. They are the same repainted styles drawn by
+MapLibre GL JS at the ride camera's zoom 14.65 and 51° tilt, with a route line in
+the app's own values (a 6 px `#3DDC84` long-dashed line inside its 10 px
+`#10151C` casing). They are here because the route is the thing the edge must not
+compete with, and it does not: it is still the only dark, saturated line on the
+map.
+
+![Riding tilt with a route, before and after](images/light-basemap-road-edges-route.png)
+
+**Not verified.** No frame here is daylight and none is a mounted phone. The
+field check #841 asks for, a photograph or a tester's confirmation in direct
+sunlight on both platforms, is still owed.
 
 ### The dark basemap
 
@@ -1022,6 +1378,91 @@ overview. MapLibre attribution remains visible at bottom leading: it is a
 licence condition, not decoration. CarPlay's recenter, pan, report and SOS
 targets remain platform-managed `CPMapButton`s, so their trailing-edge placement
 is intentionally not replaced with app-drawn phone controls.
+
+## Provider labels never show an identifier (#860)
+
+A screenshot from the 4 October group ride (Android, Aust services) showed a
+fuel-pump symbol labelled `Gridserve` followed by a UUID. A rider should never
+see an internal or source identifier, so this records where that text came from,
+why it was in the tile, and what now stops it.
+
+### Where the text came from
+
+Not from anything this repository generates. The label is the `name` of a point
+of interest in OpenFreeMap's `poi` tile layer, drawn by the provider's Liberty
+style (`poi_r1`, `poi_r7`, `poi_r20`: italic grey text beside a sprite icon, which
+is how it looks in the screenshot). Only the Original daytime map draws these
+labels: the Restrained repaint removes every provider POI layer and the dark
+style has none.
+
+None of the bundled catalogues is involved. The biker-place catalogue, the
+discovery catalogue and the route-place index carry no label that is an
+identifier, and `tools/discovery/tests/test_published_labels.py` now says so for
+every label field in them, including the website's copy of the discovery
+catalogue.
+
+### Why an identifier was in the tile
+
+The OpenStreetMap relation behind that charging station has `brand=Gridserve`,
+`operator=Gridserve` and `ref=09981d11-e3db-…`, the Location ID in Gridserve's
+open-data feed, and **no `name`**. OpenFreeMap builds its tiles with the
+OpenMapTiles profile for Planetiler. Its `Poi` layer gives an unnamed charging
+station or parcel locker a name made of its brand (or operator) and its `ref`
+(`BRAND_OPERATOR_REF_SUBCLASSES` in `Poi.java`), so the tile says
+`Gridserve 09981d11-e3db-479d-82cb-088d4dc046ba` and the style draws it.
+
+The same rule gives `bp pulse FC18642`, `InPost UKLON00047` and `ESB Energy
+UT02D9`. It applies to those two kinds and no others. In 441 zoom-14 tiles around
+nine areas of Great Britain there were 225 distinct charging-station and
+parcel-locker names, 26 of them containing a digit. All but one of those (a street
+address) are a brand and a reference, and three are Gridserve UUIDs. A scan of 294
+of those tiles, holding 147,783 POIs of every kind, found no UUID in the name of
+any other kind of POI. The fixture `test/fixtures/openfreemap_poi_names.json`
+records 35 of these attribute sets as published.
+
+### What stops it now
+
+`ProviderLabelGuard` wraps the label of every provider POI layer (any layer drawn
+from the `poi` source layer) in the default Liberty style:
+
+- a charging station or parcel locker whose name contains a digit is labelled by
+  what it is, **EV charging** or **Parcel locker**;
+- one whose name has no digit keeps it (`BP Pulse`, `Amazon Locker`);
+- every other kind of POI is untouched, so a café called `1915` still reads
+  `1915`, and an unnamed POI stays unlabelled.
+
+The tile carries no separate brand, so the fallback after the name is the generic
+type. A name cannot be told from an assembled reference by inspection, hence the
+digit rule, which errs towards hiding: it also turns the street-address name
+`42-14 Lancaster Grove` on a charging station into `EV charging`. Nothing else
+loses a label.
+
+It lives in `MapStyleRepository.applyPresentation`, so it covers a fresh download,
+a cached style upgraded offline, the offline manager and CarPlay. Custom styles are
+not rewritten. Native MapLibre gets an expression that searches the name for a
+digit. The Flutter vector renderer (route previews and the ride library) parses a
+smaller expression language and cannot search a string, so it is handed a portable
+version that labels the two kinds by type, always.
+
+![The guard drawn by MapLibre GL JS over sample POIs: the provider's label in red, the guarded label in black](images/provider-poi-label-guard.png)
+
+On MapLibre Native, through the app's own style pipeline (a debug harness, not the
+ride screen), at the Aust site on the Original map at zoom 17.2: the provider's own
+label before, the guarded one after. The Android frame reproduces the field
+screenshot, and every other POI on the screen is unchanged.
+
+![iOS and Android, before and after](images/provider-poi-label-devices.png)
+
+### What this does not fix
+
+- **The data.** The OpenStreetMap relation (19196996) has no `name`, and the tile
+  rule is upstream. Adding a `name` to the relation, for example its `ref_name`,
+  would fix that one site at the source; it needs an OpenStreetMap account, so it is
+  for the owner to do. The upstream rule affects every such charge point.
+- **The website planner** draws the same provider style and the same label. It is
+  not covered here.
+- **Daylight, a mounted phone, a ride.** The evidence is a render of the expression
+  and the app's map at the site, not a ride past it.
 
 ## MapLibre provider configuration
 

@@ -169,8 +169,8 @@ void main() {
     });
   });
 
-  group('a route has to start somewhere', () {
-    testWidgets('with no position, the sheet says so before any choice', (
+  group('a missing fix never blocks a destination (#847)', () {
+    testWidgets('with no position the sheet says so, and results still work', (
       tester,
     ) async {
       final search = _FakeSearch({
@@ -181,16 +181,19 @@ void main() {
           ),
         ],
       });
+      HomeSearchOutcome? outcome;
 
-      await _pumpSheet(tester, search, (_) {}, hasPosition: false);
+      await _pumpSheet(
+        tester,
+        search,
+        (value) => outcome = value,
+        hasPosition: false,
+      );
 
-      // Said up front rather than discovered as a failure after choosing solo or
-      // group, which is the point at which it would be annoying.
       expect(
         find.byKey(const Key('home-search-needs-position')),
         findsOneWidget,
       );
-
       await tester.enterText(
         find.byKey(const Key('home-search-field')),
         'bath',
@@ -198,10 +201,15 @@ void main() {
       await tester.tap(find.byKey(const Key('home-search-submit')));
       await tester.pumpAndSettle();
 
+      // The plan's start row waits for a fix or takes a chosen place, so the
+      // destination no longer has to wait for "Show my location".
       final row = tester.widget<ListTile>(
         find.byKey(const Key('home-search-result-Bath, Somerset')),
       );
-      expect(row.enabled, isFalse);
+      expect(row.enabled, isTrue);
+      await tester.tap(find.text('Bath, Somerset'));
+      await tester.pumpAndSettle();
+      expect(outcome, isA<HomeSearchDestination>());
     });
   });
 

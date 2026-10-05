@@ -13,6 +13,7 @@ import '../../controllers/completed_rides_controller.dart';
 import '../../controllers/map_style_mode_controller.dart';
 import '../../controllers/ride_code_preference_controller.dart';
 import '../../controllers/ride_controller.dart';
+import '../../controllers/mini_map_display_controller.dart';
 import '../../controllers/route_progress_display_controller.dart';
 import '../../controllers/rider_profile_controller.dart';
 import '../../controllers/shared_route_controller.dart';
@@ -24,24 +25,30 @@ import '../../domain/completed_ride.dart';
 import '../../domain/imported_route.dart' show GeoPoint, ImportedRoute;
 import '../../domain/map_style_mode.dart';
 import '../../services/road_routing.dart';
+import '../../services/verified_road_routing.dart';
 import 'home_destination_search.dart';
 import 'home_map_backdrop.dart';
+import 'ride_with_others_sheet.dart';
 import 'scan_invitation_screen.dart';
 import '../../controllers/test_control_controller.dart';
 import '../../domain/join_invite.dart';
 import '../../domain/recorded_route_store.dart';
+import '../../domain/route_store.dart';
+import '../../data/json_file_route_store.dart';
 import '../../domain/ride_coordination_mode.dart';
+import '../../domain/ride_plan.dart';
 import '../../internet/plan_directory.dart';
 import '../../services/build_identity.dart';
 import '../../services/basemap_configuration.dart';
 import '../../services/carplay_bridge.dart';
 import '../../services/carplay_route_preview.dart';
 import '../../services/gpx_import_source.dart';
+import '../../services/ride_plan_router.dart';
 import '../../services/route_importer.dart';
 import '../../services/stored_route_library.dart';
 import '../map/ride_map_feature.dart'
     show HostMapChrome, HostMapMenuAction, rideMapToolbarHeight;
-import '../map/destination_route_sheet.dart';
+import '../map/route_review_screen.dart';
 import '../map/stored_route_picker.dart';
 import '../ride/previous_rides_screen.dart';
 import '../ride/route_recorder_screen.dart';
@@ -101,6 +108,7 @@ class HomeScreen extends StatefulWidget {
     required this.sharedRoutes,
     required this.speedLimitDisplay,
     this.routeProgressDisplay,
+    this.miniMapDisplay,
     required this.recordedRoutes,
     required this.completedRides,
     this.globalRideHeatmap,
@@ -115,6 +123,7 @@ class HomeScreen extends StatefulWidget {
     this.onJoinGroupOpened,
     this.enableNativeServices = true,
     this.destinationPlanner,
+    this.freeRoamRouteStore,
   });
 
   final RideController controller;
@@ -125,6 +134,7 @@ class HomeScreen extends StatefulWidget {
   final SharedRouteController sharedRoutes;
   final SpeedLimitDisplayController speedLimitDisplay;
   final RouteProgressDisplayController? routeProgressDisplay;
+  final MiniMapDisplayController? miniMapDisplay;
   final RecordedRouteStore recordedRoutes;
   final CompletedRidesController completedRides;
   final GlobalRideHeatmapController? globalRideHeatmap;
@@ -158,6 +168,35 @@ class HomeScreen extends StatefulWidget {
 
   @visibleForTesting
   final DestinationRoutePlanner? destinationPlanner;
+
+  /// Free roam's route store, which Ride with others clears once the route
+  /// has moved into the ride. Null opens the app-wide default.
+  @visibleForTesting
+  final Future<RouteStore> Function()? freeRoamRouteStore;
+
+  /// The planner Home uses when none is injected.
+  ///
+  /// A function of its own so a test can hold it to the one thing it once got
+  /// wrong. It was built on OSRM alone, which cannot express a single route
+  /// preference, so "Avoid motorways" was dropped on the way to the router and
+  /// a route up the M5 was reviewed under a note saying motorways were excluded
+  /// (#858). It plans through the same preference-aware, checked routing as the
+  /// map does, and a route that could not be checked or re-planned around a
+  /// track could not be either (#840).
+  @visibleForTesting
+  static DestinationRoutePlanner defaultDestinationPlanner({
+    required http.Client client,
+    required RoutingConfiguration configuration,
+  }) => DestinationRoutePlanner(
+    searchService: NominatimDestinationSearchService(
+      client: client,
+      baseUrl: configuration.geocodingBaseUrl,
+    ),
+    routingService: buildPlanningRoutingService(
+      client: client,
+      configuration: configuration,
+    ),
+  );
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
@@ -201,6 +240,7 @@ class _HomeScreenState extends State<HomeScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) _publishHomeCarPlayState();
     });
+    _takeRouteFromGroup();
     if (widget.openJoinGroup) {
       _scheduleJoinGroupSheet();
       return;
@@ -208,13 +248,57 @@ class _HomeScreenState extends State<HomeScreen> {
     final choice = widget.riderProfile.takePendingRideChoice();
     if (choice != null) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) {
-          _showRideSheet(
-            context,
-            creating: choice == OnboardingRideChoice.create,
-          );
+        if (!mounted) return;
+        // "Create a ride" from onboarding is riding with others: there is no
+        // second, solo kind of ride to create on the phone any more (#847).
+        if (choice == OnboardingRideChoice.create) {
+          unawaited(_rideWithOthers());
+        } else {
+          unawaited(_showJoinSheet(context));
         }
       });
+    }
+  }
+
+  /// A route a rider is riding on with alone, handed back by the group ride
+  /// they left (#847). Free roam navigates it as it is: it was confirmed
+  /// already, and the rider is probably moving.
+  void _takeRouteFromGroup() {
+    final route = widget.sharedRoutes.takeFreeRoamRoute();
+    if (route == null) return;
+    _freeRoamRoute = PendingInAppRoute(route: route, reviewed: true);
+    _freeRoamRouteToken = Object();
+  }
+
+  /// Ride with others: one action that turns what this rider is doing into a
+  /// group ride (#847). A route on the map comes with them, and a rider who is
+  /// following it is not put back into a lobby: the ride starts at once and
+  /// navigation carries on.
+  Future<void> _rideWithOthers() async {
+    final route = _routeOnMap;
+    final controller = widget.controller;
+    final freeRoamRouteStore = widget.freeRoamRouteStore;
+    await RideWithOthersSheet.show(
+      context,
+      controller: controller,
+      riderProfile: widget.riderProfile,
+      route: route,
+      startNow: route != null,
+    );
+    if (route == null ||
+        !controller.hasActiveRide ||
+        !controller.coordinationMode.isGroup) {
+      return;
+    }
+    // The route moved into the ride. Free roam keeps its own copy on disk, and
+    // leaving it there would bring it back as navigation when the group ride
+    // is over.
+    try {
+      final store =
+          await (freeRoamRouteStore ?? JsonFileRouteStore.openDefault)();
+      await store.clearActiveRoute();
+    } on Object {
+      // Best effort: a route that comes back can still be stopped.
     }
   }
 
@@ -227,6 +311,9 @@ class _HomeScreenState extends State<HomeScreen> {
     if (!oldWidget.openJoinGroup && widget.openJoinGroup) {
       _scheduleJoinGroupSheet();
     }
+    if (widget.sharedRoutes.pendingFreeRoamRoute != null) {
+      setState(_takeRouteFromGroup);
+    }
   }
 
   void _scheduleJoinGroupSheet() {
@@ -235,7 +322,7 @@ class _HomeScreenState extends State<HomeScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       if (!mounted) return;
       widget.onJoinGroupOpened?.call();
-      await _showRideSheet(context, creating: false);
+      await _showJoinSheet(context);
       _joinGroupOpenScheduled = false;
     });
   }
@@ -290,6 +377,10 @@ class _HomeScreenState extends State<HomeScreen> {
   /// existing flow rather than growing a second implementation of it.
   Object? _circularRideRequestToken;
 
+  /// Bumped to reopen the free-roam route on the plan surface (#847). The map
+  /// owns the route and the surface, so Home only asks.
+  Object? _editRouteRequestToken;
+
   /// The route the free-roam map is following, if any.
   ///
   /// There is no lobby out here, so a route *is* the navigation: no start
@@ -305,20 +396,18 @@ class _HomeScreenState extends State<HomeScreen> {
   /// no more than one a second.
   final _routingClient = http.Client();
 
-  late final DestinationRoutePlanner _destinationPlanner = () {
-    if (widget.destinationPlanner case final planner?) return planner;
-    final configuration = RoutingConfiguration.fromEnvironment();
-    return DestinationRoutePlanner(
-      searchService: NominatimDestinationSearchService(
+  late final DestinationRoutePlanner _destinationPlanner =
+      widget.destinationPlanner ??
+      HomeScreen.defaultDestinationPlanner(
         client: _routingClient,
-        baseUrl: configuration.geocodingBaseUrl,
-      ),
-      routingService: OsrmRoadRoutingService(
-        client: _routingClient,
-        baseUrl: configuration.routingBaseUrl,
-      ),
-    );
-  }();
+        configuration: RoutingConfiguration.fromEnvironment(),
+      );
+
+  /// Routes the plan surface's plans through the destination planner's own
+  /// service, so a plan is routed exactly as a destination is (#847).
+  late final RidePlanRouter _planRouter = RidePlanRouter(
+    routingService: _destinationPlanner.routingService,
+  );
 
   BasemapConfiguration get _homeBasemap =>
       BasemapConfiguration.fromEnvironment().forBrightness(
@@ -563,6 +652,10 @@ class _HomeScreenState extends State<HomeScreen> {
             onCircularRideRequestHandled: () => setState(() {
               _circularRideRequestToken = null;
             }),
+            editRouteRequestToken: _editRouteRequestToken,
+            onEditRouteRequestHandled: () => setState(() {
+              _editRouteRequestToken = null;
+            }),
             navigating: _routeOnMap != null,
             localDisplayName: widget.riderProfile.displayName,
             onNavigationArchived: (ride) =>
@@ -578,12 +671,25 @@ class _HomeScreenState extends State<HomeScreen> {
             hostChrome: HostMapChrome(
               bottomInset: 0,
               menuActions: [
+                // Confirming a route is not final (#847). Offered from the
+                // menu, which the navigation canvas's menu button also opens,
+                // so it is reachable on the move as well as at a standstill.
+                if (_routeOnMap != null)
+                  HostMapMenuAction(
+                    id: 'home-edit-route',
+                    label: 'Edit route',
+                    icon: Icons.edit_road_outlined,
+                    onSelected: () =>
+                        setState(() => _editRouteRequestToken = Object()),
+                  ),
                 HostMapMenuAction(
                   id: 'home-create-ride',
-                  label: 'Create a group ride',
+                  // Carries the route on the map into the ride (#847). It
+                  // used to open a form that left the route behind.
+                  label: 'Ride with others',
                   icon: Icons.groups_2_outlined,
                   onSelected: _rideEntryEnabled
-                      ? () => unawaited(_showRideSheet(context, creating: true))
+                      ? () => unawaited(_rideWithOthers())
                       : null,
                 ),
                 HostMapMenuAction(
@@ -652,9 +758,7 @@ class _HomeScreenState extends State<HomeScreen> {
                           ),
                         ),
                         onPressed: _rideEntryEnabled
-                            ? () => unawaited(
-                                _showRideSheet(context, creating: false),
-                              )
+                            ? () => unawaited(_showJoinSheet(context))
                             : null,
                         icon: const Icon(Icons.group_add_outlined, size: 16),
                         label: const Text('Join'),
@@ -775,6 +879,7 @@ class _HomeScreenState extends State<HomeScreen> {
     widget.riderProfile,
     speedLimitDisplay: widget.speedLimitDisplay,
     routeProgressDisplay: widget.routeProgressDisplay,
+    miniMapDisplay: widget.miniMapDisplay,
     testControl: widget.testControl,
     spokenGuidance: widget.spokenGuidance,
     rideDiagnostics: widget.rideDiagnostics,
@@ -812,13 +917,14 @@ class _HomeScreenState extends State<HomeScreen> {
         await _navigateTo(choice);
       case HomeSearchHandoff(:final kind):
         switch (kind) {
-          // Both of these are the existing form, which already knows how to take
-          // a six-digit ride code and a planner route code. #431 is about the way
-          // in, not about replacing what works once you are there.
+          // Joining takes a six-digit code, so it stays the join form.
           case HomeSearchHandoffKind.joinWithCode:
-            await _showRideSheet(context, creating: false);
+            await _showJoinSheet(context);
+          // A planned route is a route, not a ride: it is reviewed and ridden
+          // in free roam like an imported GPX, and riding it with others is a
+          // choice made afterwards (#847).
           case HomeSearchHandoffKind.plannedRouteCode:
-            await _showRideSheet(context, creating: true);
+            await _recallPlannedRoute();
           case HomeSearchHandoffKind.storedRoute:
             await _openRideLibrary(context);
           case HomeSearchHandoffKind.circularRide:
@@ -827,81 +933,80 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  /// Plans a route to the chosen place and hands it to the map.
+  /// Opens the plan surface on a route to the chosen place (#847).
   ///
-  /// No ride is created. A rider who searched for somewhere to go said nothing
-  /// about riding with anybody, and the app used to answer that by making a
-  /// ride — with a coordination mode it had to ask for — before it would show
-  /// a route (#600). Riding with others is offered from the map afterwards,
-  /// once there is a route to bring along, which keeps the #546 ordering:
-  /// the route exists before the ride that carries it.
+  /// The start is the rider's location unless they change it there, and a
+  /// missing fix does not stop a destination being chosen: the start row says
+  /// it is waiting, and offers a place instead. The text form that used to sit
+  /// between the search and the route is gone; stops, the start and route
+  /// options are all edited on the surface that shows the route.
+  ///
+  /// No ride is created for a solo plan. A rider who searched for somewhere to
+  /// go said nothing about riding with anybody (#600), and the map navigates
+  /// the confirmed route as it is, without a second review (#624). Choosing a
+  /// group on the plan creates the ride with the route already in it.
   Future<void> _navigateTo(DestinationChoice choice) async {
-    final request = await DestinationRouteSheet.show(
+    final outcome = await RouteReviewScreen.showPlan(
       context,
-      initialRequest: DestinationPlanRequest(query: choice.label),
-    );
-    if (request == null || !mounted) return;
-    final origin = _position.value;
-    final hasStartQuery = (request.startQuery ?? '').trim().isNotEmpty;
-    if (origin == null && !hasStartQuery) return;
-    setState(() => _planningDestination = true);
-    try {
-      final plan = await _destinationPlanner.planForReview(
-        origin: origin,
-        originQuery: request.startQuery,
-        stopQueries: request.stopQueries,
-        query: request.query,
-        selectedDestination: request.query.trim() == choice.label
-            ? DestinationMatch(label: choice.label, point: choice.point)
-            : null,
-        distanceUnit: widget.distanceUnits.value,
-        preferences: request.preferences,
-      );
-      if (!mounted) return;
-      setState(() {
-        _freeRoamRoute = PendingInAppRoute(
-          route: plan.route,
-          reviewNotes: plan.warnings,
-          handoffTarget: request.handoffTarget,
-        );
-        _freeRoamRouteToken = Object();
-      });
-    } on Object catch (error) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            error is FormatException
-                ? error.message
-                : 'Could not plan a route there. Try again, or pick a different '
-                      'place.',
+      planning: RidePlanEditing(
+        plan: RidePlan.toDestination(
+          RidePlanPlace.fromSearchResult(
+            label: choice.label,
+            point: choice.point,
           ),
         ),
+        route: (plan, location) => _planRouter.route(
+          plan,
+          currentLocation: location,
+          distanceUnit: widget.distanceUnits.value,
+        ),
+        searchService: _destinationPlanner.searchService,
+        currentLocation: _position,
+        offerCoordinationChoice: true,
+        confirmLabel: (plan) => plan.isGroup ? 'Create group ride' : 'Start',
+      ),
+      distanceUnit: widget.distanceUnits.value,
+      basemapConfiguration: _planBasemap,
+    );
+    if (outcome == null || !mounted) return;
+    if (outcome.plan.isGroup) {
+      await RideWithOthersSheet.show(
+        context,
+        controller: widget.controller,
+        riderProfile: widget.riderProfile,
+        route: outcome.route,
+        coordinationMode: outcome.plan.coordinationMode,
       );
-    } finally {
-      if (mounted) setState(() => _planningDestination = false);
+      return;
     }
+    setState(() {
+      _freeRoamRoute = PendingInAppRoute(route: outcome.route, reviewed: true);
+      _freeRoamRouteToken = Object();
+    });
   }
 
-  Future<void> _showRideSheet(
-    BuildContext context, {
-    required bool creating,
-    PendingInAppRoute? pendingInAppRoute,
-  }) async {
+  /// The plan surface's map. A build without the platform map — widget tests,
+  /// plugin-less builds — gets the route-only preview the review already has.
+  BasemapConfiguration get _planBasemap =>
+      widget.enableNativeServices ? _homeBasemap : const BasemapConfiguration();
+
+  /// The join form: a six-digit code, a paste, or an invitation to scan.
+  ///
+  /// It used to create rides too, with a Solo/Group choice, a ride name and a
+  /// planned-route code in front of any route (#847). Solo is free roam now,
+  /// a group ride is Ride with others carrying the route, and a planned-route
+  /// code is reviewed in free roam, so joining is all this form does.
+  Future<void> _showJoinSheet(BuildContext context) async {
     widget.controller.clearError();
     await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
       useSafeArea: true,
       backgroundColor: const Color(0xFF171D25),
-      builder: (sheetContext) => _RideForm(
+      builder: (sheetContext) => _JoinForm(
         controller: widget.controller,
         rideCodePreference: widget.rideCodePreference,
         riderProfile: widget.riderProfile,
-        sharedRoutes: widget.sharedRoutes,
-        planDirectory: widget.planDirectory,
-        creating: creating,
-        pendingInAppRoute: pendingInAppRoute,
         onComplete: () => Navigator.of(sheetContext).pop(),
       ),
     );
@@ -926,14 +1031,60 @@ class _HomeScreenState extends State<HomeScreen> {
     );
     if (selection == null || !mounted) return;
     final prepared = library.prepare(selection);
-    await _showRideSheet(
-      context,
-      creating: true,
-      pendingInAppRoute: PendingInAppRoute(
-        route: prepared.route,
-        reviewNotes: prepared.notes,
-      ),
+    // Into free roam's review, as a GPX import is, rather than a ride form
+    // in front of it: choosing a saved route used to create a ride before the
+    // rider could see it (#847).
+    _reviewInFreeRoam(
+      PendingInAppRoute(route: prepared.route, reviewNotes: prepared.notes),
     );
+  }
+
+  /// Hands a route to the free-roam map's review.
+  void _reviewInFreeRoam(PendingInAppRoute route) => setState(() {
+    _freeRoamRoute = route;
+    _freeRoamRouteToken = Object();
+  });
+
+  /// Fetches a web-planner route by its code and reviews it in free roam.
+  Future<void> _recallPlannedRoute() async {
+    final code = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => const _PlanCodeDialog(),
+    );
+    if (code == null || code.trim().isEmpty || !mounted) return;
+    final owned = widget.planDirectory == null
+        ? HttpPlanDirectory.fromEnvironment()
+        : null;
+    try {
+      final plan = await (widget.planDirectory ?? owned!).fetch(code.trim());
+      final route = RouteImporter(source: const SystemGpxImportSource())
+          .importFromFile(
+            PickedGpxFile(
+              name: '${plan.name ?? 'planned-route'}.gpx',
+              bytes: Uint8List.fromList(utf8.encode(plan.gpx)),
+            ),
+          );
+      if (!mounted) return;
+      _reviewInFreeRoam(PendingInAppRoute(route: route));
+    } on PlanDirectoryException catch (error) {
+      _showSnack(error.message);
+    } on FormatException catch (error) {
+      _showSnack(error.message);
+    } on Object {
+      _showSnack(
+        'The planned route could not be loaded. Check your connection and '
+        'try again.',
+      );
+    } finally {
+      owned?.close();
+    }
+  }
+
+  void _showSnack(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
   }
 
   Future<void> _showSavedNavigation(CompletedRide ride) async {
@@ -1030,6 +1181,58 @@ class _HomeScreenState extends State<HomeScreen> {
       );
     }
   }
+}
+
+/// Asks for a web-planner code. Its own widget so its text controller is
+/// disposed with it.
+class _PlanCodeDialog extends StatefulWidget {
+  const _PlanCodeDialog();
+
+  @override
+  State<_PlanCodeDialog> createState() => _PlanCodeDialogState();
+}
+
+class _PlanCodeDialogState extends State<_PlanCodeDialog> {
+  final _controller = TextEditingController();
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+    title: const Text('Recall a planned route'),
+    content: TextField(
+      key: const Key('recall-plan-code-field'),
+      controller: _controller,
+      autofocus: true,
+      textCapitalization: TextCapitalization.characters,
+      maxLength: 16,
+      inputFormatters: [
+        FilteringTextInputFormatter.allow(RegExp('[A-Za-z0-9]')),
+        LengthLimitingTextInputFormatter(16),
+      ],
+      decoration: const InputDecoration(
+        labelText: 'Plan code',
+        hintText: 'e.g. 7F3K9QRT',
+        helperText: 'From the web planner',
+      ),
+      onSubmitted: (value) => Navigator.of(context).pop(value),
+    ),
+    actions: [
+      TextButton(
+        onPressed: () => Navigator.of(context).pop(),
+        child: const Text('Cancel'),
+      ),
+      FilledButton(
+        key: const Key('recall-plan-code-load'),
+        onPressed: () => Navigator.of(context).pop(_controller.text),
+        child: const Text('Load'),
+      ),
+    ],
+  );
 }
 
 class _RideRestorationBanner extends StatelessWidget {
@@ -1280,51 +1483,32 @@ class _PlannerLinkStatusBanner extends StatelessWidget {
   );
 }
 
-class _RideForm extends StatefulWidget {
-  const _RideForm({
+class _JoinForm extends StatefulWidget {
+  const _JoinForm({
     required this.controller,
     required this.rideCodePreference,
     required this.riderProfile,
-    required this.sharedRoutes,
-    required this.planDirectory,
-    required this.creating,
     required this.onComplete,
-    this.pendingInAppRoute,
   });
 
   final RideController controller;
   final RideCodePreferenceController rideCodePreference;
   final RiderProfileController riderProfile;
-  final SharedRouteController sharedRoutes;
-  final PlanDirectory? planDirectory;
-  final bool creating;
   final VoidCallback onComplete;
-  final PendingInAppRoute? pendingInAppRoute;
 
   @override
-  State<_RideForm> createState() => _RideFormState();
+  State<_JoinForm> createState() => _JoinFormState();
 }
 
-class _RideFormState extends State<_RideForm> with WidgetsBindingObserver {
+class _JoinFormState extends State<_JoinForm> with WidgetsBindingObserver {
   late final _nameController = TextEditingController(
     text: widget.riderProfile.displayName,
   );
   late final _codeController = TextEditingController(
-    text: widget.creating ? null : widget.rideCodePreference.savedCode,
+    text: widget.rideCodePreference.savedCode,
   );
-  final _rideNameController = TextEditingController();
-  final _planCodeController = TextEditingController();
   final _codeFocusNode = FocusNode();
   final _codeFieldKey = GlobalKey();
-  RideCoordinationMode _selectedCoordinationMode =
-      RideCoordinationMode.secondBikeDropOff;
-
-  /// Set once a created ride's code needs sharing before handing off to the
-  /// map - the moment a leader most needs it, with people waiting nearby.
-  bool _showShareStep = false;
-  bool _checkingPlanCode = false;
-  String? _planCodeError;
-  PickedGpxFile? _pendingPlanFile;
 
   /// Captured when pasted text includes a join token alongside the six
   /// digits - see [parseJoinInvite]. Typing the code by hand leaves this
@@ -1345,19 +1529,11 @@ class _RideFormState extends State<_RideForm> with WidgetsBindingObserver {
     _codeFocusNode.dispose();
     _nameController.dispose();
     _codeController.dispose();
-    _rideNameController.dispose();
-    _planCodeController.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    if (_showShareStep) {
-      return _ShareCodeStep(
-        controller: widget.controller,
-        onContinue: _finishCreating,
-      );
-    }
     return AnimatedBuilder(
       animation: Listenable.merge([
         widget.controller,
@@ -1378,115 +1554,15 @@ class _RideFormState extends State<_RideForm> with WidgetsBindingObserver {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               Text(
-                widget.creating ? 'Create a private ride' : 'Join your group',
+                'Join your group',
                 style: Theme.of(context).textTheme.headlineMedium,
               ),
               const SizedBox(height: 8),
-              Text(
-                widget.creating
-                    ? 'You will become the ride lead and get a six-digit code to share.'
-                    : 'Enter the six-digit code shared by the ride lead. You need a connection once to join, then the app keeps using the secure relay.',
-                style: const TextStyle(color: Color(0xFFABB5C1)),
+              const Text(
+                'Enter the six-digit code shared by the ride lead. You need a connection once to join, then the app keeps using the secure relay.',
+                style: TextStyle(color: Color(0xFFABB5C1)),
               ),
               const SizedBox(height: 24),
-              if (widget.creating) ...[
-                Text(
-                  'Who is riding?',
-                  style: Theme.of(context).textTheme.titleMedium,
-                ),
-                const SizedBox(height: 8),
-                SegmentedButton<bool>(
-                  key: const Key('ride-scope-selector'),
-                  segments: const [
-                    ButtonSegment(
-                      value: false,
-                      icon: Icon(Icons.person_outline),
-                      label: Text('Solo'),
-                    ),
-                    ButtonSegment(
-                      value: true,
-                      icon: Icon(Icons.groups_2_outlined),
-                      label: Text('Group'),
-                    ),
-                  ],
-                  selected: {_selectedCoordinationMode.isGroup},
-                  onSelectionChanged: (selection) => setState(() {
-                    _selectedCoordinationMode = selection.first
-                        ? RideCoordinationMode.secondBikeDropOff
-                        : RideCoordinationMode.solo;
-                  }),
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  _selectedCoordinationMode == RideCoordinationMode.solo
-                      ? RideCoordinationMode.solo.description
-                      : 'Choose how this group will handle junctions.',
-                  style: const TextStyle(
-                    color: Color(0xFFABB5C1),
-                    fontSize: 13,
-                  ),
-                ),
-                if (_selectedCoordinationMode.isGroup) ...[
-                  const SizedBox(height: 12),
-                  RadioGroup<RideCoordinationMode>(
-                    groupValue: _selectedCoordinationMode,
-                    onChanged: (value) {
-                      if (value != null) {
-                        setState(() => _selectedCoordinationMode = value);
-                      }
-                    },
-                    child: Column(
-                      children: [
-                        for (final mode in const [
-                          RideCoordinationMode.secondBikeDropOff,
-                          RideCoordinationMode.keepTogether,
-                        ])
-                          RadioListTile<RideCoordinationMode>(
-                            key: Key('ride-mode-${mode.name}'),
-                            contentPadding: EdgeInsets.zero,
-                            value: mode,
-                            title: Text(mode.label),
-                            subtitle: Text(mode.description),
-                          ),
-                      ],
-                    ),
-                  ),
-                ],
-                const SizedBox(height: 12),
-                TextField(
-                  controller: _rideNameController,
-                  maxLength: 32,
-                  textCapitalization: TextCapitalization.words,
-                  decoration: const InputDecoration(
-                    labelText: 'Ride name (optional)',
-                    hintText: 'e.g. Sunday coast run',
-                    counterText: '',
-                  ),
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  key: const Key('planned-route-code-field'),
-                  controller: _planCodeController,
-                  textCapitalization: TextCapitalization.characters,
-                  textInputAction: TextInputAction.next,
-                  autocorrect: false,
-                  maxLength: 16,
-                  inputFormatters: [
-                    FilteringTextInputFormatter.allow(RegExp('[A-Za-z0-9]')),
-                    LengthLimitingTextInputFormatter(16),
-                  ],
-                  decoration: InputDecoration(
-                    labelText: 'Planned route code (optional)',
-                    hintText: 'e.g. 7F3K9QRT',
-                    helperText:
-                        'From the web planner. The route opens for review after the ride is created.',
-                    errorText: _planCodeError,
-                    counterText: '',
-                    suffixIcon: const Icon(Icons.qr_code),
-                  ),
-                ),
-                const SizedBox(height: 12),
-              ],
               TextField(
                 key: const Key('rider-name-field'),
                 controller: _nameController,
@@ -1500,100 +1576,98 @@ class _RideFormState extends State<_RideForm> with WidgetsBindingObserver {
                   counterText: '',
                 ),
               ),
-              if (!widget.creating) ...[
-                const SizedBox(height: 12),
-                KeyedSubtree(
-                  key: _codeFieldKey,
-                  child: TextField(
-                    key: const Key('ride-code-field'),
-                    controller: _codeController,
-                    focusNode: _codeFocusNode,
-                    scrollPadding: const EdgeInsets.only(bottom: 112),
-                    keyboardType: TextInputType.number,
-                    textInputAction: TextInputAction.done,
-                    onSubmitted: (_) {
-                      if (!widget.controller.busy) _submit();
-                    },
-                    autocorrect: false,
-                    maxLength: 6,
-                    inputFormatters: [
-                      FilteringTextInputFormatter.digitsOnly,
-                      LengthLimitingTextInputFormatter(6),
-                    ],
-                    decoration: InputDecoration(
-                      labelText: 'Six-digit ride code',
-                      hintText: '123456',
-                      helperText: widget.rideCodePreference.savedCode == null
-                          ? null
-                          : 'Saved from your last successful join',
-                      counterText: '',
-                      // Scanning sits beside pasting rather than replacing it.
-                      // A camera is the only join path that works with no signal
-                      // (#279), and must never become the only path at all.
-                      suffixIcon: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          IconButton(
-                            key: const Key('scan-invitation-button'),
-                            tooltip: 'Scan an invitation code',
-                            onPressed: _scanInvitation,
-                            icon: const Icon(Icons.qr_code_scanner),
-                          ),
-                          IconButton(
-                            tooltip: 'Paste ride code',
-                            onPressed: _pasteRideCode,
-                            icon: const Icon(Icons.content_paste),
-                          ),
-                        ],
-                      ),
+              const SizedBox(height: 12),
+              KeyedSubtree(
+                key: _codeFieldKey,
+                child: TextField(
+                  key: const Key('ride-code-field'),
+                  controller: _codeController,
+                  focusNode: _codeFocusNode,
+                  scrollPadding: const EdgeInsets.only(bottom: 112),
+                  keyboardType: TextInputType.number,
+                  textInputAction: TextInputAction.done,
+                  onSubmitted: (_) {
+                    if (!widget.controller.busy) _submit();
+                  },
+                  autocorrect: false,
+                  maxLength: 6,
+                  inputFormatters: [
+                    FilteringTextInputFormatter.digitsOnly,
+                    LengthLimitingTextInputFormatter(6),
+                  ],
+                  decoration: InputDecoration(
+                    labelText: 'Six-digit ride code',
+                    hintText: '123456',
+                    helperText: widget.rideCodePreference.savedCode == null
+                        ? null
+                        : 'Saved from your last successful join',
+                    counterText: '',
+                    // Scanning sits beside pasting rather than replacing it.
+                    // A camera is the only join path that works with no signal
+                    // (#279), and must never become the only path at all.
+                    suffixIcon: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        IconButton(
+                          key: const Key('scan-invitation-button'),
+                          tooltip: 'Scan an invitation code',
+                          onPressed: _scanInvitation,
+                          icon: const Icon(Icons.qr_code_scanner),
+                        ),
+                        IconButton(
+                          tooltip: 'Paste ride code',
+                          onPressed: _pasteRideCode,
+                          icon: const Icon(Icons.content_paste),
+                        ),
+                      ],
                     ),
                   ),
                 ),
-                // The same action as the camera icon in the field above, said
-                // out loud.
-                //
-                // #279 shipped QR joining and #306 found it had not been
-                // delivered: the owner concluded it was missing entirely,
-                // because the only affordance was an unlabelled icon and a
-                // tooltip, and a tooltip does not appear when you tap a phone.
-                // The icon stays for riders who have learned it; this is the
-                // one a rider who has never seen the app can read.
+              ),
+              // The same action as the camera icon in the field above, said
+              // out loud.
+              //
+              // #279 shipped QR joining and #306 found it had not been
+              // delivered: the owner concluded it was missing entirely,
+              // because the only affordance was an unlabelled icon and a
+              // tooltip, and a tooltip does not appear when you tap a phone.
+              // The icon stays for riders who have learned it; this is the
+              // one a rider who has never seen the app can read.
+              Align(
+                alignment: Alignment.centerLeft,
+                child: TextButton.icon(
+                  key: const Key('scan-invitation-labelled-button'),
+                  onPressed: _scanInvitation,
+                  icon: const Icon(Icons.qr_code_scanner),
+                  label: const Text('Scan an invitation code'),
+                ),
+              ),
+              CheckboxListTile(
+                key: const Key('keep-ride-code'),
+                contentPadding: EdgeInsets.zero,
+                dense: true,
+                controlAffinity: ListTileControlAffinity.leading,
+                value: widget.rideCodePreference.keepCode,
+                onChanged: (value) {
+                  if (value != null) {
+                    widget.rideCodePreference.setKeepCode(value);
+                  }
+                },
+                title: const Text('Keep this code for next time'),
+                subtitle: const Text(
+                  'Only the six-digit code is saved. Invitation secrets are not.',
+                ),
+              ),
+              if (widget.rideCodePreference.savedCode != null)
                 Align(
                   alignment: Alignment.centerLeft,
                   child: TextButton.icon(
-                    key: const Key('scan-invitation-labelled-button'),
-                    onPressed: _scanInvitation,
-                    icon: const Icon(Icons.qr_code_scanner),
-                    label: const Text('Scan an invitation code'),
+                    key: const Key('forget-saved-ride-code'),
+                    onPressed: _forgetSavedCode,
+                    icon: const Icon(Icons.delete_outline),
+                    label: const Text('Forget saved code'),
                   ),
                 ),
-                CheckboxListTile(
-                  key: const Key('keep-ride-code'),
-                  contentPadding: EdgeInsets.zero,
-                  dense: true,
-                  controlAffinity: ListTileControlAffinity.leading,
-                  value: widget.rideCodePreference.keepCode,
-                  onChanged: (value) {
-                    if (value != null) {
-                      widget.rideCodePreference.setKeepCode(value);
-                    }
-                  },
-                  title: const Text('Keep this code for next time'),
-                  subtitle: const Text(
-                    'Only the six-digit code is saved. Invitation secrets are not.',
-                  ),
-                ),
-                if (widget.rideCodePreference.savedCode != null)
-                  Align(
-                    alignment: Alignment.centerLeft,
-                    child: TextButton.icon(
-                      key: const Key('forget-saved-ride-code'),
-                      onPressed: _forgetSavedCode,
-                      icon: const Icon(Icons.delete_outline),
-                      label: const Text('Forget saved code'),
-                    ),
-                  ),
-              ],
               if (widget.controller.errorMessage case final String message) ...[
                 const SizedBox(height: 12),
                 Text(
@@ -1608,7 +1682,7 @@ class _RideFormState extends State<_RideForm> with WidgetsBindingObserver {
                     alignment: Alignment.centerLeft,
                     child: TextButton.icon(
                       key: const Key('retry-ride-submit'),
-                      onPressed: widget.controller.busy || _checkingPlanCode
+                      onPressed: widget.controller.busy
                           ? null
                           : () {
                               widget.controller.clearError();
@@ -1621,15 +1695,13 @@ class _RideFormState extends State<_RideForm> with WidgetsBindingObserver {
               ],
               const SizedBox(height: 22),
               FilledButton(
-                onPressed: widget.controller.busy || _checkingPlanCode
-                    ? null
-                    : _submit,
-                child: widget.controller.busy || _checkingPlanCode
+                onPressed: widget.controller.busy ? null : _submit,
+                child: widget.controller.busy
                     ? const SizedBox.square(
                         dimension: 22,
                         child: CircularProgressIndicator(strokeWidth: 2),
                       )
-                    : Text(widget.creating ? 'Create ride' : 'Join ride'),
+                    : const Text('Join ride'),
               ),
             ],
           ),
@@ -1640,67 +1712,22 @@ class _RideFormState extends State<_RideForm> with WidgetsBindingObserver {
 
   Future<void> _submit() async {
     final name = _nameController.text;
-    if (widget.creating) {
-      final code = _planCodeController.text.trim();
-      _pendingPlanFile = null;
-      if (code.isNotEmpty) {
-        setState(() {
-          _checkingPlanCode = true;
-          _planCodeError = null;
-        });
-        final ownedDirectory = widget.planDirectory == null
-            ? HttpPlanDirectory.fromEnvironment()
-            : null;
-        try {
-          final plan = await (widget.planDirectory ?? ownedDirectory!).fetch(
-            code,
-          );
-          _pendingPlanFile = PickedGpxFile(
-            name: '${plan.name ?? 'planned-route'}.gpx',
-            bytes: Uint8List.fromList(utf8.encode(plan.gpx)),
-          );
-        } on PlanDirectoryException catch (error) {
-          if (mounted) setState(() => _planCodeError = error.message);
-          return;
-        } on Object {
-          if (mounted) {
-            setState(
-              () => _planCodeError =
-                  'The planned route could not be loaded. Check your connection and try again.',
-            );
-          }
-          return;
-        } finally {
-          ownedDirectory?.close();
-          if (mounted) setState(() => _checkingPlanCode = false);
-        }
-      }
-      await widget.controller.createRide(
-        name,
-        motorcycleStyle: widget.riderProfile.motorcycleStyle,
-        riderSymbol: widget.riderProfile.riderSymbol,
-        riderColor: widget.riderProfile.riderColor,
-        coordinationMode: _selectedCoordinationMode,
-        rideName: _rideNameController.text,
-      );
-    } else {
-      final code = _codeController.text.trim();
-      await widget.controller.joinRide(
-        code,
-        name,
-        motorcycleStyle: widget.riderProfile.motorcycleStyle,
-        riderSymbol: widget.riderProfile.riderSymbol,
-        riderColor: widget.riderProfile.riderColor,
-        joinToken: _pastedJoinToken,
-      );
-      if (widget.controller.hasActiveRide) {
-        await widget.rideCodePreference.rememberSuccessfulJoin(code);
-      } else if (widget.controller.errorMessage?.startsWith(
-            'That ride code is not active.',
-          ) ??
-          false) {
-        await widget.rideCodePreference.clearIfInactive(code);
-      }
+    final code = _codeController.text.trim();
+    await widget.controller.joinRide(
+      code,
+      name,
+      motorcycleStyle: widget.riderProfile.motorcycleStyle,
+      riderSymbol: widget.riderProfile.riderSymbol,
+      riderColor: widget.riderProfile.riderColor,
+      joinToken: _pastedJoinToken,
+    );
+    if (widget.controller.hasActiveRide) {
+      await widget.rideCodePreference.rememberSuccessfulJoin(code);
+    } else if (widget.controller.errorMessage?.startsWith(
+          'That ride code is not active.',
+        ) ??
+        false) {
+      await widget.rideCodePreference.clearIfInactive(code);
     }
     if (widget.controller.hasActiveRide && mounted) {
       await widget.riderProfile.save(
@@ -1709,29 +1736,8 @@ class _RideFormState extends State<_RideForm> with WidgetsBindingObserver {
         riderSymbol: widget.riderProfile.riderSymbol,
         riderColor: widget.riderProfile.riderColor,
       );
-      if (widget.creating) {
-        if (_selectedCoordinationMode.isGroup) {
-          setState(() => _showShareStep = true);
-        } else {
-          _finishCreating();
-        }
-      } else {
-        widget.onComplete();
-      }
+      widget.onComplete();
     }
-  }
-
-  void _finishCreating() {
-    if (_pendingPlanFile case final file?) {
-      widget.sharedRoutes.stagePending(file);
-      _pendingPlanFile = null;
-    } else if (widget.pendingInAppRoute case final route?) {
-      widget.sharedRoutes.stagePendingInAppRoute(
-        route.route,
-        reviewNotes: route.reviewNotes,
-      );
-    }
-    widget.onComplete();
   }
 
   @override
@@ -1804,91 +1810,6 @@ class _RideFormState extends State<_RideForm> with WidgetsBindingObserver {
     _pastedJoinToken = invite.token;
     _codeController.text = code;
     _codeController.selection = TextSelection.collapsed(offset: code.length);
-  }
-}
-
-/// Shown immediately after creating a ride - the moment a leader most needs
-/// the code, with riders waiting nearby, rather than requiring a trip
-/// through the active Ride page to find it.
-class _ShareCodeStep extends StatelessWidget {
-  const _ShareCodeStep({required this.controller, required this.onContinue});
-
-  final RideController controller;
-  final VoidCallback onContinue;
-
-  @override
-  Widget build(BuildContext context) {
-    final session = controller.session;
-    final code = session?.rideCode ?? '';
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(24, 28, 24, 28),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          const Icon(Icons.check_circle, color: Color(0xFF6ED89A), size: 40),
-          const SizedBox(height: 16),
-          Text(
-            session?.rideName ?? 'Ride created',
-            style: Theme.of(context).textTheme.headlineMedium,
-          ),
-          const SizedBox(height: 8),
-          const Text(
-            'Share this code so the group can join.',
-            style: TextStyle(color: Color(0xFFABB5C1)),
-          ),
-          const SizedBox(height: 20),
-          Container(
-            padding: const EdgeInsets.symmetric(vertical: 18),
-            decoration: BoxDecoration(
-              color: const Color(0xFF111720),
-              borderRadius: BorderRadius.circular(14),
-              border: Border.all(color: const Color(0xFF2A3441)),
-            ),
-            child: Center(
-              child: Text(
-                code,
-                style: const TextStyle(
-                  fontWeight: FontWeight.w900,
-                  fontSize: 34,
-                  letterSpacing: 6,
-                ),
-              ),
-            ),
-          ),
-          const SizedBox(height: 16),
-          Row(
-            children: [
-              Expanded(
-                child: OutlinedButton.icon(
-                  onPressed: () => Clipboard.setData(ClipboardData(text: code)),
-                  icon: const Icon(Icons.copy_outlined),
-                  label: const Text('Copy'),
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: FilledButton.icon(
-                  onPressed: () => SharePlus.instance.share(
-                    ShareParams(
-                      text: controller.rideCodeShareText,
-                      subject: 'Join my Tail End Charlie group',
-                    ),
-                  ),
-                  icon: const Icon(Icons.ios_share),
-                  label: const Text('Share'),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 22),
-          TextButton(
-            onPressed: onContinue,
-            child: const Text('Continue to ride'),
-          ),
-        ],
-      ),
-    );
   }
 }
 

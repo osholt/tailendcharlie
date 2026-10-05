@@ -82,7 +82,9 @@ class _RideDiagnosticsSectionState extends State<RideDiagnosticsSection> {
             subtitle: const Text(
               'Writes down each turn instruction, when it was spoken, every alert, '
               'and this phone’s own route, so a wrong instruction can be explained '
-              'afterwards. No other rider’s position is recorded. Nothing is sent '
+              'afterwards. In a group ride it also counts how updates from other '
+              'riders reached this phone, by phone signal or by Bluetooth. No other '
+              'rider’s position is recorded, and no rider’s name. Nothing is sent '
               'anywhere until you choose a recipient when you share it.',
             ),
           ),
@@ -135,7 +137,7 @@ class _RideDiagnosticsSectionState extends State<RideDiagnosticsSection> {
                 contentPadding: EdgeInsets.zero,
                 dense: true,
                 leading: const Icon(Icons.description_outlined),
-                title: Text(log.rideCode ?? 'Ride ${log.rideId}'),
+                title: Text(log.title),
                 subtitle: Text(_when(log.writtenAt)),
                 trailing: const Icon(Icons.ios_share, size: 20),
                 enabled: !_sharing,

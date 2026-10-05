@@ -40,6 +40,35 @@ class RouteLineStyle {
       dashPixels?.map((value) => value / width).toList(growable: false);
 }
 
+/// Every route and trail line the ride map draws, named once so the renderers
+/// can share the order they paint them in ([RouteTrailStyle.lineOrder]).
+enum RideMapLine {
+  /// The planned route the rider has already covered.
+  riddenRoute(null),
+
+  /// Every recorded path except the leader's and an off-route rider's,
+  /// including the local rider's own.
+  riderTrail(RiderTrailKind.rider),
+
+  /// The planned route that has not been ridden yet.
+  remainingRoute(null),
+
+  /// A rider flagged as suspected off route, off route, or recovering.
+  offRouteTrail(RiderTrailKind.offRoute),
+
+  /// The leader's travelled path: the purple line that shows a follower how far
+  /// ahead the leader is.
+  leaderTrail(RiderTrailKind.leader),
+
+  /// The advisory rejoin route, and the route to the planned start.
+  rejoinTrail(RiderTrailKind.rejoin);
+
+  const RideMapLine(this.trailKind);
+
+  /// The recorded-trail kind this line draws, or null for a planned route.
+  final RiderTrailKind? trailKind;
+}
+
 /// Colour, weight and pattern for every kind of route and trail geometry on the
 /// ride map, plus the measurements that justify them.
 ///
@@ -88,6 +117,17 @@ class RouteTrailStyle {
 
   /// Opaque casing drawn under every route and trail line.
   static const casing = Color(0xFF10151C);
+
+  /// The size, in logical pixels, of a trail direction arrow on every map: the
+  /// `size` of the `Icon` flutter_map draws, and the size the native map's symbol
+  /// layer is derived to at any density (#900).
+  static const directionArrowSize = 18.0;
+
+  /// How much larger the dark copy under an arrow is drawn than the arrow, which
+  /// is its edge. A layer rather than an `icon-halo`: the arrow's image is a plain
+  /// mask rather than a distance field, so a halo of any width was either nothing
+  /// or, once it passed what the shader allows, a solid square behind the arrow.
+  static const directionArrowCasingScale = 1.25;
 
   /// [casing] as a MapLibre paint string; asserted to match in tests.
   static const casingHex = '#10151C';
@@ -139,11 +179,13 @@ class RouteTrailStyle {
     casingWidthPixels: 9,
   );
 
+  static const _leaderTrailColor = Color(0xFFD3B8FF);
+
   /// The leader's travelled path: the group's ground truth once the plan stops
-  /// matching the road, so it is the widest line on the map and is drawn under
-  /// the planned route rather than over it.
+  /// matching the road, so it is the widest line on the map. It is painted over
+  /// the route lines and under the rider markers (see [lineOrder], #842).
   static const leaderTrail = RouteLineStyle(
-    color: Color(0xFFD3B8FF),
+    color: _leaderTrailColor,
     widthPixels: 8,
     casingWidthPixels: 12,
   );
@@ -180,12 +222,47 @@ class RouteTrailStyle {
     casingWidthPixels: 5,
   );
 
+  /// The leader's trail on the group overview: [leaderTrail]'s colour at the
+  /// overview's weight, drawn over the route like it is on the main map (#842).
+  static const miniMapLeaderTrail = RouteLineStyle(
+    color: _leaderTrailColor,
+    widthPixels: 3,
+    casingWidthPixels: 5,
+  );
+
   static RouteLineStyle forTrail(RiderTrailKind kind) => switch (kind) {
     RiderTrailKind.rider => travelled,
     RiderTrailKind.leader => leaderTrail,
     RiderTrailKind.offRoute => offRouteTrail,
     RiderTrailKind.rejoin => rejoinBreadcrumb,
   };
+
+  /// Which line a trail of [kind] is, in [lineOrder].
+  static RideMapLine lineForTrail(RiderTrailKind kind) =>
+      RideMapLine.values.singleWhere((line) => line.trailKind == kind);
+
+  /// The order every ride-map renderer paints its lines in, bottom first.
+  ///
+  /// The route lines come first and the leader's trail is painted over them, so
+  /// the purple line that shows a follower how far ahead the leader is stays
+  /// visible where it runs along the orange travelled track and the route
+  /// ahead. It was painted beneath them, which hid it everywhere the two
+  /// overlapped (#842). Rider markers, direction arrows and waypoints are
+  /// separate layers drawn after every line here.
+  ///
+  /// The rejoin route stays last. It is the one line the rider is being asked to
+  /// follow right now, so nothing may cover it.
+  ///
+  /// Read by the MapLibre style set-up and by the flutter_map polyline layer, so
+  /// the Android and iOS renderers cannot drift apart again.
+  static const lineOrder = <RideMapLine>[
+    RideMapLine.riddenRoute,
+    RideMapLine.riderTrail,
+    RideMapLine.remainingRoute,
+    RideMapLine.offRouteTrail,
+    RideMapLine.leaderTrail,
+    RideMapLine.rejoinTrail,
+  ];
 
   /// Every badge fill a marker glyph is drawn on, so one test can hold the whole
   /// set against [markerGlyph] rather than each caller asserting its own.
@@ -258,6 +335,11 @@ class RouteTrailStyle {
 
   /// Surfaces of the restrained Liberty repaint. Its road fills remain light,
   /// so the casing is what defines a bright route line here.
+  ///
+  /// The two road casings are the darkest edge a road is drawn with (#841): the
+  /// commonest, and the one of the class with the lowest contrast against the
+  /// route's own casing. `map_style_repository_test.dart` holds this table to
+  /// the repository's palette, so it cannot drift from what is rendered.
   static const lightBasemapSurfaces = <String, Color>{
     'background': Color(0xFFF3F2ED),
     'minor road': Color(0xFFFEFDF9),
@@ -266,7 +348,8 @@ class RouteTrailStyle {
     'water': Color(0xFFD8E5EA),
     'park': Color(0xFFE5EADF),
     'building': Color(0xFFDEDCD6),
-    'major casing': Color(0xFFC4C5C1),
+    'minor casing': Color(0xFFACADA7),
+    'motorway casing': Color(0xFFBBAA8E),
   };
 }
 

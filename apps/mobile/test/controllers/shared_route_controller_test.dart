@@ -6,6 +6,7 @@ import 'package:ride_relay/domain/imported_route.dart';
 import 'package:ride_relay/internet/plan_directory.dart';
 import 'package:ride_relay/services/gpx_import_source.dart';
 import 'package:ride_relay/services/planner_link_channel.dart';
+import 'package:ride_relay/services/route_verification.dart';
 import 'package:ride_relay/services/shared_gpx_channel.dart';
 
 void main() {
@@ -141,6 +142,87 @@ void main() {
     controller.clearPending();
     expect(controller.pendingInAppRoute, isNull);
   });
+
+  test('a route handed to free roam is not a change to a ride route', () async {
+    // #847: riding on alone hands the group route to free roam. A ride's map
+    // takes `pendingInAppRoute` as a change to its own route, so this one is
+    // kept apart and taken once.
+    final controller = await SharedRouteController.load(
+      channel: const _NoGpxChannel(),
+      plannerLinkSource: _PlannerLinkSource([]),
+      planDirectory: _PlanDirectory(),
+    );
+    addTearDown(controller.dispose);
+    final route = ImportedRoute(
+      id: 'group-route',
+      name: 'To Town',
+      importedAt: DateTime.utc(2026, 10, 4),
+      sourceFileName: 'group-route.gpx',
+      paths: const [
+        RoutePath(
+          kind: RoutePathKind.track,
+          points: [
+            GeoPoint(latitude: 52, longitude: -1),
+            GeoPoint(latitude: 52.3, longitude: -1),
+          ],
+        ),
+      ],
+      waypoints: const [],
+    );
+    var notified = 0;
+    controller.addListener(() => notified += 1);
+
+    controller.stageFreeRoamRoute(route);
+
+    expect(notified, 1);
+    expect(controller.pendingInAppRoute, isNull);
+    expect(controller.pending, isNull);
+    expect(controller.takeFreeRoamRoute(), same(route));
+    expect(controller.takeFreeRoamRoute(), isNull);
+  });
+
+  test(
+    'what checking a planned route found travels with it to the review',
+    () async {
+      final controller = await SharedRouteController.load(
+        channel: const _NoGpxChannel(),
+        plannerLinkSource: _PlannerLinkSource(const []),
+        planDirectory: _PlanDirectory(),
+      );
+      addTearDown(controller.dispose);
+      final route = ImportedRoute(
+        id: 'planned',
+        name: 'To the wharf',
+        importedAt: DateTime.utc(2026, 10, 4),
+        sourceFileName: 'planned',
+        paths: const [
+          RoutePath(
+            kind: RoutePathKind.track,
+            points: [
+              GeoPoint(latitude: 51, longitude: -2),
+              GeoPoint(latitude: 52, longitude: -1),
+            ],
+          ),
+        ],
+        waypoints: const [],
+      );
+      const verification = RouteVerification(
+        preferences: RoutePreferences.defaults,
+        checked: true,
+        concerns: [
+          RouteConcern(
+            kind: RouteConcernKind.unsurfaced,
+            lengthMeters: 576,
+            labels: ['track'],
+          ),
+        ],
+      );
+
+      controller.stagePendingInAppRoute(route, verification: verification);
+
+      expect(controller.pendingInAppRoute?.verification, same(verification));
+    },
+  );
 }
 
 class _PlannerLinkSource implements IncomingPlannerLinkSource {

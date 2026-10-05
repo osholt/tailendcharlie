@@ -173,7 +173,8 @@ class GeolocatorDeviceLocationPlatform implements DeviceLocationPlatform {
         notificationTitle: 'Sharing your position with your ride',
         notificationText:
             'Tail End Charlie is recording your ride and keeping the group '
-            'up to date. This stops when the ride ends.',
+            'up to date. This stops when the ride ends or when you stop '
+            'sharing.',
         notificationChannelName: 'Active ride',
         setOngoing: true,
         enableWakeLock: true,

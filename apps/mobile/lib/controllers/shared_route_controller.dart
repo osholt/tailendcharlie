@@ -9,6 +9,7 @@ import '../domain/imported_route.dart';
 import '../services/gpx_import_source.dart';
 import '../services/navigation_export.dart';
 import '../services/planner_link_channel.dart';
+import '../services/route_verification.dart';
 import '../services/shared_gpx_channel.dart';
 
 enum PlannerLinkStatus { idle, loading, error }
@@ -18,11 +19,25 @@ class PendingInAppRoute {
     required this.route,
     this.reviewNotes = const [],
     this.handoffTarget,
+    this.reviewed = false,
+    this.verification,
   });
 
   final ImportedRoute route;
   final List<String> reviewNotes;
   final NavigationTarget? handoffTarget;
+
+  /// True when the rider has already reviewed and confirmed this route on the
+  /// plan surface, so the map takes it as it is (#847).
+  ///
+  /// Every hand-off used to open the review again. A route confirmed a moment
+  /// earlier came back as "Add turn directions?" and a second Confirm (#624),
+  /// which read as the app forgetting what the rider had just done.
+  final bool reviewed;
+
+  /// What checking the planned route against the rider's preferences found, to
+  /// be shown on the route review (#840).
+  final RouteVerification? verification;
 }
 
 /// Tracks a GPX file the platform has handed to the app via "Open in..." /
@@ -51,6 +66,27 @@ class SharedRouteController extends ChangeNotifier with WidgetsBindingObserver {
   Future<void>? _refreshOperation;
 
   PickedGpxFile? get pending => _pending;
+
+  /// A route a rider is riding on with alone after leaving a group ride
+  /// (#847), waiting for free roam to take it. Kept apart from
+  /// [pendingInAppRoute], which a ride's map takes as a change to its route:
+  /// this one is for no ride at all.
+  ImportedRoute? get pendingFreeRoamRoute => _pendingFreeRoamRoute;
+  ImportedRoute? _pendingFreeRoamRoute;
+
+  /// Hands [route] to free roam, which navigates it as it is.
+  void stageFreeRoamRoute(ImportedRoute route) {
+    _pendingFreeRoamRoute = route;
+    notifyListeners();
+  }
+
+  /// Takes the route staged for free roam, once.
+  ImportedRoute? takeFreeRoamRoute() {
+    final route = _pendingFreeRoamRoute;
+    _pendingFreeRoamRoute = null;
+    return route;
+  }
+
   PendingInAppRoute? get pendingInAppRoute => _pendingInAppRoute;
   PlannerLinkStatus get plannerLinkStatus => _plannerLinkStatus;
   String? get plannerLinkMessage => _plannerLinkMessage;
@@ -117,11 +153,15 @@ class SharedRouteController extends ChangeNotifier with WidgetsBindingObserver {
   void stagePendingInAppRoute(
     ImportedRoute route, {
     List<String> reviewNotes = const [],
+    bool reviewed = false,
+    RouteVerification? verification,
   }) {
     _pending = null;
     _pendingInAppRoute = PendingInAppRoute(
       route: route,
       reviewNotes: List.unmodifiable(reviewNotes),
+      reviewed: reviewed,
+      verification: verification,
     );
     notifyListeners();
   }

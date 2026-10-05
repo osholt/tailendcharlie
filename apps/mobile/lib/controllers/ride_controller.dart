@@ -26,6 +26,7 @@ import '../features/map/motorcycle_icon.dart';
 import '../relay/live_presence.dart';
 import '../services/nearby_bridge.dart';
 import '../services/completed_ride_archiver.dart';
+import '../services/leader_broadcast.dart';
 import '../services/marker_statistics.dart';
 import '../services/ride_event_authenticator.dart';
 import '../services/ride_lifecycle.dart';
@@ -66,6 +67,48 @@ enum TecRoleRequestOutcome {
 
   /// The journal write failed. [RideController.errorMessage] carries the reason.
   failed,
+}
+
+/// What became of a leader's one-tap broadcast to the group (#854).
+///
+/// Every value other than [sent] is something the leader is told in words. The
+/// outcome this must never have is a leader who believes the group has been told
+/// "Pull over" when nothing left the phone.
+enum LeaderBroadcastOutcome {
+  sent,
+
+  /// This phone is not the leader's. Only the leader may tell the group where to
+  /// go.
+  notLeader,
+
+  /// No running group ride to tell: not started, ended, or a solo ride.
+  notAvailable,
+
+  /// The kind named is not one of the leader's broadcasts.
+  notABroadcast,
+
+  /// The same broadcast went a moment ago; this was the same tap bouncing, and
+  /// the group has already been told.
+  bounced,
+
+  /// The journal write failed, so nothing was sent.
+  failed,
+}
+
+extension LeaderBroadcastOutcomeSentence on LeaderBroadcastOutcome {
+  /// What the leader is told when the broadcast did not go, or null when it did.
+  ///
+  /// A bounce is not a failure: the same tap twice, and the group already has it.
+  String? get failureSentence => switch (this) {
+    LeaderBroadcastOutcome.sent || LeaderBroadcastOutcome.bounced => null,
+    LeaderBroadcastOutcome.notLeader =>
+      'Only the ride leader can tell the group.',
+    LeaderBroadcastOutcome.notAvailable =>
+      'There is no running group ride to tell.',
+    LeaderBroadcastOutcome.notABroadcast =>
+      'The leader cannot send that message.',
+    LeaderBroadcastOutcome.failed => 'It could not be saved. Try again.',
+  };
 }
 
 /// Why a leader's attempt to un-end a ride did or did not take effect.
@@ -132,6 +175,10 @@ class RideController extends ChangeNotifier {
   String? _errorMessage;
   bool _errorIsRetryable = false;
   RideRole? _roleBeforeMarker;
+
+  /// The leader's most recent broadcast, set before it is written so a double tap
+  /// that lands while the first is still being stored is seen as a bounce.
+  ({QuickMessage message, DateTime at})? _lastLeaderBroadcast;
   Timer? _endedRideCleanupTimer;
   bool _endedRideSetAside = false;
   RideLifecycle _lifecycle = const RideLifecycle();
@@ -500,8 +547,19 @@ class RideController extends ChangeNotifier {
 
   /// A lead-owned group coordination pause. It deliberately does not suppress
   /// GPS evidence: riders can still be found while the group is stopped.
-  bool get ridePaused {
-    if (!rideStarted) return false;
+  bool get ridePaused => _latestPauseEvent()?.type == RideEventType.ridePaused;
+
+  /// When the leader paused the group, or null while the ride is not paused.
+  ///
+  /// The location-sharing guard reads it so that a stop the leader declared is
+  /// not mistaken for a ride everybody has walked away from (#859).
+  DateTime? get ridePausedAt {
+    final latest = _latestPauseEvent();
+    return latest?.type == RideEventType.ridePaused ? latest!.createdAt : null;
+  }
+
+  RideEvent? _latestPauseEvent() {
+    if (!rideStarted) return null;
     RideEvent? latest;
     for (final event in _events) {
       if (event.type != RideEventType.ridePaused &&
@@ -514,7 +572,7 @@ class RideController extends ChangeNotifier {
         latest = event;
       }
     }
-    return latest?.type == RideEventType.ridePaused;
+    return latest;
   }
 
   bool get markerActive {
@@ -1245,6 +1303,73 @@ class RideController extends ChangeNotifier {
     });
   }
 
+  /// Sends one of the leader's one-tap broadcasts to the whole group (#854).
+  ///
+  /// Extends the quick message the rest of the ride already sends: an ordinary
+  /// `statusMessage` event, so it travels over the relay and over Nearby exactly as
+  /// the others do, an older build that does not know the kind shows the sender's
+  /// own words, and the relay needs nothing new. What differs is who may send it,
+  /// how long it lives ([leaderBroadcastLife], ten minutes), and that it names
+  /// no recipient - it is for everyone.
+  ///
+  /// No confirmation, by design: the leader is riding. Written outside [_run],
+  /// which drops a call that arrives while another is in flight, because a
+  /// "Pull over" that was silently dropped would leave a leader certain the group
+  /// had been told. A failure is returned, never swallowed.
+  ///
+  /// [position] is where the leader is: "wrong way" and "regroup at the next stop"
+  /// are not actionable without it, and it lets the review say where each was
+  /// sent from.
+  Future<LeaderBroadcastOutcome> sendLeaderBroadcast(
+    QuickMessage message, {
+    awareness_geo.GeoPoint? position,
+  }) async {
+    if (!message.isLeaderBroadcast) return LeaderBroadcastOutcome.notABroadcast;
+    final activeSession = _session;
+    if (activeSession == null) return LeaderBroadcastOutcome.notAvailable;
+    if (!isLocalRideLeader) return LeaderBroadcastOutcome.notLeader;
+    if (!leaderBroadcastsAvailable(
+      isLocalRideLeader: isLocalRideLeader,
+      rideStarted: rideStarted,
+      rideEnded: rideEnded,
+      coordinationMode: coordinationMode,
+    )) {
+      return LeaderBroadcastOutcome.notAvailable;
+    }
+    final now = _clock();
+    final previous = _lastLeaderBroadcast;
+    if (previous != null && previous.message == message) {
+      final age = now.difference(previous.at);
+      if (!age.isNegative && age < leaderBroadcastBounceWindow) {
+        return LeaderBroadcastOutcome.bounced;
+      }
+    }
+    final attempt = (message: message, at: now);
+    _lastLeaderBroadcast = attempt;
+    try {
+      await _record(
+        type: RideEventType.statusMessage,
+        priority: message.priority,
+        expiresAt: now.add(leaderBroadcastLife),
+        payload: {
+          'message': message.name,
+          'label': message.label,
+          'senderDisplayName': activeSession.displayName,
+          if (position != null) 'position': position.toJson(),
+        },
+      );
+    } on Object catch (error, stackTrace) {
+      // Nothing was stored, so a retry a moment later is a first attempt.
+      if (_lastLeaderBroadcast == attempt) _lastLeaderBroadcast = previous;
+      if (kDebugMode) {
+        debugPrint('Leader broadcast failed: $error\n$stackTrace');
+      }
+      return LeaderBroadcastOutcome.failed;
+    }
+    notifyListeners();
+    return LeaderBroadcastOutcome.sent;
+  }
+
   /// Quick messages this phone should be presenting, most urgent first.
   ///
   /// Includes this rider's own outstanding messages, so a sender can be shown
@@ -1443,60 +1568,120 @@ class RideController extends ChangeNotifier {
 
   Future<void> startRide() async {
     if (rideStarted || rideEnded) return;
+    await _run(_recordRideStart);
+  }
+
+  Future<void> _recordRideStart() async {
+    final session = _requireSession();
+    if (session.role != RideRole.lead) {
+      throw const FormatException('Only the ride leader can start the ride.');
+    }
+    await _record(
+      type: RideEventType.rideStarted,
+      priority: EventPriority.important,
+      payload: {
+        'leaderRiderId': session.localRiderId,
+        'leaderDisplayName': session.displayName,
+      },
+    );
+  }
+
+  /// Turns what this rider is doing into a group ride carrying [route] (#847).
+  ///
+  /// One action, recorded as the ordinary events a group ride already has, in
+  /// the order CarPlay already uses: `rideCreated`, then the route revision,
+  /// then — when [startNow] — `rideStarted`. Nothing new reaches the relay.
+  ///
+  /// [startNow] is for a rider who is already riding. Free-roam navigation has
+  /// no lobby to wait in, and putting a moving rider into one would stop their
+  /// guidance in the middle of a road; the ride starts at once instead and
+  /// others join it under way, as a late joiner always could.
+  ///
+  /// From a solo ride, that ride is filed first, as leaving it would file it,
+  /// and the group ride replaces it. A solo ride has nobody to tell. A group
+  /// ride is refused: it already is one.
+  ///
+  /// Like every action here, a failure is reported through [errorMessage]
+  /// rather than thrown, and leaves the rider where they were.
+  Future<void> startGroupRide({
+    required String displayName,
+    MotorcycleIconStyle motorcycleStyle = motorcycleIconStyleDefault,
+    RiderSymbol riderSymbol = riderSymbolDefault,
+    RiderColor riderColor = riderColorDefault,
+    RideCoordinationMode coordinationMode =
+        RideCoordinationMode.secondBikeDropOff,
+    ImportedRoute? route,
+    bool startNow = false,
+    String? rideName,
+  }) async {
     await _run(() async {
-      final session = _requireSession();
-      if (session.role != RideRole.lead) {
-        throw const FormatException('Only the ride leader can start the ride.');
+      if (!coordinationMode.isGroup) {
+        throw const FormatException('Choose how the group will ride.');
       }
-      await _record(
-        type: RideEventType.rideStarted,
-        priority: EventPriority.important,
-        payload: {
-          'leaderRiderId': session.localRiderId,
-          'leaderDisplayName': session.displayName,
-        },
+      final existing = _session;
+      if (existing != null && !rideEnded) {
+        if (this.coordinationMode.isGroup) {
+          throw const FormatException('This is already a group ride.');
+        }
+        // Checked before the solo ride is given up, so a refusal below cannot
+        // cost the rider the ride they are on.
+        _normaliseName(displayName);
+        await _archiveCurrentRideIfComplete(force: true);
+        await _removeRideData();
+      }
+      await _createRide(
+        displayName: displayName,
+        motorcycleStyle: motorcycleStyle,
+        riderSymbol: riderSymbol,
+        riderColor: riderColor,
+        coordinationMode: coordinationMode,
+        rideName: rideName ?? route?.name,
       );
+      if (route != null) await _recordRoutePublication(route);
+      if (startNow) await _recordRideStart();
     });
   }
 
   Future<void> publishRoute(ImportedRoute route) async {
-    await _run(() async {
-      final session = _requireSession();
-      if (!isLocalRideLeader) {
-        throw const FormatException(
-          'Only the ride leader can change the group route.',
-        );
-      }
-      final encoded = const RideRouteEncoder().encode(route);
-      final revisionId = _idFactory();
-      final revisionNumber = _routeState.revisionNumber + 1;
-      for (var index = 0; index < encoded.chunks.length; index += 1) {
-        await _record(
-          type: RideEventType.routeRevisionChunk,
-          priority: EventPriority.important,
-          payload: {
-            'revisionId': revisionId,
-            'revisionNumber': revisionNumber,
-            'leaderRiderId': session.localRiderId,
-            'index': index,
-            'data': encoded.chunks[index],
-          },
-        );
-      }
+    await _run(() => _recordRoutePublication(route));
+  }
+
+  Future<void> _recordRoutePublication(ImportedRoute route) async {
+    final session = _requireSession();
+    if (!isLocalRideLeader) {
+      throw const FormatException(
+        'Only the ride leader can change the group route.',
+      );
+    }
+    final encoded = const RideRouteEncoder().encode(route);
+    final revisionId = _idFactory();
+    final revisionNumber = _routeState.revisionNumber + 1;
+    for (var index = 0; index < encoded.chunks.length; index += 1) {
       await _record(
-        type: RideEventType.routeRevisionPublished,
+        type: RideEventType.routeRevisionChunk,
         priority: EventPriority.important,
         payload: {
           'revisionId': revisionId,
           'revisionNumber': revisionNumber,
           'leaderRiderId': session.localRiderId,
-          'chunkCount': encoded.chunks.length,
-          'compressedBytes': encoded.compressedBytes,
-          'sha256': encoded.sha256Digest,
-          'routeName': route.name,
+          'index': index,
+          'data': encoded.chunks[index],
         },
       );
-    });
+    }
+    await _record(
+      type: RideEventType.routeRevisionPublished,
+      priority: EventPriority.important,
+      payload: {
+        'revisionId': revisionId,
+        'revisionNumber': revisionNumber,
+        'leaderRiderId': session.localRiderId,
+        'chunkCount': encoded.chunks.length,
+        'compressedBytes': encoded.compressedBytes,
+        'sha256': encoded.sha256Digest,
+        'routeName': route.name,
+      },
+    );
   }
 
   Future<void> clearRoute() async {

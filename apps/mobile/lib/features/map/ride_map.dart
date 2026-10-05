@@ -5,6 +5,7 @@ export 'ride_map_feature.dart'
         MapJunctionMarkerOverlay,
         MapJunctionMarkerStage,
         MapEmergencyContact,
+        GroupMiniMapMarker,
         GroupMiniMapRenderer,
         HostMapChrome,
         HostMapMenuAction,
@@ -19,6 +20,8 @@ export 'ride_map_feature.dart'
         flutterMapRotationForBearing,
         groupMiniMapBackgroundColor,
         groupMiniMapGridColor,
+        groupMiniMapMarkers,
+        groupMiniMapVectorMarker,
         groupMiniMapRiders,
         groupMiniMapRenderer,
         heatmapRoadLayerId,
@@ -28,16 +31,22 @@ export 'ride_map_feature.dart'
         motorcycleDiscoveryMinimumZoom,
         motorcycleDiscoveryVisibleAtZoom,
         navigationCameraBearingFor,
-        portraitNavigationHeaderTopOffset,
         portraitRideMenuTopOffset,
         portraitBottomChromeKey,
         rideMapPrimaryPanelFill,
+        rideChromeMaximumTextScale,
+        rideChromeTextScaleCeiling,
         rideMapUsesMapLibreRenderer,
         rideMapToolbarHeight,
         waypointCircleStyle,
         quickMessageIcon;
 export 'route_trail_style.dart'
-    show RouteLineStyle, RouteTrailStyle, contrastRatio, relativeLuminance;
+    show
+        RideMapLine,
+        RouteLineStyle,
+        RouteTrailStyle,
+        contrastRatio,
+        relativeLuminance;
 export '../../services/navigation_export.dart'
     show NavigationExportCoordinator, NavigationExportResult, NavigationTarget;
 export '../../services/rider_trail_recorder.dart'

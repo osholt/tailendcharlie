@@ -11,6 +11,7 @@ import '../../controllers/completed_rides_controller.dart';
 import '../../controllers/distance_unit_controller.dart';
 import '../../domain/completed_ride.dart';
 import '../../domain/recorded_route_store.dart';
+import '../../domain/ride_alert_record.dart';
 import '../../data/json_file_recorded_route_store.dart';
 import '../map/route_review_screen.dart' show routeLengthMeters;
 import '../../domain/imported_route.dart';
@@ -19,13 +20,17 @@ import '../../services/completed_ride_sharer.dart';
 import '../../services/map_geojson.dart';
 import '../../services/map_style_repository.dart';
 import '../../services/measurement_formatter.dart';
+import '../../services/ride_alert_log.dart';
 import '../../services/ride_summary_exporter.dart';
 import '../../services/stored_route_library.dart';
 import '../../services/trail_direction_arrows.dart';
 import '../map/motorcycle_icon.dart';
+import '../map/route_trail_style.dart';
 import '../map/resolved_route_map_preview.dart'
     show embeddedMapGestureRecognizers;
 import '../map/stored_route_picker.dart';
+import 'ride_alerts_card.dart';
+import 'ride_broadcasts_card.dart';
 import 'ride_recap_screen.dart';
 
 class PreviousRidesScreen extends StatelessWidget {
@@ -259,6 +264,7 @@ class _PreviousRideDetailScreenState extends State<PreviousRideDetailScreen> {
                     child: ArchivedRideMap(
                       plannedRoute: ride.comparisonPlan,
                       traveledRoute: ride.traveledRoute,
+                      alerts: ride.alerts,
                     ),
                   ),
                 ),
@@ -289,6 +295,17 @@ class _PreviousRideDetailScreenState extends State<PreviousRideDetailScreen> {
               runSpacing: 8,
               children: keys,
             ),
+          ],
+          // Under the map they are plotted on, and above everything that is
+          // about the ride rather than its moments (#849).
+          if (ride.alerts.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            RideAlertsCard(alerts: ride.alerts),
+          ],
+          // What the leader told the group (#854).
+          if (ride.broadcasts.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            RideBroadcastsCard(broadcasts: ride.broadcasts),
           ],
           const SizedBox(height: 12),
           FilledButton.icon(
@@ -720,6 +737,8 @@ class _PreviousRideDetailScreenState extends State<PreviousRideDetailScreen> {
         _EndpointLegend(color: Color(0xFF63D98B), label: 'Start'),
         _EndpointLegend(color: Color(0xFFFF6470), label: 'Finish'),
       ],
+      if (ride.alerts.isNotEmpty)
+        const _EndpointLegend(color: Color(0xFFFFC857), label: 'Alert'),
     ];
   }
 
@@ -852,6 +871,7 @@ class _PreviousRideDetailScreenState extends State<PreviousRideDetailScreen> {
         body: ArchivedRideMap(
           plannedRoute: _ride.comparisonPlan,
           traveledRoute: _ride.traveledRoute,
+          alerts: _ride.alerts,
         ),
       ),
     ),
@@ -898,12 +918,16 @@ class ArchivedRideMap extends StatefulWidget {
     super.key,
     required this.plannedRoute,
     required this.traveledRoute,
+    this.alerts = const [],
     this.basemapConfiguration,
     this.mapStyleString,
   });
 
   final ImportedRoute? plannedRoute;
   final ImportedRoute? traveledRoute;
+
+  /// The ride's alerts, drawn as labelled markers where each was raised (#849).
+  final List<RideAlertRecord> alerts;
   final BasemapConfiguration? basemapConfiguration;
   final String? mapStyleString;
 
@@ -915,6 +939,7 @@ class _ArchivedRideMapState extends State<ArchivedRideMap> {
   static const _plannedSource = 'archived-planned-source';
   static const _trackSource = 'archived-track-source';
   static const _endpointSource = 'archived-endpoint-source';
+  static const _alertSource = 'archived-alert-source';
   static const _directionSource = 'archived-direction-source';
   static const _directionImage = 'archived-direction-arrow';
   ml.MapLibreMapController? _controller;
@@ -1033,6 +1058,10 @@ class _ArchivedRideMapState extends State<ArchivedRideMap> {
   Future<void> _prepareStyle() async {
     final controller = _controller;
     if (controller == null) return;
+    // Read before the first await: the arrows below are sized by it. The ratio
+    // the native map divides every image by, as on the live ride map (see
+    // `_nativeMarkerPixelRatio` in `ride_map_feature.dart`).
+    final pixelRatio = MediaQuery.devicePixelRatioOf(context);
     try {
       await controller.addGeoJsonSource(
         _plannedSource,
@@ -1108,20 +1137,73 @@ class _ArchivedRideMapState extends State<ArchivedRideMap> {
           _directionSource,
           archivedRideDirectionGeoJson(overlay),
         );
+        // The same arrow as the live ride map's, at the same size on any density
+        // and with the same dark edge: a larger dark copy beneath it, because the
+        // image is a plain mask and an `icon-halo` on it is nothing at the right
+        // size and a solid square at any other (#900).
+        final arrowSize = iconGlyphIconSize(
+          glyphSize: RouteTrailStyle.directionArrowSize,
+          pixelRatio: pixelRatio,
+        );
+        for (final (layerId, colour, scale) in <(String, Object, double)>[
+          (
+            'archived-direction-arrow-casing',
+            RouteTrailStyle.casingHex,
+            RouteTrailStyle.directionArrowCasingScale,
+          ),
+          ('archived-direction-arrows', const ['get', 'color'], 1.0),
+        ]) {
+          await controller.addSymbolLayer(
+            _directionSource,
+            layerId,
+            ml.SymbolLayerProperties(
+              iconImage: _directionImage,
+              iconColor: colour,
+              iconSize: arrowSize * scale,
+              iconRotate: const ['get', 'bearing'],
+              iconRotationAlignment: 'map',
+              iconPitchAlignment: 'map',
+              iconAllowOverlap: true,
+              iconIgnorePlacement: true,
+            ),
+            enableInteraction: false,
+          );
+        }
+      }
+      if (widget.alerts.isNotEmpty) {
+        // Above the track and the direction arrows, so a marker is never hidden
+        // under the line it was raised on. Each carries its clock time, so a row
+        // in the list can be found on the map and the other way round (#849).
+        await controller.addGeoJsonSource(
+          _alertSource,
+          archivedRideAlertGeoJson(widget.alerts),
+        );
+        await controller.addCircleLayer(
+          _alertSource,
+          'archived-alert-circles',
+          const ml.CircleLayerProperties(
+            circleRadius: 9,
+            circleColor: '#FFC857',
+            circleStrokeColor: '#10151C',
+            circleStrokeWidth: 2.5,
+            circlePitchAlignment: 'map',
+          ),
+          enableInteraction: false,
+        );
         await controller.addSymbolLayer(
-          _directionSource,
-          'archived-direction-arrows',
+          _alertSource,
+          'archived-alert-labels',
           const ml.SymbolLayerProperties(
-            iconImage: _directionImage,
-            iconColor: ['get', 'color'],
-            iconHaloColor: '#10151C',
-            iconHaloWidth: 2,
-            iconSize: 0.14,
-            iconRotate: ['get', 'bearing'],
-            iconRotationAlignment: 'map',
-            iconPitchAlignment: 'map',
-            iconAllowOverlap: true,
-            iconIgnorePlacement: true,
+            textField: ['get', 'label'],
+            textFont: ['Noto Sans Regular'],
+            textSize: 12,
+            textColor: '#FFE9B0',
+            textHaloColor: '#10151C',
+            textHaloWidth: 1.6,
+            textAnchor: 'top',
+            textOffset: [0, 1.1],
+            textAllowOverlap: true,
+            textIgnorePlacement: true,
           ),
           enableInteraction: false,
         );
@@ -1247,6 +1329,28 @@ Map<String, dynamic> archivedRideEndpointGeoJson(
     properties: {'color': '#FF6470', 'letter': 'F'},
   ),
 ]);
+
+/// One labelled point per alert, in the order raised (#849).
+///
+/// The label is the clock time to the second, in this phone's time zone: the same
+/// text the list shows and the copy button puts on the clipboard.
+@visibleForTesting
+Map<String, dynamic> archivedRideAlertGeoJson(List<RideAlertRecord> alerts) =>
+    MapGeoJson.points([
+      for (final alert in alerts)
+        MapGeoJsonPoint(
+          id: alert.id,
+          point: GeoPoint(
+            latitude: alert.position.latitude,
+            longitude: alert.position.longitude,
+          ),
+          properties: {
+            'label': alert.clockLabel,
+            'raisedBy': alert.raisedBy,
+            'time': alert.timestampLabel,
+          },
+        ),
+    ]);
 
 Map<String, dynamic> archivedRideDirectionGeoJson(
   ArchivedRideDirectionOverlay overlay,

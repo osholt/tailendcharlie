@@ -6,6 +6,7 @@ import '../../controllers/foreground_location_controller.dart';
 import '../../controllers/global_ride_heatmap_controller.dart';
 import '../../controllers/map_style_mode_controller.dart';
 import '../../controllers/ride_diagnostics_controller.dart';
+import '../../data/ride_diagnostics_log_store.dart';
 import '../../controllers/shared_route_controller.dart' show PendingInAppRoute;
 import '../../controllers/speed_limit_display_controller.dart';
 import '../../controllers/spoken_guidance_controller.dart';
@@ -67,6 +68,8 @@ class HomeMapBackdrop extends StatefulWidget {
     this.onChangeRouteRequestHandled,
     this.circularRideRequestToken,
     this.onCircularRideRequestHandled,
+    this.editRouteRequestToken,
+    this.onEditRouteRequestHandled,
     this.onRouteChanged,
     this.localDisplayName = 'Rider',
     this.onNavigationArchived,
@@ -118,6 +121,10 @@ class HomeMapBackdrop extends StatefulWidget {
   /// sheet. A token is consumed once, like the route-change handoff above.
   final Object? circularRideRequestToken;
   final VoidCallback? onCircularRideRequestHandled;
+
+  /// Asks the map to reopen its route on the plan surface (#847).
+  final Object? editRouteRequestToken;
+  final VoidCallback? onEditRouteRequestHandled;
 
   /// Fires with the route the map is following, or null when there is none —
   /// including the one restored from the last session.
@@ -550,7 +557,7 @@ class _HomeMapBackdropState extends State<HomeMapBackdrop>
       store: store,
       rideId: rideId,
       render: () => recorder.render(
-        rideCode: 'PERSONAL',
+        rideCode: RideDiagnosticsLog.personalNavigationRideCode,
         appBuild: _diagnosticsBuildLabel,
       ),
     );
@@ -699,6 +706,8 @@ class _HomeMapBackdropState extends State<HomeMapBackdrop>
             onChangeRouteRequestHandled: widget.onChangeRouteRequestHandled,
             circularRideRequestToken: widget.circularRideRequestToken,
             onCircularRideRequestHandled: widget.onCircularRideRequestHandled,
+            editRouteRequestToken: widget.editRouteRequestToken,
+            onEditRouteRequestHandled: widget.onEditRouteRequestHandled,
             onRouteChanged: _onRouteChanged,
             onNavigationGuidanceChanged: _onNavigationGuidanceChanged,
             navigating: widget.navigating,

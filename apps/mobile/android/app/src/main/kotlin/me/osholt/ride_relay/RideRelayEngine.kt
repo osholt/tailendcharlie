@@ -53,6 +53,7 @@ object RideRelayEngine {
         // keeps receiving ride state with no phone screen involved.
         ProjectedRideChannel.attach(engine)
         SpokenAudioFocusChannel.attach(context, engine)
+        SharingReminderChannel.attach(context, engine)
         engine.dartExecutor.executeDartEntrypoint(
             DartExecutor.DartEntrypoint.createDefault(),
         )

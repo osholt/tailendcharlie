@@ -4,6 +4,7 @@ import '../domain/ride_event.dart';
 import 'geo_calculations.dart';
 import 'ride_event_authenticator.dart';
 import 'ride_lifecycle.dart';
+import 'ride_role_journal.dart';
 
 /// One rider's acknowledgement of another rider's quick message.
 class QuickMessageAcknowledgement {
@@ -242,6 +243,8 @@ class RideQuickMessageAlert {
 /// receipt and any later companion surface cannot disagree:
 ///
 /// * signature-verified for this ride, like every other relayed fact;
+/// * a leader broadcast (#854) only from a device that was the leader at that
+///   point in the journal, so a forged "Pull over" from anybody else is dropped;
 /// * addressed to the local rider, or group-visible — a message with a
 ///   recipient list this rider is not on is not theirs to see;
 /// * inside its own expiry;
@@ -282,7 +285,8 @@ class ReceivedQuickMessageReducer {
             .where(
               (event) =>
                   event.rideId == rideId &&
-                  event.type == RideEventType.statusMessage &&
+                  (event.type == RideEventType.statusMessage ||
+                      RideRoleJournal.carriesRole(event.type)) &&
                   RideEventAuthenticator.verify(event, inviteSecret),
             )
             .toList(growable: false)
@@ -290,7 +294,14 @@ class ReceivedQuickMessageReducer {
     final departed = departedRiderIds.toSet();
     final messages = <String, ReceivedQuickMessage>{};
     final acknowledgements = <String, List<QuickMessageAcknowledgement>>{};
+    // Who held the lead role at each point of the journal: the only thing that
+    // makes a leader broadcast admissible.
+    final roles = RideRoleJournal();
     for (final event in ordered) {
+      if (event.type != RideEventType.statusMessage) {
+        roles.apply(event);
+        continue;
+      }
       final acknowledged = event.payload[acknowledgesKey];
       if (acknowledged is String) {
         (acknowledgements[acknowledged] ??= []).add(
@@ -306,6 +317,15 @@ class ReceivedQuickMessageReducer {
       final message = tryParseQuickMessage(event.payload['message']);
       final label = event.payload['label'];
       if (label is! String || label.isEmpty) continue;
+      // Only the leader's phone may tell the group where to go. A broadcast from
+      // anybody else is forged, or a leader who had already handed over, and
+      // either way it is not an instruction (#854). A kind this build does not
+      // know is not checked: nothing says it is a broadcast.
+      if (message != null &&
+          message.isLeaderBroadcast &&
+          !roles.isLeader(event.deviceId)) {
+        continue;
+      }
       if (message?.retiresEarlierMessages ?? false) {
         // The rider says the thing they raised is dealt with. That clears their
         // card rather than adding a second one to it.

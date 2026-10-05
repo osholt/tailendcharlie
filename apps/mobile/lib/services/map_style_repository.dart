@@ -8,6 +8,7 @@ import 'package:path/path.dart' as path;
 import 'package:path_provider/path_provider.dart';
 
 import 'basemap_configuration.dart';
+import 'provider_label_guard.dart';
 
 /// Where the style the map is about to render actually came from.
 ///
@@ -56,6 +57,19 @@ class MapStyleResolution {
   /// the rider's own overlays over an empty background.
   bool get hasBasemap =>
       outcome == MapStyleOutcome.live || outcome == MapStyleOutcome.cached;
+}
+
+/// The families of road casing the provider draws, by what each one edges.
+/// `pale` is the edge that is deliberately left quiet: service roads, tracks and
+/// the footpath casing on bridges.
+enum _CasingFamily {
+  pale,
+  minor,
+  secondaryTertiary,
+  trunkPrimary,
+  motorway,
+  link,
+  motorwayLink,
 }
 
 class MapStyleRepository {
@@ -208,18 +222,46 @@ class MapStyleRepository {
 
   /// Shared by native maps and Flutter previews. Also applied to cached styles
   /// so an offline upgrade gets the current map presentation.
+  ///
+  /// [portableExpressions] is for the Flutter vector renderer, whose expression
+  /// parser reads a smaller language than MapLibre's; see [ProviderLabelGuard].
   static void applyPresentation(
     Map<String, dynamic> style,
-    BasemapConfiguration configuration,
-  ) {
+    BasemapConfiguration configuration, {
+    bool portableExpressions = false,
+  }) {
     if (configuration.styleUrl == configuration.darkStyleUrl &&
         configuration.styleUrl.isNotEmpty) {
       _repaintForLegibleDarkMode(style);
-    } else if (configuration.restrainedLightStyle &&
-        configuration.styleUrl == BasemapConfiguration.defaultLightStyleUrl) {
-      _repaintForRestrainedLightMode(style);
+    } else if (configuration.styleUrl ==
+        BasemapConfiguration.defaultLightStyleUrl) {
+      if (configuration.restrainedLightStyle) {
+        _repaintForRestrainedLightMode(style);
+      } else {
+        // Original keeps the provider's palette, labels and symbols. Its road
+        // edges are an exception (#841): they were the thinnest, palest thing
+        // on the map, in this style as much as in Restrained. POI labels that
+        // would show an identifier are the other (#860), guarded below.
+        _strengthenOriginalRoadEdges(style);
+      }
     }
     _removeBusinessLabels(style, configuration);
+    _guardProviderLabels(style, configuration, portable: portableExpressions);
+  }
+
+  /// A rider never sees a source identifier on a provider POI (#860). Only the
+  /// default provider styles are the provider's own; a custom style belongs to
+  /// the deployment that supplied it and is not rewritten.
+  static void _guardProviderLabels(
+    Map<String, dynamic> style,
+    BasemapConfiguration configuration, {
+    required bool portable,
+  }) {
+    if (configuration.styleUrl != BasemapConfiguration.defaultLightStyleUrl &&
+        configuration.styleUrl != BasemapConfiguration.defaultDarkStyleUrl) {
+      return;
+    }
+    ProviderLabelGuard.apply(style, portable: portable);
   }
 
   static void _removeBusinessLabels(
@@ -398,6 +440,170 @@ class MapStyleRepository {
     'waterway',
   ];
 
+  // Road edges of the restrained light basemap (#841).
+  //
+  // The first restrained repaint painted every casing one neutral grey,
+  // #C4C5C1 - 1.55:1 against the #F3F2ED ground - and the provider draws that
+  // casing only 0.8-1.1 px wider than the carriageway on each side at riding
+  // zoom (MapLibre z13.4-14.7). The fills are white and cream, within 1.0-1.2:1
+  // of the ground, so in daylight the only thing separating a lane from the
+  // field it crosses was a hairline of light grey. A tester found roads hard to
+  // pick out on Android and the same was true on iOS (#841).
+  //
+  // Lightness is shared and chroma climbs with the class, so a casing says what
+  // kind of road it edges the way the fill tints do. Every casing sits at
+  // CIE L* 70.5, which is as dark as an edge can be while the route's near-black
+  // casing still measures 8:1 against it, so the route stays the strongest line
+  // on the map. Only these edges changed: the ground, the fills and every route
+  // and marker colour are as they were, and a test holds the route casing above
+  // 8:1 against everything the light map paints. Service roads and tracks keep
+  // the old pale edge on purpose - a driveway is not a road a group rides.
+
+  /// The one colour Original changes: a lane's edge. The provider's `#CFCDCA`
+  /// (L* 82.5, 1.45:1 against its `#F8F4F0` ground) deepened to L* 70.5 at the
+  /// same warm hue, 2.07:1 against that ground and 8.09:1 against the route's
+  /// casing.
+  static const originalLightCasingMinor = '#AEACA9';
+
+  static const _lightCasingService = '#C4C5C1';
+  static const _lightCasingMinor = '#ACADA7';
+  static const _lightCasingTertiary = '#AFADA4';
+  static const _lightCasingSecondary = '#B2AC9C';
+  static const _lightCasingPrimary = '#B5AC97';
+  static const _lightCasingTrunk = '#B8AB93';
+  static const _lightCasingMotorway = '#BBAA8E';
+
+  static const _lightCasingSecondaryTertiary = <Object>[
+    'match',
+    <Object>['get', 'class'],
+    'secondary',
+    _lightCasingSecondary,
+    _lightCasingTertiary,
+  ];
+
+  static const _lightCasingTrunkPrimary = <Object>[
+    'match',
+    <Object>['get', 'class'],
+    'trunk',
+    _lightCasingTrunk,
+    _lightCasingPrimary,
+  ];
+
+  /// Ramps leaving a main road keep the casing of the road they leave.
+  static const _lightCasingLink = <Object>[
+    'match',
+    <Object>['get', 'class'],
+    'trunk',
+    _lightCasingTrunk,
+    'primary',
+    _lightCasingPrimary,
+    'secondary',
+    _lightCasingSecondary,
+    'tertiary',
+    _lightCasingTertiary,
+    _lightCasingMinor,
+  ];
+
+  // Casing widths. Each table is the provider's own stops with one pixel added
+  // from zoom 14, so the edge grows from 0.75-1.1 px to 1.25-1.6 px a side at
+  // riding zoom. Exponential interpolation is a shift-invariant family, so
+  // adding 1 px to both end stops adds exactly 1 px everywhere between them and
+  // every other zoom keeps the provider's curve. Fill widths are deliberately
+  // left alone: #776 widened bright dark-map roads and field validation found
+  // they obscured the route, so only the edge, never the carriageway, grows.
+  //
+  // Provider stops: minor `12:0.5 13:1 14:4 20:20`, which bridges widen to 25
+  // at zoom 20 and tunnels narrow to 15; secondary and tertiary `8:1.5 20:17`;
+  // trunk, primary and motorway `5:0.4 6:0.7 7:1.75 20:22`; ramps
+  // `12:1 13:3 14:4 20:15`. All use an exponential base of 1.2.
+  static const _lightCasingWidthMinor = <Object>[
+    'interpolate',
+    <Object>['exponential', 1.2],
+    <Object>['zoom'],
+    12,
+    0.5,
+    13,
+    1,
+    14,
+    5,
+    20,
+    21,
+  ];
+
+  static const _lightCasingWidthMinorBridge = <Object>[
+    'interpolate',
+    <Object>['exponential', 1.2],
+    <Object>['zoom'],
+    12,
+    0.5,
+    13,
+    1,
+    14,
+    5,
+    20,
+    26,
+  ];
+
+  static const _lightCasingWidthMinorTunnel = <Object>[
+    'interpolate',
+    <Object>['exponential', 1.2],
+    <Object>['zoom'],
+    12,
+    0.5,
+    13,
+    1,
+    14,
+    5,
+    20,
+    16,
+  ];
+
+  static const _lightCasingWidthSecondaryTertiary = <Object>[
+    'interpolate',
+    <Object>['exponential', 1.2],
+    <Object>['zoom'],
+    8,
+    1.5,
+    13,
+    4.41,
+    14,
+    6.39,
+    20,
+    18,
+  ];
+
+  static const _lightCasingWidthMajor = <Object>[
+    'interpolate',
+    <Object>['exponential', 1.2],
+    <Object>['zoom'],
+    5,
+    0.4,
+    6,
+    0.7,
+    7,
+    1.75,
+    13,
+    5.9,
+    14,
+    8.14,
+    20,
+    23,
+  ];
+
+  static const _lightCasingWidthLink = <Object>[
+    'interpolate',
+    <Object>['exponential', 1.2],
+    <Object>['zoom'],
+    12,
+    1,
+    13,
+    3,
+    14,
+    5,
+    20,
+    16,
+  ];
+
   // A daylight companion to the dark palette: quiet ground, restrained road
   // tint and one clear hierarchy. The route remains the strongest saturated
   // line on screen, while place and road names still provide orientation.
@@ -422,7 +628,15 @@ class MapStyleRepository {
     'primary': '#F4E9CF',
     'trunk': '#F1E2C2',
     'motorway': '#EEDBB6',
-    'road casing': '#C4C5C1',
+    // The edge of each class, keyed `<class> casing` so a test can walk
+    // [lightBasemapRoadRamp] and find the fill and the edge of every step.
+    'service/track casing': _lightCasingService,
+    'minor casing': _lightCasingMinor,
+    'tertiary casing': _lightCasingTertiary,
+    'secondary casing': _lightCasingSecondary,
+    'primary casing': _lightCasingPrimary,
+    'trunk casing': _lightCasingTrunk,
+    'motorway casing': _lightCasingMotorway,
   };
 
   static const lightBasemapRoadRamp = <String>[
@@ -783,21 +997,45 @@ class MapStyleRepository {
         repainted.add(layer);
         continue;
       }
-      final updated = Map<String, dynamic>.from(layer);
-      final paint = Map<String, dynamic>.from(
-        (updated['paint'] as Map?) ?? const {},
-      );
-      for (final override in overrides.entries) {
-        if (override.value == null) {
-          paint.remove(override.key);
-        } else {
-          paint[override.key] = override.value;
-        }
-      }
-      updated['paint'] = paint;
-      repainted.add(updated);
+      repainted.add(_withPaint(layer, overrides));
     }
     style['layers'] = repainted;
+  }
+
+  /// [layer] with [overrides] applied to its paint; a `null` override removes
+  /// the property. The layer passed in is not modified.
+  static Map<String, dynamic> _withPaint(
+    Map layer,
+    Map<String, Object?> overrides,
+  ) {
+    final updated = Map<String, dynamic>.from(layer);
+    final paint = Map<String, dynamic>.from(
+      (updated['paint'] as Map?) ?? const {},
+    );
+    for (final override in overrides.entries) {
+      if (override.value == null) {
+        paint.remove(override.key);
+      } else {
+        paint[override.key] = override.value;
+      }
+    }
+    updated['paint'] = paint;
+    return updated;
+  }
+
+  /// The one change the Original daytime map receives (#841): its road edges.
+  /// Every other layer, colour, label and symbol is the provider's.
+  static void _strengthenOriginalRoadEdges(Map<String, dynamic> style) {
+    final layers = style['layers'] as List;
+    for (var i = 0; i < layers.length; i++) {
+      final layer = layers[i];
+      if (layer is! Map) continue;
+      final id = layer['id'];
+      if (id is! String) continue;
+      final overrides = _originalLightCasingPaint(id);
+      if (overrides == null) continue;
+      layers[i] = _withPaint(layer, overrides);
+    }
   }
 
   static Map<String, Object?>? _restrainedLightRoadPaint(String id) {
@@ -807,9 +1045,7 @@ class MapStyleRepository {
       return null;
     }
     if (id.contains('one_way_arrow')) return null;
-    if (id.endsWith('_casing')) {
-      return const {'line-color': '#C4C5C1'};
-    }
+    if (id.endsWith('_casing')) return _restrainedLightCasingPaint(id);
     if (id.endsWith('_hatching')) {
       return const {'line-color': '#F3F2ED'};
     }
@@ -838,6 +1074,87 @@ class MapStyleRepository {
       return const {'line-color': '#FEFDF9'};
     }
     return null;
+  }
+
+  /// Which family of casing [id] is, or null for any other layer. The class
+  /// comes from the layer id because the provider draws one casing layer per
+  /// class family, in `road_`, `bridge_` and `tunnel_` flavours that differ only
+  /// by prefix.
+  static _CasingFamily? _casingFamily(String id) {
+    if (!id.endsWith('_casing') ||
+        !(id.startsWith('road_') ||
+            id.startsWith('tunnel_') ||
+            id.startsWith('bridge_'))) {
+      return null;
+    }
+    if (id.contains('service_track') || id.contains('path_pedestrian')) {
+      return _CasingFamily.pale;
+    }
+    // Ramps first: `motorway_link_casing` would otherwise match `motorway`.
+    if (id.contains('motorway_link')) return _CasingFamily.motorwayLink;
+    if (id.contains('motorway')) return _CasingFamily.motorway;
+    if (id.contains('trunk_primary')) return _CasingFamily.trunkPrimary;
+    if (id.contains('secondary_tertiary')) {
+      return _CasingFamily.secondaryTertiary;
+    }
+    if (id.contains('link')) return _CasingFamily.link;
+    if (id.contains('minor') || id.contains('street')) {
+      return _CasingFamily.minor;
+    }
+    return null;
+  }
+
+  /// The provider's casing width for [family] with one pixel added from zoom
+  /// 14, or null for the families whose width is left alone. Bridges and tunnels
+  /// widen their street casing to different sizes at close zoom, so those two
+  /// have their own stops and gain exactly the same pixel.
+  static List<Object>? _casingWidth(_CasingFamily family, String id) =>
+      switch (family) {
+        _CasingFamily.pale => null,
+        _CasingFamily.minor =>
+          id.startsWith('bridge_')
+              ? _lightCasingWidthMinorBridge
+              : id.startsWith('tunnel_')
+              ? _lightCasingWidthMinorTunnel
+              : _lightCasingWidthMinor,
+        _CasingFamily.secondaryTertiary => _lightCasingWidthSecondaryTertiary,
+        _CasingFamily.trunkPrimary ||
+        _CasingFamily.motorway => _lightCasingWidthMajor,
+        _CasingFamily.link ||
+        _CasingFamily.motorwayLink => _lightCasingWidthLink,
+      };
+
+  /// The edge of a road in the Restrained map, darker and one pixel wider than
+  /// the first restrained repaint drew it (#841). A casing this does not
+  /// recognise keeps the pale service edge and the provider's width, which is
+  /// what every casing used to get.
+  static Map<String, Object?> _restrainedLightCasingPaint(String id) {
+    final family = _casingFamily(id);
+    final width = family == null ? null : _casingWidth(family, id);
+    final colour = switch (family) {
+      null || _CasingFamily.pale => _lightCasingService,
+      _CasingFamily.minor => _lightCasingMinor,
+      _CasingFamily.secondaryTertiary => _lightCasingSecondaryTertiary,
+      _CasingFamily.trunkPrimary => _lightCasingTrunkPrimary,
+      _CasingFamily.motorway ||
+      _CasingFamily.motorwayLink => _lightCasingMotorway,
+      _CasingFamily.link => _lightCasingLink,
+    };
+    return {'line-color': colour, 'line-width': ?width};
+  }
+
+  /// The edge of a road in the Original map: the provider's own colours, one
+  /// pixel wider, with the pale grey of a lane's edge deepened to the same
+  /// lightness as Restrained's so it can be told from the road's white fill and
+  /// the ground. The orange edges of the larger roads keep the provider's
+  /// colour. Service roads, tracks and paths are not touched at all.
+  static Map<String, Object?>? _originalLightCasingPaint(String id) {
+    final family = _casingFamily(id);
+    if (family == null || family == _CasingFamily.pale) return null;
+    return {
+      if (family == _CasingFamily.minor) 'line-color': originalLightCasingMinor,
+      'line-width': ?_casingWidth(family, id),
+    };
   }
 
   Future<String?> _readValid(File file) async {

@@ -24,8 +24,14 @@ class RideCompletionDetector {
   const RideCompletionDetector({
     this.destinationRadiusMeters = 90,
     this.locationFreshness = const Duration(minutes: 2),
-    this.minimumRouteProgressFraction = 0.9,
+    this.minimumRouteProgressFraction = defaultMinimumRouteProgressFraction,
   });
+
+  /// How much of the route has to be behind a rider before the route counts as
+  /// ridden. Named so that anything else asking "has this rider finished the
+  /// plan?" - the location-sharing guard (#859) does - reads the same number
+  /// instead of keeping a second copy that can drift.
+  static const defaultMinimumRouteProgressFraction = 0.9;
 
   final double destinationRadiusMeters;
   final Duration locationFreshness;

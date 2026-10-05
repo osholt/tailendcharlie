@@ -13,6 +13,7 @@ import '../../domain/ride_coordination_mode.dart';
 import '../../domain/ride_event.dart';
 import '../../domain/ride_role.dart';
 import '../../services/ride_connectivity_summary.dart';
+import '../../services/transport_evidence_ledger.dart';
 import '../internet/internet_relay_status_card.dart';
 import '../nearby/relay_status_card.dart';
 import 'ride_invitation_qr_sheet.dart';
@@ -26,12 +27,14 @@ class RideDashboard extends StatelessWidget {
     required this.rideActions,
     required this.onOpenRoster,
     this.relayController,
+    this.transportEvidence,
     this.markerAssistanceController,
     this.internetRelayController,
     this.onSendQuickMessage,
     this.localObserverAssistanceActive = false,
     this.serviceWarning,
     this.connectivity,
+    this.sharingStatus,
   });
 
   final RideController controller;
@@ -39,6 +42,10 @@ class RideDashboard extends StatelessWidget {
   final Widget rideActions;
   final VoidCallback onOpenRoster;
   final NearbyRelayController? relayController;
+
+  /// Which route delivered each update from the other riders (#855), for the
+  /// Bluetooth card's line about what has been received.
+  final TransportEvidenceLedger? transportEvidence;
   final MarkerAssistanceController? markerAssistanceController;
   final InternetRelayController? internetRelayController;
   final Future<void> Function(QuickMessage)? onSendQuickMessage;
@@ -48,6 +55,10 @@ class RideDashboard extends StatelessWidget {
 
   /// The reconciled answer to "is the group seeing where I am".
   final RideConnectivitySummary? connectivity;
+
+  /// Whether this phone is sharing the rider's position, in words, with the one
+  /// action that goes with it (#859). Null for a ride that shares with nobody.
+  final Widget? sharingStatus;
 
   @override
   Widget build(BuildContext context) {
@@ -88,13 +99,20 @@ class RideDashboard extends StatelessWidget {
                 // cards that disagreed left a rider unable to tell whether the
                 // app was working; the channels keep their own detail below.
                 if (!isSolo) ...[
+                  if (sharingStatus case final sharingStatus?) ...[
+                    const SizedBox(height: 14),
+                    sharingStatus,
+                  ],
                   if (connectivity case final connectivity?) ...[
                     const SizedBox(height: 14),
                     _ConnectivitySummaryCard(summary: connectivity),
                   ],
                   if (relayController case final relayController?) ...[
                     const SizedBox(height: 14),
-                    RelayStatusCard(controller: relayController),
+                    RelayStatusCard(
+                      controller: relayController,
+                      evidence: transportEvidence,
+                    ),
                   ],
                   if (internetRelayController
                       case final internetRelayController?) ...[
@@ -658,6 +676,20 @@ class _EventTimeline extends StatelessWidget {
   }
 }
 
+/// One journal row for a status message: its label, and for one of the leader's
+/// broadcasts who sent it, so the journal reads "Oliver: Pull over" rather than a
+/// bare instruction (#854).
+@visibleForTesting
+String statusMessageRowTitle(RideEvent event) {
+  final label = event.payload['label'] as String? ?? 'Status message';
+  final kind = tryParseQuickMessage(event.payload['message']);
+  if (kind == null || !kind.isLeaderBroadcast) return label;
+  final sender = event.payload['senderDisplayName'];
+  return sender is String && sender.trim().isNotEmpty
+      ? '${sender.trim()}: $label'
+      : 'Leader: $label';
+}
+
 class _EventRow extends StatelessWidget {
   const _EventRow({required this.event});
 
@@ -679,8 +711,7 @@ class _EventRow extends StatelessWidget {
       // "Seen: <what they raised>" (#151). One row either way: the log records
       // what went into the journal, and the ride surface is where a rider is
       // actually told (`_QuickMessageAlertCard` in the map).
-      RideEventType.statusMessage =>
-        event.payload['label'] as String? ?? 'Status message',
+      RideEventType.statusMessage => statusMessageRowTitle(event),
       RideEventType.riderLocationUpdated => 'Location updated',
       RideEventType.hazardReported => 'Hazard reported',
       RideEventType.hazardCleared => 'Hazard cleared',

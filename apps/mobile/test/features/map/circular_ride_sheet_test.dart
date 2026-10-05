@@ -4,6 +4,7 @@ import 'package:ride_relay/domain/distance_unit.dart';
 import 'package:ride_relay/domain/imported_route.dart';
 import 'package:ride_relay/features/map/circular_ride_sheet.dart';
 import 'package:ride_relay/services/circular_ride_planner.dart';
+import 'package:ride_relay/services/road_routing.dart';
 
 void main() {
   testWidgets('returns direction distance and road character', (tester) async {
@@ -41,6 +42,63 @@ void main() {
     expect(result!.distanceMeters, closeTo(160934.4, 0.1));
     expect(result!.preferences.style, RouteStyle.flowing);
     expect(result!.preferences.avoidMotorways, isTrue);
+  });
+
+  testWidgets('a loop starts from a chosen place when there is no fix', (
+    tester,
+  ) async {
+    // #847: the start used to be the current position or nothing at all.
+    CircularRideRequest? result;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Builder(
+          builder: (context) => Scaffold(
+            body: FilledButton(
+              onPressed: () async {
+                result = await CircularRideSheet.show(
+                  context,
+                  start: null,
+                  distanceUnit: DistanceUnit.miles,
+                  searchService: const _MeetingPointSearch(),
+                );
+              },
+              child: const Text('Open'),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.text('Open'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Your location'), findsOneWidget);
+    await tester.ensureVisible(find.byKey(const Key('generate-circular-ride')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('generate-circular-ride')));
+    await tester.pumpAndSettle();
+    expect(result, isNull, reason: 'there is nowhere to start from yet');
+    expect(find.textContaining('Choose where the loop starts'), findsOneWidget);
+
+    await tester.ensureVisible(
+      find.byKey(const Key('circular-ride-change-start')),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('circular-ride-change-start')));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const Key('place-search-field')), 'meet');
+    await tester.tap(find.byKey(const Key('place-search-submit')));
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.byKey(const Key('place-search-result-Meeting point, Shire')),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Meeting point'), findsOneWidget);
+
+    await tester.ensureVisible(find.byKey(const Key('generate-circular-ride')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('generate-circular-ride')));
+    await tester.pumpAndSettle();
+    expect(result?.start, const GeoPoint(latitude: 52.02, longitude: -1.05));
   });
 
   testWidgets('day preset supplies distance and break frequency', (
@@ -123,4 +181,16 @@ void main() {
     expect(motorway.value, isFalse);
     expect(majorRoads.value, isTrue);
   });
+}
+
+class _MeetingPointSearch implements DestinationSearchService {
+  const _MeetingPointSearch();
+
+  @override
+  Future<List<DestinationMatch>> search(String query) async => const [
+    DestinationMatch(
+      label: 'Meeting point, Shire',
+      point: GeoPoint(latitude: 52.02, longitude: -1.05),
+    ),
+  ];
 }

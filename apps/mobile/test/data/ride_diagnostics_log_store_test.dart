@@ -142,6 +142,110 @@ void main() {
     });
   });
 
+  // #855: on 4 October the operator could only share Where To logs after a group
+  // ride. Every Where To navigation writes a log, and they all shared one pool of
+  // five with the rides.
+  group('Where To navigations cannot push a ride\'s log out', () {
+    const personal = RideDiagnosticsLog.personalNavigationRideCode;
+
+    test('a ride\'s log survives any number of newer Where To logs', () async {
+      await store.write(
+        rideId: 'group-ride',
+        text: _log('123456', at: DateTime.utc(2026, 10, 4, 10)),
+      );
+
+      // A day of planning and replanning legs: far more than the pool of five.
+      for (var index = 0; index < 12; index += 1) {
+        await store.write(
+          rideId: 'where-to-$index',
+          text: _log(personal, at: DateTime.utc(2026, 10, 4, 12, index)),
+        );
+      }
+
+      final logs = await store.list();
+      expect(
+        logs.map((log) => log.rideId),
+        contains('group-ride'),
+        reason: 'a short navigation must never evict the group ride',
+      );
+    });
+
+    test('Where To logs are bounded on their own, newest kept', () async {
+      final kept = FileRideDiagnosticsLogStore.maximumRetainedPersonalLogs;
+
+      for (var index = 0; index < kept + 4; index += 1) {
+        await store.write(
+          rideId: 'where-to-$index',
+          text: _log(personal, at: DateTime.utc(2026, 10, 4, 12, index)),
+        );
+      }
+
+      final navigations = (await store.list()).where(
+        (log) => log.isPersonalNavigation,
+      );
+      expect(navigations, hasLength(kept));
+      expect(
+        navigations.map((log) => log.rideId),
+        contains('where-to-${kept + 3}'),
+        reason: 'the newest is never the one dropped',
+      );
+      expect(
+        navigations.map((log) => log.rideId),
+        isNot(contains('where-to-0')),
+      );
+    });
+
+    test(
+      'rides are still bounded, and Where To logs do not count against them',
+      () async {
+        final kept = FileRideDiagnosticsLogStore.maximumRetainedLogs;
+        for (var index = 0; index < kept + 2; index += 1) {
+          await store.write(
+            rideId: 'ride-$index',
+            text: _log('CODE$index', at: DateTime.utc(2026, 10, 3, 9, index)),
+          );
+        }
+        for (var index = 0; index < 3; index += 1) {
+          await store.write(
+            rideId: 'where-to-$index',
+            text: _log(personal, at: DateTime.utc(2026, 10, 4, 12, index)),
+          );
+        }
+
+        final logs = await store.list();
+        final rides = logs.where((log) => !log.isPersonalNavigation);
+        expect(rides, hasLength(kept));
+        expect(rides.map((log) => log.rideId), isNot(contains('ride-0')));
+        expect(logs.where((log) => log.isPersonalNavigation), hasLength(3));
+      },
+    );
+  });
+
+  group('a log is named for what it is in a list', () {
+    test('a Where To navigation says so rather than PERSONAL', () async {
+      await store.write(
+        rideId: 'where-to',
+        text: _log(RideDiagnosticsLog.personalNavigationRideCode),
+      );
+
+      final log = (await store.latest())!;
+
+      expect(log.isPersonalNavigation, isTrue);
+      expect(log.title, 'Where To navigation');
+      // The attachment keeps its name: this is only about the list.
+      expect(log.fileName, 'tail-end-charlie-diagnostics-PERSONAL.txt');
+    });
+
+    test('a ride is named by its code', () async {
+      await store.write(rideId: 'ride-1', text: _log('123456'));
+
+      final log = (await store.latest())!;
+
+      expect(log.isPersonalNavigation, isFalse);
+      expect(log.title, 'Ride 123456');
+    });
+  });
+
   group('a ride id is not trusted as a file name', () {
     test('a traversal attempt cannot escape the directory', () async {
       // Ride ids arrive in relay payloads, so this is untrusted input reaching a

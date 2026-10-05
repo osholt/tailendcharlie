@@ -8,6 +8,7 @@ import '../domain/ride_session.dart';
 import '../internet/internet_relay_client.dart';
 import '../relay/live_presence.dart';
 import '../relay/relay_presence.dart';
+import '../services/transport_evidence_ledger.dart';
 
 /// Maintains one short-lived, non-journalled position per rider for the whole
 /// ride.
@@ -27,12 +28,19 @@ class PreStartPresenceController extends ChangeNotifier {
     this.pollInterval = const Duration(seconds: 4),
     this.freshnessPolicy = const PresenceFreshnessPolicy(),
     DateTime Function()? clock,
+    this._evidence,
   }) : _clock = clock ?? DateTime.now;
 
   final PreStartPresenceApi _api;
   final Duration pollInterval;
   final PresenceFreshnessPolicy freshnessPolicy;
   final DateTime Function() _clock;
+
+  /// Where a live position that arrives over either route is reported (#855).
+  /// Only another rider's position that is *newer* than the last one on that
+  /// route is a new update: the internet poll hands the same position back every
+  /// few seconds, and a repeat is not evidence of anything.
+  final TransportEvidenceLedger? _evidence;
   RideSession? _session;
   RiderLocation? _localPosition;
   final Map<String, RiderLocation> _internetLocations = {};
@@ -49,10 +57,14 @@ class PreStartPresenceController extends ChangeNotifier {
   bool _syncing = false;
   bool _closed = false;
   bool _clearOnNextSync = false;
+  bool _localSharingSuspended = false;
   PresenceAvailability _availability = PresenceAvailability.stopped;
   RidePresencePhase _phase = RidePresencePhase.unknown;
 
   bool get active => _active;
+
+  /// True while this rider's own position is being withheld (#859).
+  bool get localSharingSuspended => _localSharingSuspended;
 
   /// The named availability of the internet presence channel. Replaces the
   /// previous string comparison against a server status code, which turned a
@@ -248,6 +260,7 @@ class PreStartPresenceController extends ChangeNotifier {
     final session = _session;
     if (!_active ||
         session == null ||
+        _localSharingSuspended ||
         location.riderId != session.localRiderId) {
       return;
     }
@@ -264,6 +277,23 @@ class PreStartPresenceController extends ChangeNotifier {
     if (!publishImmediately) return;
     unawaited(_publishNearby(location));
     wake();
+  }
+
+  /// Stops publishing this rider's own position and withdraws what is already
+  /// out there, while the controller carries on running (#859).
+  ///
+  /// The rider is still in the ride and still sees everyone else; they are just
+  /// no longer seen. Refusing positions here, rather than relying on every caller
+  /// to stop offering them, means a late fix can never undo the pause: this is
+  /// the one place that decides what leaves the phone on both presence channels.
+  Future<void> suspendLocalSharing() async {
+    _localSharingSuspended = true;
+    await clearLocalPosition();
+  }
+
+  /// Lets this rider's positions out again. The next fix is published as usual.
+  void resumeLocalSharing() {
+    _localSharingSuspended = false;
   }
 
   Future<void> clearLocalPosition() async {
@@ -428,6 +458,13 @@ class PreStartPresenceController extends ChangeNotifier {
       return;
     }
     _internetLocations[location.riderId] = location;
+    // The ledger itself ignores this phone's own rider, which this method is
+    // also handed.
+    _evidence?.recordPresence(
+      transport: EvidenceTransport.internet,
+      riderId: location.riderId,
+      at: _clock(),
+    );
   }
 
   static PresenceAvailability _availabilityFor(InternetRelayException error) {
@@ -468,6 +505,13 @@ class PreStartPresenceController extends ChangeNotifier {
       _nearbyLocations.remove(update.riderId);
     } else {
       _nearbyLocations[update.riderId] = update;
+      // A cleared position is a rider saying they have stopped sharing, not a
+      // position, so only the real ones are counted.
+      _evidence?.recordPresence(
+        transport: EvidenceTransport.bluetooth,
+        riderId: update.riderId,
+        at: _clock(),
+      );
     }
     notifyListeners();
   }
