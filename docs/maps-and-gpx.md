@@ -556,9 +556,30 @@ renderers, so a marker is the size of its iOS twin on any density.
 pixel ratios and asserts those logical sizes. One caveat the tests cannot cover:
 if the rider has changed Android's display size, Flutter's ratio moves and the
 bitmap default does not, and a marker is off by that factor like every other
-native symbol. Trail direction arrows and hazard badges are sized by constants
-tuned the same way and have the same dependence, and the arrows' two pixel halo
-overflows the same way (a dark square behind each); they are not changed here.
+native symbol.
+
+**The trail arrows and the hazard badges follow the same rule (#900).** They were
+sized by constants tuned on a ratio of about one: the arrows' `icon-size` was 0.15
+and the badges' `1 / hazardMapSymbolRasterScale`, so on a three-pixel phone an
+arrow was about seven logical pixels where iOS draws eighteen, and every camera,
+police sighting, road defect and one-tap alert badge was fourteen where iOS draws
+forty-four. Now:
+
+- an arrow's `icon-size` is `iconGlyphIconSize(glyphSize:, pixelRatio:)`, which
+  makes the glyph `RouteTrailStyle.directionArrowSize` logical pixels - the `size`
+  of the `Icon` flutter_map draws - at any density, on the live map and on a
+  recorded ride's map;
+- a badge's is `hazardMapSymbolIconSize(pixelRatio:)`, which makes it
+  `HazardMapSymbols.extentPixels`, the size of the Flutter badge; and
+- the arrow's dark edge is a second, larger, dark copy of it drawn underneath
+  (`RouteTrailStyle.directionArrowCasingScale`), not an `icon-halo`. The arrow's
+  image is a plain mask rather than a distance field, so a halo of two pixels was
+  nothing at the right size and a solid square behind every arrow at any other,
+  which is what the old constant produced on the emulator.
+
+`arrow_hazard_density_test.dart` reads the recorded images and layers at seven
+pixel ratios and compares the arrow's ink, in logical pixels, with the ink of the
+`Icon` rendered at its size, and each badge's width with the Flutter badge's.
 
 ### The leader and the Tail End Charlie are stars (#845)
 

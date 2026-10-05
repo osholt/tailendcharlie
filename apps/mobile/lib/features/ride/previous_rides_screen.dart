@@ -25,6 +25,7 @@ import '../../services/ride_summary_exporter.dart';
 import '../../services/stored_route_library.dart';
 import '../../services/trail_direction_arrows.dart';
 import '../map/motorcycle_icon.dart';
+import '../map/route_trail_style.dart';
 import '../map/resolved_route_map_preview.dart'
     show embeddedMapGestureRecognizers;
 import '../map/stored_route_picker.dart';
@@ -1057,6 +1058,10 @@ class _ArchivedRideMapState extends State<ArchivedRideMap> {
   Future<void> _prepareStyle() async {
     final controller = _controller;
     if (controller == null) return;
+    // Read before the first await: the arrows below are sized by it. The ratio
+    // the native map divides every image by, as on the live ride map (see
+    // `_nativeMarkerPixelRatio` in `ride_map_feature.dart`).
+    final pixelRatio = MediaQuery.devicePixelRatioOf(context);
     try {
       await controller.addGeoJsonSource(
         _plannedSource,
@@ -1132,23 +1137,38 @@ class _ArchivedRideMapState extends State<ArchivedRideMap> {
           _directionSource,
           archivedRideDirectionGeoJson(overlay),
         );
-        await controller.addSymbolLayer(
-          _directionSource,
-          'archived-direction-arrows',
-          const ml.SymbolLayerProperties(
-            iconImage: _directionImage,
-            iconColor: ['get', 'color'],
-            iconHaloColor: '#10151C',
-            iconHaloWidth: 2,
-            iconSize: 0.14,
-            iconRotate: ['get', 'bearing'],
-            iconRotationAlignment: 'map',
-            iconPitchAlignment: 'map',
-            iconAllowOverlap: true,
-            iconIgnorePlacement: true,
-          ),
-          enableInteraction: false,
+        // The same arrow as the live ride map's, at the same size on any density
+        // and with the same dark edge: a larger dark copy beneath it, because the
+        // image is a plain mask and an `icon-halo` on it is nothing at the right
+        // size and a solid square at any other (#900).
+        final arrowSize = iconGlyphIconSize(
+          glyphSize: RouteTrailStyle.directionArrowSize,
+          pixelRatio: pixelRatio,
         );
+        for (final (layerId, colour, scale) in <(String, Object, double)>[
+          (
+            'archived-direction-arrow-casing',
+            RouteTrailStyle.casingHex,
+            RouteTrailStyle.directionArrowCasingScale,
+          ),
+          ('archived-direction-arrows', const ['get', 'color'], 1.0),
+        ]) {
+          await controller.addSymbolLayer(
+            _directionSource,
+            layerId,
+            ml.SymbolLayerProperties(
+              iconImage: _directionImage,
+              iconColor: colour,
+              iconSize: arrowSize * scale,
+              iconRotate: const ['get', 'bearing'],
+              iconRotationAlignment: 'map',
+              iconPitchAlignment: 'map',
+              iconAllowOverlap: true,
+              iconIgnorePlacement: true,
+            ),
+            enableInteraction: false,
+          );
+        }
       }
       if (widget.alerts.isNotEmpty) {
         // Above the track and the direction arrows, so a marker is never hidden

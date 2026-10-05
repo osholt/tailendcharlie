@@ -650,28 +650,53 @@ List<Shadow> riderInitialsShadows(Color ink, double offset) {
 
 /// Renders an arbitrary Material icon glyph as a PNG, for markers (such as
 /// hazards) that stay on the existing generic-icon style.
-Future<Uint8List> rasterizeIconGlyphPng(IconData icon, {double size = 128}) =>
-    _rasterizePng(
-      size: size,
-      paint: (canvas) {
-        final painter = TextPainter(
-          textDirection: TextDirection.ltr,
-          text: TextSpan(
-            text: String.fromCharCode(icon.codePoint),
-            style: TextStyle(
-              fontSize: size * 0.82,
-              fontFamily: icon.fontFamily,
-              package: icon.fontPackage,
-              color: const Color(0xFFFFFFFF),
-            ),
-          ),
-        )..layout();
-        painter.paint(
-          canvas,
-          Offset((size - painter.width) / 2, (size - painter.height) / 2),
-        );
-      },
+/// The side, in pixels, of the square [rasterizeIconGlyphPng] draws a glyph into.
+const double iconGlyphRasterSize = 128;
+
+/// The share of that square the glyph's em box fills, so a glyph drawn at a
+/// `fontSize` of [iconGlyphRasterSize] times this is the size the Flutter `Icon`
+/// widget draws at the same `size`.
+const double iconGlyphFontShare = 0.82;
+
+/// `icon-size` that draws a glyph rasterised by [rasterizeIconGlyphPng] at
+/// [glyphSize] logical pixels - the `size` an `Icon` widget would be given - on a
+/// native map that treats every image as [pixelRatio] pixels to a logical pixel.
+///
+/// MapLibre draws an image `width / pixelRatio` logical pixels wide before
+/// `icon-size` applies (see `_nativeMarkerPixelRatio` in `ride_map_feature.dart`),
+/// so a constant `icon-size` is right on one density and wrong on every other:
+/// the trail direction arrows' `0.15` was seven logical pixels on a three-pixel
+/// phone where iOS draws eighteen (#900).
+double iconGlyphIconSize({
+  required double glyphSize,
+  double pixelRatio = 1,
+  double rasterSize = iconGlyphRasterSize,
+}) => glyphSize * pixelRatio / (rasterSize * iconGlyphFontShare);
+
+Future<Uint8List> rasterizeIconGlyphPng(
+  IconData icon, {
+  double size = iconGlyphRasterSize,
+}) => _rasterizePng(
+  size: size,
+  paint: (canvas) {
+    final painter = TextPainter(
+      textDirection: TextDirection.ltr,
+      text: TextSpan(
+        text: String.fromCharCode(icon.codePoint),
+        style: TextStyle(
+          fontSize: size * iconGlyphFontShare,
+          fontFamily: icon.fontFamily,
+          package: icon.fontPackage,
+          color: const Color(0xFFFFFFFF),
+        ),
+      ),
+    )..layout();
+    painter.paint(
+      canvas,
+      Offset((size - painter.width) / 2, (size - painter.height) / 2),
     );
+  },
+);
 
 Future<Uint8List> _rasterizePng({
   required double size,
