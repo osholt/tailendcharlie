@@ -560,6 +560,70 @@ native symbol. Trail direction arrows and hazard badges are sized by constants
 tuned the same way and have the same dependence, and the arrows' two pixel halo
 overflows the same way (a dark square behind each); they are not changed here.
 
+### The leader and the Tail End Charlie are stars (#845)
+
+A rider's colour says who they are (#250); the shape of their marker says what
+they are to the group. The leader and the Tail End Charlie are stars and everyone
+else is a circle, on every map the app draws: the flutter_map markers, the
+MapLibre layers and the group overview's three renderers. The roster's list badge
+and the symbol picker stay circles, because they are not map markers and the
+roster already says "Lead" and "TEC" in words.
+
+**Who is a star** is one pure function,
+`riderMarkerOutlineFor(role:, isEffectiveTec:, inGroup:)` in
+`lib/domain/rider_marker_outline.dart`:
+
+- the lead is a star;
+- the Tail End Charlie *the ride resolved* is a star, whatever their own role
+  says. A leader's accepted request wins over an older self-selection (#128), so
+  two riders can claim the role in the journal while the group has one back; the
+  shell passes `_effectiveTecRiderIds`, not the claim, so the map never draws two
+  backs; and
+- a ride of one (`RideCoordinationMode.solo`) has neither, so its only marker is
+  a circle even though the creator holds the lead role.
+
+The shell reads it per rider when it builds the overlay markers and for this
+phone's own marker in `build`, so a handover, a leader's TEC request being
+accepted or a rider leaving changes the shape on the next update, with nobody
+moving.
+
+**The shapes** are in `RiderMarkerShapePainter`. A resting star has five equal
+points. A moving one turns with the heading like the circle's pointer does, but
+a five-pointed star turns into itself every 72 degrees and could not say which
+way the bike is going, so it leads with one longer point. As a share of the half
+box: resting points reach 1.06, a moving star's four other points 1.02 and its
+front 1.26, and the valleys 0.66 in both. The points reach past the box the
+circle fills on purpose. At 34 pixels a star whose points are no longer than its
+body is wide reads as a pentagon (the first version, at 0.94 against 0.66, did on
+the Android emulator), and a star that were smaller than the circle would be the
+less conspicuous marker.
+
+The valleys are not a style choice either. The glyph inside stays upright while
+the shape turns, so it has to fit at every heading, and
+`rider_marker_outline_test.dart` measures it: every pixel of every bike, at every
+ten degrees of heading, must be inside the shape. At 0.62 a wheel of the scooter
+spills half a pixel; at 0.66 nothing does. The shape's outline and fill are the
+same palette as the circle's (the dark casing, a white edge for this phone's own
+marker), so it reads on the light and the dark basemap for the same reason the
+circle does: the light fill carries it on the dark one and the dark edge on the
+light one.
+
+**On Android** the MapLibre badge layer chooses its image with one expression,
+`riderShapeImageExpression`, from the feature's `outline` property and whether it
+has a `bearing`: four images, circle and star each pointed or neutral. The two
+star images are distance fields that take a frame or two to rasterise, so they
+are registered the first time a marker needs one (`_ensureRiderSymbolImages`),
+not for every ride. The local rider's position source is rewritten when only
+their role changes (`didUpdateWidget`), because it is otherwise only written
+when they move.
+
+**Not covered.** CarPlay and Android Auto do not share this source: their map
+canvases are drawn natively (`CarPlaySceneDelegate.swift`'s `CarPlayRiderAnnotation`
+and `ProjectedMapRenderer.kt`'s `drawRider`) from a snapshot that carries `role`
+and `isTec` per rider, as circles with a ring for the TEC. Stars there are a
+native follow-up and are not claimed. The ride recap draws no rider markers (its
+map has a start and an end), so there is nothing to change.
+
 ### The light basemap
 
 The default OpenFreeMap Liberty document is now treated as the daylight partner
