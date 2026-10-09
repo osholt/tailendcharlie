@@ -45,7 +45,7 @@
     <main class="wrap legal">
       <h1>Privacy Policy</h1>
       <p class="legal-meta">
-        Effective 16 August 2026 &middot; Tail End Charlie is operated by
+        Effective 5 October 2026 &middot; Tail End Charlie is operated by
         <strong>Holt Racing Limited</strong> ("we", "us")
       </p>
 
@@ -107,10 +107,15 @@
         Location sharing only happens while a ride screen is open and only
         with the group you are riding with &mdash; you can pause or stop it
         at any time from within the app. A ride that nobody ends does not keep
-        sharing for ever: if you have been away from the group for a while
-        and are not on the route, the app asks whether you are still riding,
-        and if you do not answer it stops sharing your location until you
-        choose to resume.
+        sharing for ever: if you have been away from the group, and not on an
+        unfinished route, for about half an hour, the app asks whether you are
+        still riding. If you do not answer, it stops sharing your location 15
+        minutes after you were asked or last moved, whichever is later, and
+        keeps it stopped until you choose to resume. Sending an alert, such as
+        an emergency-stop alert, switches sharing back on so that you can be
+        found. A dot on the ride menu always shows whether you are sharing, and
+        a message on the ride screen says so while you are being asked or
+        sharing is off.
       </p>
 
       <h3>Ride and group data</h3>
@@ -184,6 +189,24 @@
       <ul>
         <li>Your distance-unit and display preferences.</li>
         <li>Imported or recorded GPX route files you haven't shared.</li>
+        <li>
+          The record of alerts raised during a ride (the one-tap
+          <strong>Report</strong> button, or a speed-camera or police report),
+          kept with the completed ride in your Ride Library with the time, the
+          place and who raised each one. It appears on the ride review. If you
+          export or share a ride, the alerts are included in the GPX, CSV or
+          summary you choose to send.
+        </li>
+        <li>
+          If your build offers the <strong>Record ride diagnostics</strong>
+          setting, which is off by default: a text log of each turn
+          instruction and when it was spoken, every alert, and this phone's own
+          route. In a group ride it also counts how updates from other riders
+          reached your phone, by phone signal or by Bluetooth. It records no
+          other rider's position and no rider's name (other phones appear as
+          &ldquo;phone A&rdquo;, &ldquo;phone B&rdquo;). Nothing is sent
+          anywhere until you choose a recipient when you share the log.
+        </li>
       </ul>
 
       <h3 id="global-ride-heatmap">Personal and global ride heatmaps</h3>
@@ -483,7 +506,7 @@
           </tr>
           <tr>
             <td>A ride record overall (if never explicitly ended)</td>
-            <td>72 hours from creation</td>
+            <td>72 hours after any phone in the ride last synchronised</td>
           </tr>
           <tr>
             <td>A planned route shared with an app code</td>
