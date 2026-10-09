@@ -22,6 +22,50 @@ safety-critical dependency. Passing the physical latency, memory, thermal,
 offline, pronunciation, and 500-prompt reliability gates below is still
 required before removing the Beta label or enabling it by default.
 
+## A warm natural voice stays natural (#616)
+
+On the 4 October Where To ride, 8 of 30 prompts were spoken by the system voice
+with the pack installed and warm. The log shows what they had in common, and
+that it was not the overlap #676 fixed:
+
+- every one carried a distance, and in every one the distance changed between the
+  prompt being decided and the voice finishing it ("In 130 yd" was "In 110
+  yards" when the system voice said it); the prompts with no distance were all
+  natural;
+- the natural voice took 7 to 12 seconds to render those prompts on that phone,
+  and none of them overlapped another prompt.
+
+The engine compared the words it had rendered with the words the ride would say
+once rendering finished, exactly. A distance is rounded to ten yards or a tenth
+of a mile, so the words changed during almost every long render of a close
+prompt; the render was discarded as stale and the current words went to the
+system voice.
+
+Now:
+
+- **The schedule decides what is stale.** `currentGuidancePhrase` in
+  `spoken_guidance_schedule.dart` is what the ride shell and Where To give the
+  engine as the current phrase. It returns the issued phrase while the same stage
+  of the same junction is still due with the same words and the rider has covered
+  no more than 40% of the distance named, or 400 m, whichever is less; the
+  refreshed phrase when the distance is really out of date or the words changed;
+  and nothing when the stage is no longer due.
+- **A superseded prompt is dropped, not spoken by the system voice.** When the
+  rendered phrase is not what the schedule now says, or speech was stopped while
+  it rendered, the fail-safe engine throws `SpokenGuidanceSuperseded`. The speaker
+  leaves the stage (or a safety alert) unconsumed, so the next fix announces what
+  is true now, in the natural voice.
+- **A genuine failure still falls back.** A render that errors, misses its
+  deadline before the model is warm, or is refused audio focus is spoken by the
+  system voice, as above.
+
+Not changed: how long a novel phrase takes to render. A cached phrase starts
+within a tenth of a second, but a prompt with a new distance is a new phrase, and
+7 to 12 seconds is a long time at speed. The tolerance above keeps that from
+becoming the system voice; it does not make the prompt earlier. The check is a
+count of `VOICE system fallback` lines in a Where To log of a ride with the pack
+installed, which #616 stays open for.
+
 ## Decision
 
 Tail End Charlie will continue to synthesize each complete spoken instruction
