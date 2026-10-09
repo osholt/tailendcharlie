@@ -192,8 +192,17 @@ assigns the build to that group, and creates an idempotent beta review
 submission. Set the input to false only when deliberately uploading an
 internal-only build.
 
-Run **TestFlight** from the Actions tab and provide a unique build number if the
-default GitHub run number has already been uploaded. Apple processes the upload
+Run **TestFlight** from the Actions tab and provide the `build_number` input:
+it is required, with no default, and must be higher than every build already in
+App Store Connect. The workflow used to default to its GitHub run number, which
+runs behind shipped numbers (#630). Its first step, before any signing or build
+work, runs `tools/release/check_build_number.py`: it rejects a malformed number,
+and, using the review API key that `TestFlight status` already uses, a number
+lower than the highest build App Store Connect holds. An equal number passes
+with a notice, because the upload step already treats "this build is already
+registered" as a re-run. The lookup is best effort - if it cannot be made the
+step warns and the run continues - and Apple's own refusal remains the
+backstop. Apple processes the upload
 before it appears under the app's TestFlight tab. External TestFlight testing
 still requires Apple's beta review, privacy, age-rating, export-compliance and
 test-information metadata, but the workflow now submits the eligible build

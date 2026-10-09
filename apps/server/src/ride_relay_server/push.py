@@ -24,6 +24,35 @@ from .models import PushDelivery, PushRegistration, Ride, RideMember, StoredEven
 from .schemas import PushRegistrationRequest
 from .service import RelayServiceError
 
+# Categories of the group instructions (#881). They are separate from `safety` so
+# the app can open the map, where the banner and the alert live, but they answer
+# to the same notification preference: see `_preference_allows`.
+CATEGORY_LEADER_BROADCAST = "leaderBroadcast"
+CATEGORY_GROUP_ALERT = "groupAlert"
+_SAFETY_PREFERENCE_CATEGORIES = frozenset(
+    {"safety", CATEGORY_LEADER_BROADCAST, CATEGORY_GROUP_ALERT}
+)
+
+# What a leader's one-tap broadcast says on the lock screen, keyed by the
+# `statusMessage` kind the app sends (#854). The words are the relay's own, never
+# the sender's `label`: a lock screen shows a fixed phrase from a closed list and
+# nothing a phone typed, and the broadcast carries no name or position.
+LEADER_BROADCAST_TEXT: dict[str, str] = {
+    "wrongWay": "Wrong way \u2013 turn around",
+    "stoppedForFuel": "Stopped for fuel",
+    "pullOver": "Pull over",
+    "regroupNextStop": "Regroup at next stop",
+}
+
+# `statusMessage` payload key that marks an acknowledgement ("Seen") of another
+# message rather than a message in its own right.
+_ACKNOWLEDGES_KEY = "acknowledgesQuickMessageEventId"
+
+# An instruction is about where the group is now. The app keeps a broadcast for
+# ten minutes; a phone that was offline and uploads an older one must not make
+# every rider's lock screen say it again.
+GROUP_INSTRUCTION_FRESHNESS = timedelta(minutes=10)
+
 
 @dataclass(frozen=True)
 class PushMessage:
@@ -36,6 +65,18 @@ class PushMessage:
     recipient_ids: frozenset[str] = frozenset()
     recipient_roles: frozenset[str] = frozenset()
     all_members: bool = False
+    # Pressing but not an emergency (#881): delivered immediately like a critical
+    # push, but a rider's notification preference can still switch it off.
+    important: bool = False
+    # Only the ride leader may send it. The relay cannot tell a leader's phone from
+    # a forged event, so it asks the roster instead of trusting the sender.
+    sender_must_lead: bool = False
+
+    @property
+    def time_sensitive(self) -> bool:
+        """Whether a provider should deliver it now rather than when convenient."""
+
+        return self.critical or self.important
 
     @property
     def data(self) -> dict[str, str]:
@@ -225,7 +266,7 @@ class PushDispatcher:
         messages = [
             message
             for event in events
-            if (message := classify_push_event(ride_id, event)) is not None
+            if (message := classify_push_event(ride_id, event, now=now)) is not None
         ]
         if not messages:
             return PushDispatchReport()
@@ -242,6 +283,13 @@ class PushDispatcher:
                 (event.get("deviceId") for event in events if event.get("id") == message.event_id),
                 None,
             )
+            if message.sender_must_lead and not self._sender_is_leader(
+                session,
+                ride_id,
+                sender_id,
+                memberships.get(sender_id) if isinstance(sender_id, str) else None,
+            ):
+                continue
             for registration in registrations:
                 membership = memberships.get(registration.installation_id)
                 if (
@@ -377,6 +425,48 @@ class PushDispatcher:
         ride.membership_projection_ready = True
         session.flush()
 
+    def _sender_is_leader(
+        self,
+        session: Session,
+        ride_id: str,
+        sender_id: object,
+        membership: _Membership | None,
+    ) -> bool:
+        """Whether the sender holds the lead role, as the app's own journal reads it.
+
+        The app counts a leader who is acting as a junction marker as the leader, but
+        the roster records that rider as a marker, so a marker is asked what they were
+        before they started marking.
+        """
+
+        if membership is None or membership.state == "left":
+            return False
+        if membership.role == "lead":
+            return True
+        if membership.role != "marker" or not isinstance(sender_id, str):
+            return False
+        started = session.scalar(
+            select(StoredEvent)
+            .where(
+                StoredEvent.ride_id == ride_id,
+                StoredEvent.device_id == sender_id,
+                StoredEvent.event_type == "markerStarted",
+            )
+            .order_by(StoredEvent.sequence.desc())
+            .limit(1)
+        )
+        if started is None:
+            return False
+        try:
+            event = self._cipher.decrypt_json(
+                started.body_ciphertext,
+                associated_data=f"event:{ride_id}:{started.event_id}".encode(),
+            )
+        except (TypeError, ValueError):
+            return False
+        payload = event.get("payload") if isinstance(event, dict) else None
+        return isinstance(payload, dict) and payload.get("previousRole") == "lead"
+
     @staticmethod
     def _targets(message: PushMessage, membership: _Membership) -> bool:
         return (
@@ -392,7 +482,7 @@ class PushDispatcher:
     ) -> bool:
         if message.critical:
             return True
-        if message.category == "safety":
+        if message.category in _SAFETY_PREFERENCE_CATEGORIES:
             return registration.safety_enabled
         if message.category == "administrative":
             return registration.administrative_enabled
@@ -434,6 +524,8 @@ class _Membership:
 def classify_push_event(
     ride_id: str,
     event: dict[str, Any],
+    *,
+    now: datetime | None = None,
 ) -> PushMessage | None:
     event_id = event.get("id")
     event_type = event.get("type")
@@ -445,6 +537,23 @@ def classify_push_event(
 
     if event_type == "statusMessage":
         message_type = payload.get("message")
+        if message_type in LEADER_BROADCAST_TEXT:
+            # A "Seen" for a broadcast is not a broadcast, and a stale one is not
+            # worth interrupting anybody for.
+            if _ACKNOWLEDGES_KEY in payload or not _is_fresh_instruction(event, now):
+                return None
+            return PushMessage(
+                event_id=event_id,
+                ride_id=ride_id,
+                category=CATEGORY_LEADER_BROADCAST,
+                title="Message from your leader",
+                body=LEADER_BROADCAST_TEXT[message_type],
+                critical=False,
+                important=True,
+                sender_must_lead=True,
+                recipient_ids=recipients,
+                all_members=not recipients,
+            )
         if message_type in {"emergencyStop", "assistance"}:
             return PushMessage(
                 event_id=event_id,
@@ -479,6 +588,30 @@ def classify_push_event(
                 recipient_roles=frozenset({"lead", "tailEndCharlie", "marker"}),
             )
         return None
+
+    if event_type == "hazardReported":
+        # The one-tap alert (#849) is an ordinary `other` hazard carrying
+        # `kind: alert`, so a build that has never heard of it still decodes it.
+        # Police, camera and road-hazard reports have no `kind` and are not pushed.
+        # The app refuses to raise an alert where enforcement warnings are barred,
+        # and the push names no kind of alert and no place.
+        hazard = payload.get("hazard")
+        if (
+            not isinstance(hazard, dict)
+            or hazard.get("kind") != "alert"
+            or not _is_fresh_instruction(event, now)
+        ):
+            return None
+        return PushMessage(
+            event_id=event_id,
+            ride_id=ride_id,
+            category=CATEGORY_GROUP_ALERT,
+            title="Ride alert",
+            body="A rider has raised an alert. Open Tail End Charlie to see it.",
+            critical=False,
+            important=True,
+            all_members=True,
+        )
 
     if event_type == "routeDeviationChanged":
         alert = payload.get("alert")
@@ -568,7 +701,7 @@ class ApnsPushProvider:
     def send(self, token: str, message: PushMessage) -> PushProviderResult:
         aps: dict[str, Any] = {
             "alert": {"title": message.title, "body": message.body},
-            "sound": "default" if message.critical else None,
+            "sound": "default" if message.time_sensitive else None,
             "thread-id": f"ride-{base64url(sha256(message.ride_id.encode()))[:24]}",
         }
         aps = {key: value for key, value in aps.items() if value is not None}
@@ -578,7 +711,7 @@ class ApnsPushProvider:
                 "authorization": f"bearer {self._jwt()}",
                 "apns-topic": self._bundle_id,
                 "apns-push-type": "alert",
-                "apns-priority": "10" if message.critical else "5",
+                "apns-priority": "10" if message.time_sensitive else "5",
                 "apns-collapse-id": message.event_id[:64],
             },
             json={
@@ -656,10 +789,10 @@ class FcmPushProvider:
                     },
                     "data": message.data,
                     "android": {
-                        "priority": "HIGH" if message.critical else "NORMAL",
+                        "priority": "HIGH" if message.time_sensitive else "NORMAL",
                         "notification": {
                             "channel_id": (
-                                "ride_safety_alerts" if message.critical else "ride_updates"
+                                "ride_safety_alerts" if message.time_sensitive else "ride_updates"
                             ),
                             "tag": message.event_id,
                         },
@@ -745,6 +878,31 @@ def _authorize_installation(
         raise RelayServiceError(404, "Ride is not available")
     if not hmac.compare_digest(ride.token_hash, token_hash(bearer_token)):
         raise RelayServiceError(403, "Ride credential rejected")
+
+
+def _is_fresh_instruction(event: dict[str, Any], now: datetime | None) -> bool:
+    """Whether a group instruction is still worth interrupting anybody for.
+
+    False once the event's own expiry has passed, or it was raised more than
+    `GROUP_INSTRUCTION_FRESHNESS` ago. An event with no readable creation time is
+    not pushed: a broadcast the relay cannot date is one it cannot call current.
+    """
+
+    now = now or datetime.now(UTC)
+    created_at = _event_time(event.get("createdAt"))
+    if created_at is None or now - created_at > GROUP_INSTRUCTION_FRESHNESS:
+        return False
+    expires_at = _event_time(event.get("expiresAt"))
+    return expires_at is None or expires_at > now
+
+
+def _event_time(value: object) -> datetime | None:
+    if not isinstance(value, str):
+        return None
+    try:
+        return _as_utc(datetime.fromisoformat(value.replace("Z", "+00:00")))
+    except ValueError:
+        return None
 
 
 def _recipient_ids(payload: dict[str, Any]) -> frozenset[str]:
