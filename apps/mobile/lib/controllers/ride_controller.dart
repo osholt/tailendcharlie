@@ -40,7 +40,7 @@ import '../services/situation_event_factory.dart';
 import '../services/tec_role_assignment.dart';
 import '../internet/internet_relay_client.dart';
 import '../domain/recorded_route_store.dart';
-import '../services/completed_ride_plan_link.dart';
+import '../services/completed_ride_filing.dart';
 
 typedef Clock = DateTime Function();
 typedef IdFactory = String Function();
@@ -1640,12 +1640,14 @@ class RideController extends ChangeNotifier {
     ImportedRoute? route,
     bool startNow = false,
     String? rideName,
+    String? continuesRideId,
   }) async {
     await _run(() async {
       if (!coordinationMode.isGroup) {
         throw const FormatException('Choose how the group will ride.');
       }
       final existing = _session;
+      var continues = continuesRideId;
       if (existing != null && !rideEnded) {
         if (this.coordinationMode.isGroup) {
           throw const FormatException('This is already a group ride.');
@@ -1653,6 +1655,9 @@ class RideController extends ChangeNotifier {
         // Checked before the solo ride is given up, so a refusal below cannot
         // cost the rider the ride they are on.
         _normaliseName(displayName);
+        // A solo ride that was ridden is filed, and the group ride carries on
+        // from it as one ride in My rides (#896).
+        if (rideStarted) continues ??= existing.rideId;
         await _archiveCurrentRideIfComplete(force: true);
         await _removeRideData();
       }
@@ -1663,6 +1668,7 @@ class RideController extends ChangeNotifier {
         riderColor: riderColor,
         coordinationMode: coordinationMode,
         rideName: rideName ?? route?.name,
+        continuesRideId: continues,
       );
       if (route != null) await _recordRoutePublication(route);
       if (startNow) await _recordRideStart();
@@ -2004,6 +2010,7 @@ class RideController extends ChangeNotifier {
     RideCoordinationMode coordinationMode =
         RideCoordinationMode.secondBikeDropOff,
     String? rideName,
+    String? continuesRideId,
   }) async {
     // The home screen deliberately remains available while an ended ride is
     // set aside (#207). Creating its replacement must file that completed ride
@@ -2044,6 +2051,7 @@ class RideController extends ChangeNotifier {
       rideName: normalisedRideName == null || normalisedRideName.isEmpty
           ? null
           : normalisedRideName,
+      continuesRideId: continuesRideId,
     );
     _session = session;
     await _sessionStore.save(session);
@@ -2224,9 +2232,6 @@ class RideController extends ChangeNotifier {
     try {
       // Ended journals are replayed after restart. Refresh their geometry
       // without erasing edits the rider has already made in the library.
-      final existing = (await store.list())
-          .where((ride) => ride.rideId == snapshot.rideId)
-          .firstOrNull;
       final initialPlan = const RideRouteReducer()
           .fromEvents(
             rideId: activeSession.rideId,
@@ -2236,12 +2241,13 @@ class RideController extends ChangeNotifier {
             ),
           )
           .route;
-      final linked = await completeRidePlanLink(
+      // One ride with any leg it carried on from (#896), keeping library
+      // edits already made to it.
+      await fileCompletedRide(
+        store,
         snapshot.copyWith(plannedRoute: initialPlan),
-        existing: existing,
         library: _recordedRouteStore,
       );
-      await store.save(linked);
       _rideArchiveError = null;
     } on Object catch (error, stackTrace) {
       _rideArchiveError = rideArchiveFailedMessage;

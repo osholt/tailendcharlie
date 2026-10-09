@@ -12,7 +12,7 @@ import '../../controllers/speed_limit_display_controller.dart';
 import '../../controllers/spoken_guidance_controller.dart';
 import '../../domain/completed_ride.dart';
 import '../../domain/recorded_route_store.dart';
-import '../../services/completed_ride_plan_link.dart';
+import '../../services/completed_ride_filing.dart';
 import '../../domain/distance_unit.dart';
 import '../../domain/completed_ride_store.dart';
 import '../../domain/geo_point.dart' as awareness_geo;
@@ -71,6 +71,7 @@ class HomeMapBackdrop extends StatefulWidget {
     this.editRouteRequestToken,
     this.onEditRouteRequestHandled,
     this.onRouteChanged,
+    this.onPersonalNavigationChanged,
     this.localDisplayName = 'Rider',
     this.onNavigationArchived,
     this.navigating = false,
@@ -135,6 +136,10 @@ class HomeMapBackdrop extends StatefulWidget {
 
   /// Fires after a Where To session has been saved into My rides.
   final ValueChanged<CompletedRide>? onNavigationArchived;
+
+  /// Fires with the id of the navigation being recorded, or null when it
+  /// ends, so a conversion to a group ride can carry on from it (#896).
+  final ValueChanged<String?>? onPersonalNavigationChanged;
 
   /// Whether this map is following a route.
   ///
@@ -272,7 +277,20 @@ class _HomeMapBackdropState extends State<HomeMapBackdrop>
   void _onRouteChanged(route_domain.ImportedRoute? route) {
     if (route != null) {
       final starting = !_freeRoamRideRecorder.active;
-      _freeRoamRideRecorder.start(route, initialPosition: _position.value);
+      final pending = widget.pendingInAppRoute;
+      _freeRoamRideRecorder.start(
+        route,
+        initialPosition: _position.value,
+        // A route ridden on from a group ride is filed with it (#896).
+        continuesRideId: pending?.route.id == route.id
+            ? pending?.continuesRideId
+            : null,
+      );
+      if (starting) {
+        widget.onPersonalNavigationChanged?.call(
+          _freeRoamRideRecorder.activeRideId,
+        );
+      }
       if (starting) {
         _startDiagnostics(late: false);
       } else {
@@ -287,6 +305,7 @@ class _HomeMapBackdropState extends State<HomeMapBackdrop>
     _diagnosticsWriter = null;
     _diagnosticsRideId = null;
     final completed = _freeRoamRideRecorder.finish();
+    widget.onPersonalNavigationChanged?.call(null);
     widget.onRouteChanged?.call(null);
     if (completed != null) {
       _queueCompletedNavigation(
@@ -335,15 +354,12 @@ class _HomeMapBackdropState extends State<HomeMapBackdrop>
     final store = widget.completedRideStore;
     if (store == null) return;
     try {
-      final existing = (await store.list())
-          .where((ride) => ride.rideId == completed.rideId)
-          .firstOrNull;
-      final linked = await completeRidePlanLink(
+      // One ride with any group ride it carried on from (#896).
+      final linked = await fileCompletedRide(
+        store,
         completed,
-        existing: existing,
         library: widget.recordedRouteStore,
       );
-      await store.save(linked);
       if (announce && mounted) widget.onNavigationArchived?.call(linked);
     } on Object {
       if (!reportFailure || !mounted) return;
