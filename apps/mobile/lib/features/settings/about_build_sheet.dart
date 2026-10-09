@@ -180,8 +180,9 @@ class AboutBuildSheet extends StatelessWidget {
 
 /// Non-blocking "you may not be on the newest tester build" notice.
 ///
-/// This never blocks the app. The hard, blocking gate for genuinely
-/// incompatible builds stays with the relay's `updateRequired` phase.
+/// This never blocks the app. A build the ride service has retired is handled
+/// separately and also never blocks it: see `UpdateRequiredScreen` (#37), which
+/// only pauses sharing through the ride service.
 class TesterUpdateNotice extends StatelessWidget {
   const TesterUpdateNotice({
     super.key,
