@@ -1,5 +1,35 @@
 export const GLOBAL_HEATMAP_VISIBLE_KEY = "tec-global-heatmap-visible-v1";
 
+// The global layer's colours (#913). The phone's copy is `globalHeatmapRamp` in
+// apps/mobile/lib/features/map/heatmap_ramp.dart and a test holds the two to
+// each other. Pink through deeper pink to crimson, more opaque as a road gets
+// busier: never the blue, teal or orange of the discovery highlights.
+export const GLOBAL_HEATMAP_INTENSITY = 0.8;
+export const GLOBAL_HEATMAP_LAYER_OPACITY = 1;
+export const GLOBAL_HEATMAP_RAMP = Object.freeze([
+  Object.freeze({ density: 0.2, color: "#ec4899", alpha: 0.5 }),
+  Object.freeze({ density: 0.55, color: "#db2777", alpha: 0.6 }),
+  Object.freeze({ density: 1, color: "#be123c", alpha: 0.75 }),
+]);
+
+function rgba(hex, alpha) {
+  const channel = (offset) => Number.parseInt(hex.slice(offset, offset + 2), 16);
+  return `rgba(${channel(1)},${channel(3)},${channel(5)},${alpha})`;
+}
+
+/** The MapLibre `heatmap-color` expression: transparent in the first stop's own
+ * colour, so rising to it never passes through grey. */
+export function globalHeatmapColorExpression(ramp = GLOBAL_HEATMAP_RAMP) {
+  return [
+    "interpolate",
+    ["linear"],
+    ["heatmap-density"],
+    0,
+    rgba(ramp[0].color, 0),
+    ...ramp.flatMap(({ density, color, alpha }) => [density, rgba(color, alpha)]),
+  ];
+}
+
 export function boundedHeatmapViewport({ west, south, east, north, zoom }) {
   const values = [west, south, east, north, zoom].map(Number);
   if (values.some((value) => !Number.isFinite(value))) return null;
