@@ -53,6 +53,7 @@ class RidePlanEditing {
     this.acquireCurrentLocation,
     this.offerCoordinationChoice = false,
     this.confirmLabel = defaultConfirmLabel,
+    this.replanOnOpen = false,
   });
 
   final RidePlan plan;
@@ -77,6 +78,11 @@ class RidePlanEditing {
   final String Function(RidePlan plan) confirmLabel;
 
   static String defaultConfirmLabel(RidePlan plan) => 'Confirm';
+
+  /// Whether the route being edited is not this plan, routed, even though it
+  /// has the same number of places: a plan trimmed to what is left of a ride
+  /// starts somewhere else (#893). Its line is shown until the new one comes.
+  final bool replanOnOpen;
 }
 
 /// A confirmed plan and the route it was routed to.
@@ -399,7 +405,7 @@ class _RouteReviewScreenState extends State<RouteReviewScreen> {
       // Anything else — a new plan, or a route whose waypoints are not the
       // plan's places — is routed now, so the line, the list and the drawn
       // adjustments all describe the same legs.
-      _planRouted = isRoutedPlan(widget.route, plan);
+      _planRouted = !planning.replanOnOpen && isRoutedPlan(widget.route, plan);
       if (!_planRouted) {
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (mounted) unawaited(_replan(plan));

@@ -41,6 +41,7 @@ import '../../services/flutter_vector_style.dart';
 import '../../services/basemap_status.dart';
 import '../../services/biker_place_catalogue.dart';
 import '../../services/circular_ride_planner.dart';
+import '../../services/ride_plan_remaining.dart';
 import '../../services/ride_plan_router.dart';
 import '../../services/demo_route_loader.dart';
 import '../../services/discovery_layer_preferences.dart';
@@ -7192,6 +7193,7 @@ class _RideMapScreenState extends State<RideMapScreen>
   Future<ImportedRoute?> _planOnSurface(
     RidePlan plan, {
     ImportedRoute? editing,
+    bool replanOnOpen = false,
   }) async {
     final outcome = await RouteReviewScreen.showPlan(
       context,
@@ -7209,6 +7211,7 @@ class _RideMapScreenState extends State<RideMapScreen>
             ValueNotifier<GeoPoint?>(_effectivePosition),
         acquireCurrentLocation: widget.acquireCurrentPosition,
         confirmLabel: (_) => widget.rideStarted ? 'Update route' : 'Use route',
+        replanOnOpen: replanOnOpen,
       ),
       route: editing,
       distanceUnit: widget.distanceUnit,
@@ -8938,7 +8941,22 @@ class _RideMapScreenState extends State<RideMapScreen>
       await _planDestination();
       return;
     }
-    await _planOnSurface(RidePlan.fromRoute(route), editing: route);
+    // Under way, the plan is what is left of the ride: from here, through the
+    // stops still ahead (#893). The revision it becomes leaves out the part
+    // already ridden.
+    final position = _effectivePosition;
+    final underWay = widget.isNavigating && position != null;
+    await _planOnSurface(
+      underWay
+          ? remainingRidePlan(
+              route,
+              progressMeters: _progressGeometry.progressMeters,
+              position: position,
+            )
+          : RidePlan.fromRoute(route),
+      editing: route,
+      replanOnOpen: underWay,
+    );
   }
 
   /// A café or highlight added from the map is a stop on the plan, on the leg
