@@ -16,8 +16,8 @@ since destination planning landed:
 
 | Piece | Where |
 | --- | --- |
-| Endpoint | `RoutingConfiguration.geocodingBaseUrl`, defaulting to `https://nominatim.openstreetmap.org`, overridable with `--dart-define=RIDE_RELAY_GEOCODING_URL` |
-| Client | `NominatimDestinationSearchService` — `/search?format=jsonv2&limit=5`, HTTPS enforced, in-memory cache keyed by query, raw `lat,lon` parsed without a network call |
+| Endpoint | `RoutingConfiguration.geocodingBaseUrl`, resolved by `RoutingServices` (#917): a `RIDE_RELAY_GEOCODING_URL` define, else the Photon or Nominatim URL the relay advertises, else `https://nominatim.openstreetmap.org` |
+| Client | `NominatimDestinationSearchService` — `/search?format=jsonv2&limit=5`, HTTPS enforced, in-memory cache keyed by query, raw `lat,lon` parsed without a network call. `PhotonDestinationSearchService` (`/api?limit=5`) behaves the same and is used when the resolved geocoder is Photon |
 | Planning | `DestinationRoutePlanner.planForReview` geocodes origin, stops and destination, then routes through them |
 | Identification | A `User-Agent` naming the app and its repository, as Nominatim requires |
 

@@ -10,6 +10,7 @@ import '../domain/ride_event.dart';
 import '../domain/rider_location.dart';
 import '../domain/ride_session.dart';
 import '../relay/relay_event_compatibility.dart';
+import '../services/routing_service_endpoints.dart';
 
 class InternetRelayConfiguration {
   const InternetRelayConfiguration({
@@ -1404,6 +1405,14 @@ Future<RelayCompatibilityResult> _fetchCompatibility({
         cacheSeconds is! int) {
       throw const FormatException('Compatibility fields are invalid.');
     }
+    // Where routing and geocoding live (#917). Every fresh answer is adopted,
+    // an empty one included: that is how the operator moves the services, and
+    // how a cut-over is rolled back, without an app release.
+    unawaited(
+      RoutingServices.adopt(
+        AdvertisedRoutingServices.parse(decoded['serviceUrls']),
+      ),
+    );
     final capabilities = rawCapabilities.cast<String>().toSet();
     final required = rawRequired.cast<String>().toSet();
     final missingRequired = required.difference(descriptor.capabilities);
@@ -1457,6 +1466,35 @@ Future<RelayCompatibilityResult> _fetchCompatibility({
       retryable: true,
       code: 'temporarily_unavailable',
     );
+  }
+}
+
+/// Asks the relay where routing and geocoding live, once, at launch (#917).
+///
+/// Destination search and planning can happen before anything else talks to
+/// the relay, so the launch asks rather than waiting for the first ride. A
+/// failure changes nothing: the app keeps what it last adopted.
+Future<void> refreshAdvertisedRoutingServices({
+  InternetRelayConfiguration? configuration,
+  http.Client? client,
+}) async {
+  final resolved =
+      configuration ?? InternetRelayConfiguration.fromEnvironment();
+  if (!resolved.isConfigured) return;
+  final ownedClient = client == null;
+  final http.Client effectiveClient = client ?? http.Client();
+  try {
+    await _fetchCompatibility(
+      configuration: resolved,
+      client: effectiveClient,
+      descriptor: RelayClientDescriptor.current(),
+      clock: DateTime.now,
+      cached: null,
+    );
+  } on Object {
+    // Offline, or the relay is unwell: the services last adopted stay in force.
+  } finally {
+    if (ownedClient) effectiveClient.close();
   }
 }
 

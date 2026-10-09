@@ -365,6 +365,7 @@ def create_app(
                 "iOS": settings.ios_update_url,
                 "android": settings.android_update_url,
             },
+            serviceUrls=settings.service_urls,
         )
 
     def _heatmap_rate_limit(

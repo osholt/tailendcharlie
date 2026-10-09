@@ -1,10 +1,21 @@
 from __future__ import annotations
 
+import base64
+
+import pytest
 from fastapi.testclient import TestClient
+from pydantic import ValidationError
 
 from ride_relay_server.app import create_app
+from ride_relay_server.config import Settings
 
 SECRET = "0123456789abcdef0123456789abcdef"
+
+
+def _key(byte: int) -> str:
+    return base64.urlsafe_b64encode(bytes([byte]) * 32).decode().rstrip("=")
+
+
 CURRENT_CAPABILITIES = [
     "global-ride-heatmap-v1",
     "ride-start-v1",
@@ -41,6 +52,7 @@ def test_compatibility_document_advertises_protocol_and_capabilities(client) -> 
             "iOS": "https://tailendcharlie.app",
             "android": "https://tailendcharlie.app",
         },
+        "serviceUrls": {},
     }
 
 
@@ -51,6 +63,58 @@ def test_compatibility_document_reports_deployed_commit(settings) -> None:
 
     assert response.status_code == 200
     assert response.json()["serverBuildCommit"] == settings.build_commit
+
+
+def test_compatibility_document_advertises_configured_service_urls(settings) -> None:
+    settings = settings.model_copy(
+        update={
+            "service_valhalla_url": "https://routing.example.com/valhalla",
+            "service_photon_url": "https://routing.example.com/photon",
+        }
+    )
+    with TestClient(create_app(settings)) as client:
+        response = client.get("/api/v1/compatibility")
+
+    assert response.status_code == 200
+    # Only what is configured: a client keeps its own fallback for the rest.
+    assert response.json()["serviceUrls"] == {
+        "valhalla": "https://routing.example.com/valhalla",
+        "photon": "https://routing.example.com/photon",
+    }
+
+
+def test_service_urls_are_normalised_and_blank_means_unset(tmp_path) -> None:
+    settings = Settings(
+        data_encryption_key=_key(7),
+        cursor_signing_key=_key(11),
+        database_url=f"sqlite:///{tmp_path / 'relay.sqlite3'}",
+        service_valhalla_url=" https://routing.example.com/valhalla/ ",
+        service_osrm_url="   ",
+    )
+
+    assert settings.service_urls == {"valhalla": "https://routing.example.com/valhalla"}
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://routing.example.com/valhalla",
+        "https://user:secret@routing.example.com/valhalla",
+        "https://user@routing.example.com/valhalla",
+        "https://routing.example.com/valhalla?key=1",
+        "https://routing.example.com/valhalla#x",
+        "https:///valhalla",
+        "routing.example.com/valhalla",
+    ],
+)
+def test_service_urls_refuse_anything_but_a_plain_https_base(tmp_path, url) -> None:
+    with pytest.raises(ValidationError):
+        Settings(
+            data_encryption_key=_key(7),
+            cursor_signing_key=_key(11),
+            database_url=f"sqlite:///{tmp_path / 'relay.sqlite3'}",
+            service_photon_url=url,
+        )
 
 
 def test_sync_rejects_client_below_minimum_protocol(client, settings, synchronize) -> None:

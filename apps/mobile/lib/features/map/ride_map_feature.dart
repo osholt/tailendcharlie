@@ -1803,9 +1803,9 @@ class _RideMapScreenState extends State<RideMapScreen>
             verifier: routeVerifier,
           );
     _defaultDestinationRoutePlanner = DestinationRoutePlanner(
-      searchService: NominatimDestinationSearchService(
+      searchService: buildDestinationSearchService(
         client: _routingClient,
-        baseUrl: routingConfiguration.geocodingBaseUrl,
+        configuration: routingConfiguration,
       ),
       routingService: _planningRoutingService,
     );

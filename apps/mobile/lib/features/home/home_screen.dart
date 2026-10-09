@@ -188,9 +188,9 @@ class HomeScreen extends StatefulWidget {
     required http.Client client,
     required RoutingConfiguration configuration,
   }) => DestinationRoutePlanner(
-    searchService: NominatimDestinationSearchService(
+    searchService: buildDestinationSearchService(
       client: client,
-      baseUrl: configuration.geocodingBaseUrl,
+      configuration: configuration,
     ),
     routingService: buildPlanningRoutingService(
       client: client,

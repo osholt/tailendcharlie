@@ -9,6 +9,7 @@ import '../domain/imported_route.dart';
 import 'road_jurisdiction.dart';
 import 'road_routing.dart';
 import 'route_progress.dart';
+import 'routing_service_endpoints.dart';
 
 /// A routed candidate made from an imported line, plus the evidence the rider
 /// needs before deciding whether it still represents the intended route.
@@ -333,6 +334,7 @@ class ValhallaImportedTrackMatcher implements ImportedTrackMatcher {
             'Accept': 'application/json',
             'Content-Type': 'application/json',
             'User-Agent': 'TailEndCharlie/1.0 (route matching)',
+            'X-Client-Id': routingClientId,
           },
           body: jsonEncode({
             'shape': [

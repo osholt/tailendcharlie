@@ -189,6 +189,9 @@ class CompatibilityResponse(BaseModel):
     requiredCapabilities: list[str]
     cacheSeconds: int
     updateUrls: dict[str, str]
+    # Base URLs of the routing and geocoding services clients should use, keyed
+    # by API: valhalla, photon, nominatim, osrm. Empty when none is configured.
+    serviceUrls: dict[str, str]
 
 
 class HeatmapContributorRegistrationRequest(BaseModel):
