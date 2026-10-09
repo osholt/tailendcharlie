@@ -1,4 +1,5 @@
 import '../../controllers/eta_calibration_controller.dart';
+import 'heatmap_ramp.dart';
 import 'ride_heatmap_layer.dart';
 import 'dart:async';
 import 'dart:convert';
@@ -5950,21 +5951,9 @@ class _RideMapScreenState extends State<RideMapScreen>
         ml.HeatmapLayerProperties(
           heatmapRadius: heatmapRadiusExpression(),
           heatmapWeight: ['get', 'weight'],
-          heatmapIntensity: 0.8,
-          heatmapColor: [
-            'interpolate',
-            ['linear'],
-            ['heatmap-density'],
-            0,
-            'rgba(14,165,233,0)',
-            0.25,
-            '#0EA5E9',
-            0.7,
-            '#F59E0B',
-            1,
-            '#EF4444',
-          ],
-          heatmapOpacity: 0.42,
+          heatmapIntensity: globalHeatmapIntensity,
+          heatmapColor: globalHeatmapRamp.toMapLibreExpression(),
+          heatmapOpacity: globalHeatmapRamp.layerOpacity,
         ),
         belowLayerId: heatmapBelowLayerId,
       );
@@ -5979,20 +5968,8 @@ class _RideMapScreenState extends State<RideMapScreen>
           heatmapRadius: heatmapRadiusExpression(),
           heatmapWeight: ['get', 'weight'],
           heatmapIntensity: 0.85,
-          heatmapColor: [
-            'interpolate',
-            ['linear'],
-            ['heatmap-density'],
-            0,
-            'rgba(124,58,237,0)',
-            0.25,
-            '#7C3AED',
-            0.65,
-            '#C2410C',
-            1,
-            '#F97316',
-          ],
-          heatmapOpacity: 0.48,
+          heatmapColor: personalHeatmapRamp.toMapLibreExpression(),
+          heatmapOpacity: personalHeatmapRamp.layerOpacity,
         ),
         belowLayerId: heatmapBelowLayerId,
       );

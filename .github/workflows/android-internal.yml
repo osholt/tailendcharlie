@@ -4,8 +4,12 @@ on:
   workflow_dispatch:
     inputs:
       build_number:
-        description: Optional unique Android version code (defaults to GitHub run number)
-        required: false
+        description: >-
+          Android version code. Required, and higher than every code already in
+          Google Play on any track (the next number after the last shipped
+          build). There is no default: the workflow run number runs behind
+          shipped codes and Play refuses the upload after a 15-minute build (#630).
+        required: true
         type: string
       promote_to:
         description: >-
@@ -59,6 +63,34 @@ jobs:
         with:
           # Enough history for the tester release summary to list what changed.
           fetch-depth: 50
+      - name: Check the build number against Google Play
+        # First, before any build or signing work: a reused version code is
+        # otherwise refused by Play only after the build and upload (#630). The
+        # lookup is best effort; a malformed or already-used number fails here.
+        working-directory: ${{ github.workspace }}
+        env:
+          BUILD_NUMBER: ${{ inputs.build_number }}
+          SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
+        run: |
+          set -euo pipefail
+          test -n "$SERVICE_ACCOUNT_JSON" || {
+            echo "::error::The GOOGLE_PLAY_SERVICE_ACCOUNT_JSON secret is empty for the android-internal environment." >&2
+            exit 1
+          }
+          check_venv="$RUNNER_TEMP/build-number-venv"
+          python3 -m venv "$check_venv"
+          "$check_venv/bin/python" -m pip install --quiet \
+            google-api-python-client==2.149.0 \
+            google-auth==2.35.0 \
+            google-auth-httplib2==0.2.0 \
+            || echo "::warning::Could not install the Google API client; the build number is checked for format only."
+          umask 077
+          key_path="$RUNNER_TEMP/play-build-number.json"
+          printf '%s' "$SERVICE_ACCOUNT_JSON" > "$key_path"
+          "$check_venv/bin/python" -m tools.release.check_build_number android \
+            --build-number "$BUILD_NUMBER" \
+            --package "$PACKAGE_NAME" \
+            --service-account-file "$key_path"
       - name: Check projected-navigation compliance guardrails
         working-directory: ${{ github.workspace }}
         run: python3 tools/projected-navigation-compliance.py
@@ -94,7 +126,7 @@ jobs:
           PROPERTIES
       - name: Resolve build identity
         env:
-          BUILD_NUMBER: ${{ inputs.build_number || github.run_number }}
+          BUILD_NUMBER: ${{ inputs.build_number }}
           PROMOTE_TO: ${{ inputs.promote_to }}
         run: |
           set -euo pipefail
@@ -109,7 +141,7 @@ jobs:
             | tee -a "$GITHUB_ENV"
       - name: Build App Bundle
         env:
-          BUILD_NUMBER: ${{ inputs.build_number || github.run_number }}
+          BUILD_NUMBER: ${{ inputs.build_number }}
           TESTER_NOTES_URL: https://github.com/${{ github.repository }}/blob/${{ github.sha }}/docs/tester-release-notes.md
           RIDE_RELAY_API_BASE_URL: ${{ vars.RIDE_RELAY_API_BASE_URL }}
           RIDE_RELAY_FIREBASE_API_KEY: ${{ vars.RIDE_RELAY_FIREBASE_API_KEY }}
@@ -187,7 +219,7 @@ jobs:
         env:
           SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
           TARGET_TRACK: ${{ inputs.promote_to }}
-          VERSION_CODE: ${{ inputs.build_number || github.run_number }}
+          VERSION_CODE: ${{ inputs.build_number }}
         run: |
           set -euo pipefail
           test -n "$SERVICE_ACCOUNT_JSON"

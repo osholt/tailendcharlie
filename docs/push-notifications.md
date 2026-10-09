@@ -25,6 +25,39 @@ revoked registrations.
 | All passed or resolved | Lead, Tail End Charlie and current marker | Ride status |
 | Ride paused, resumed or ended | Current group | Administrative |
 | ICE information shared | Explicit recipients, or the current group for an explicit group share | Critical; lock-screen text contains no ICE data |
+| Leader broadcast (Wrong way, Stopped for fuel, Pull over, Regroup at next stop) | Current group, only when the sender is the lead | Important; Safety |
+| One-tap rider alert | Current group | Important; Safety |
+
+### Leader broadcasts and rider alerts
+
+Both travel as ordinary journal events, so the relay classifies them like any
+other (#881):
+
+- A leader broadcast is a `statusMessage` whose `message` is `wrongWay`,
+  `stoppedForFuel`, `pullOver` or `regroupNextStop` (#854). An acknowledgement
+  of one is not a broadcast. The relay pushes it only when the sender holds the
+  lead role on the roster, as the app only shows one that did; a leader who is
+  acting as a junction marker still counts. A broadcast addressed to named
+  riders goes to them alone.
+- A rider alert is a `hazardReported` event whose hazard carries `kind: alert`
+  (#849). Police, camera and road-hazard reports carry no `kind` and are not
+  pushed. The app refuses to raise an alert where enforcement warnings are
+  barred, and the push names no kind of alert and no place.
+
+"Important" is a tier between routine and critical. It is delivered at once
+(APNs priority 10 with the default sound; FCM high priority on the existing
+heads-up channel, so builds already in testers' hands show it as a banner), but
+unlike a critical push the rider's Safety preference switches it off. The
+lock-screen words come from a fixed list in the relay, never from the sender:
+a broadcast reads, for example, "Message from your leader: Pull over", and an
+alert reads "A rider has raised an alert". Neither carries a name or a position.
+
+An instruction is about where the group is now, so one whose own expiry has
+passed, or that was raised more than ten minutes ago, is not pushed: a phone
+that was offline must not make every lock screen say it again. The data an
+app reads on tap is unchanged: `rideId`, `eventId` and `category`, all strings.
+The categories are `leaderBroadcast` and `groupAlert`; this build opens the map
+for them, and builds 101 and 102 open the Ride tab, which is safe.
 
 Trusted external watchers never receive push registrations or notifications.
 Their separate personal/group observer credential reads only the current
