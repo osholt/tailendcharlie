@@ -8,6 +8,21 @@ import '../internet/push_registration_client.dart';
 
 enum PushPermissionState { unknown, granted, denied, unavailable }
 
+/// The `category` the relay puts in a push's data.
+///
+/// An open string on purpose: the relay may add categories before every phone
+/// knows them, and a phone must open the ride for one it has never heard of
+/// rather than refuse it (#881).
+abstract final class PushCategory {
+  static const safety = 'safety';
+
+  /// A leader's one-tap broadcast to the group (#854): "Pull over".
+  static const leaderBroadcast = 'leaderBroadcast';
+
+  /// A rider's one-tap alert (#849).
+  static const groupAlert = 'groupAlert';
+}
+
 class PushOpenRequest {
   const PushOpenRequest({
     required this.rideId,
@@ -18,6 +33,15 @@ class PushOpenRequest {
   final String rideId;
   final String eventId;
   final String category;
+
+  /// Whether this is a leader's broadcast or a rider's alert.
+  ///
+  /// Both are drawn on the map - the quick-message banner and the alert border -
+  /// so that is where a tap on either belongs (#881). Builds before this one do
+  /// not know the two categories and open the ride list instead, which is safe.
+  bool get isGroupInstruction =>
+      category == PushCategory.leaderBroadcast ||
+      category == PushCategory.groupAlert;
 }
 
 class PushTokenResult {
