@@ -4,8 +4,12 @@ on:
   workflow_dispatch:
     inputs:
       build_number:
-        description: Optional unique iOS build number (defaults to GitHub run number)
-        required: false
+        description: >-
+          iOS build number. Required, and higher than every build already in
+          App Store Connect (the next number after the last shipped build).
+          There is no default: the workflow run number runs behind shipped
+          numbers (#630).
+        required: true
         type: string
       submit_external:
         description: Assign the build to external testers and submit it for beta review
@@ -34,6 +38,38 @@ jobs:
         working-directory: ${{ env.MOBILE_DIR }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Check the build number against App Store Connect
+        # First, before any build or signing work (#630). The lookup is best
+        # effort and reuses the read-capable review key; without it only the
+        # format is checked. A malformed number, or one lower than a build
+        # App Store Connect already holds, fails here. An equal number is a
+        # re-run of that build, which the upload step already handles.
+        working-directory: ${{ github.workspace }}
+        env:
+          BUILD_NUMBER: ${{ inputs.build_number }}
+          REVIEW_API_KEY_ID: ${{ secrets.APPSTORE_CONNECT_REVIEW_API_KEY_ID }}
+          REVIEW_API_ISSUER_ID: ${{ secrets.APPSTORE_CONNECT_REVIEW_API_ISSUER_ID }}
+          REVIEW_API_PRIVATE_KEY_BASE64: ${{ secrets.APPSTORE_CONNECT_REVIEW_API_PRIVATE_KEY_BASE64 }}
+        run: |
+          set -euo pipefail
+          check_args=(ios --build-number "$BUILD_NUMBER" --bundle-id app.tailendcharlie)
+          check_python=python3
+          if test -n "$REVIEW_API_KEY_ID" \
+            && test -n "$REVIEW_API_ISSUER_ID" \
+            && test -n "$REVIEW_API_PRIVATE_KEY_BASE64"; then
+            key_path="$RUNNER_TEMP/AuthKey_$REVIEW_API_KEY_ID.p8"
+            umask 077
+            printf '%s' "$REVIEW_API_PRIVATE_KEY_BASE64" | base64 -D > "$key_path"
+            check_venv="$RUNNER_TEMP/build-number-venv"
+            python3 -m venv "$check_venv"
+            if "$check_venv/bin/python" -m pip install --quiet "PyJWT[crypto]==2.10.1"; then
+              check_python="$check_venv/bin/python"
+              check_args+=(--issuer-id "$REVIEW_API_ISSUER_ID" --key-id "$REVIEW_API_KEY_ID" --private-key "$key_path")
+            else
+              echo "::warning::Could not install PyJWT; the build number is checked for format only."
+            fi
+          fi
+          "$check_python" -m tools.release.check_build_number "${check_args[@]}"
       - name: Check projected-navigation compliance guardrails
         working-directory: ${{ github.workspace }}
         run: python3 tools/projected-navigation-compliance.py
@@ -70,14 +106,14 @@ jobs:
           cp "$profile_path" "$HOME/Library/MobileDevice/Provisioning Profiles/$profile_uuid.mobileprovision"
       - name: Resolve build identity
         env:
-          BUILD_NUMBER: ${{ inputs.build_number || github.run_number }}
+          BUILD_NUMBER: ${{ inputs.build_number }}
         run: |
           set -euo pipefail
           "$GITHUB_WORKSPACE/tools/build-identity.sh" pubspec.yaml testflight "$BUILD_NUMBER" \
             | tee -a "$GITHUB_ENV"
       - name: Build App Store IPA
         env:
-          BUILD_NUMBER: ${{ inputs.build_number || github.run_number }}
+          BUILD_NUMBER: ${{ inputs.build_number }}
           TESTER_NOTES_URL: https://github.com/${{ github.repository }}/blob/${{ github.sha }}/docs/tester-release-notes.md
           TESTFLIGHT_INVITE_URL: ${{ vars.RIDE_RELAY_TESTFLIGHT_INVITE_URL }}
           RIDE_RELAY_API_BASE_URL: ${{ vars.RIDE_RELAY_API_BASE_URL }}
@@ -122,7 +158,7 @@ jobs:
           API_KEY_ID: ${{ secrets.APPSTORE_CONNECT_API_KEY_ID }}
           API_ISSUER_ID: ${{ secrets.APPSTORE_CONNECT_API_ISSUER_ID }}
           API_PRIVATE_KEY_BASE64: ${{ secrets.APPSTORE_CONNECT_API_PRIVATE_KEY_BASE64 }}
-          BUILD_NUMBER: ${{ inputs.build_number || github.run_number }}
+          BUILD_NUMBER: ${{ inputs.build_number }}
         run: |
           set -euo pipefail
           test -n "$API_KEY_ID"
@@ -162,7 +198,7 @@ jobs:
       - name: Submit to external TestFlight review
         if: ${{ inputs.submit_external }}
         env:
-          BUILD_NUMBER: ${{ inputs.build_number || github.run_number }}
+          BUILD_NUMBER: ${{ inputs.build_number }}
           EXTERNAL_TESTER_GROUP: ${{ vars.RIDE_RELAY_IOS_EXTERNAL_TESTER_GROUP }}
           REVIEW_API_KEY_ID: ${{ secrets.APPSTORE_CONNECT_REVIEW_API_KEY_ID }}
           REVIEW_API_ISSUER_ID: ${{ secrets.APPSTORE_CONNECT_REVIEW_API_ISSUER_ID }}
