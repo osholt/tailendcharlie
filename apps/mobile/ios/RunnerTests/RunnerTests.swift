@@ -50,13 +50,12 @@ class RunnerTests: XCTestCase {
       let reach = hypot(vertex.x - centre.x, vertex.y - centre.y)
       let share: CGFloat = index % 2 == 0 ? 1.06 : 0.66
       XCTAssertEqual(reach, 19 * share / 0.8, accuracy: 0.001, "vertex \(index)")
-      let angle = atan2(vertex.y - centre.y, vertex.x - centre.x)
+      // atan2 answers in (-pi, pi], so compare the direction, not the number.
+      let expected = -CGFloat.pi / 2 + CGFloat(index) * CGFloat.pi / 5
       XCTAssertEqual(
-        angle,
-        -CGFloat.pi / 2 + CGFloat(index) * CGFloat.pi / 5,
-        accuracy: 0.0001,
-        "vertex \(index)"
-      )
+        (vertex.x - centre.x) / reach, cos(expected), accuracy: 0.0001, "vertex \(index)")
+      XCTAssertEqual(
+        (vertex.y - centre.y) / reach, sin(expected), accuracy: 0.0001, "vertex \(index)")
     }
     // The points reach past the circle they replace and the valleys stay inside
     // it: a star no bigger than the circle would be the less conspicuous marker.

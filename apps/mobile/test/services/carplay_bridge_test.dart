@@ -1228,7 +1228,17 @@ void main() {
       final source = File(
         'lib/features/ride/active_ride_shell.dart',
       ).readAsStringSync();
-      expect(source, contains('localMarkerOutline: _localMarkerOutline,'));
+      // Beside the bridge's own style argument: the map widget is handed the
+      // same outline elsewhere in the shell, which must not satisfy this.
+      expect(
+        source,
+        matches(
+          RegExp(
+            r'mapStyleJson: _carPlayMapStyleJson,\s+'
+            r'localMarkerOutline: _localMarkerOutline,',
+          ),
+        ),
+      );
     });
 
     test(
