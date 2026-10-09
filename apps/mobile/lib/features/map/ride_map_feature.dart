@@ -9007,6 +9007,9 @@ class _RideMapScreenState extends State<RideMapScreen>
           : RidePlan.fromRoute(route),
       editing: route,
       replanOnOpen: underWay,
+      // Not under way, a route read from a recording or a file keeps its line
+      // until the rider changes something (#892).
+      keepRouteUntilEdited: !underWay,
     );
   }
 
