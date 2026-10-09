@@ -171,10 +171,11 @@ legibility · #398 the pre-production Caddy route · #352 Bouncy Castle · #395.
 
 ### Traps worth knowing before you start
 
-- **The Android version code defaults to the workflow run number and collides**
-  with codes already used. Build 46 failed first time on *"Version code 40 has
-  already been used"*. Pass `build_number` explicitly and higher than every
-  shipped code.
+- **The Android version code used to default to the workflow run number and
+  collided** with codes already used. Build 46 failed first time on *"Version
+  code 40 has already been used"*. `build_number` is now required on both store
+  workflows and is checked against the store before the build (#630); pass a
+  number higher than every shipped code.
 - **`tools/discovery` tests run under `unittest discover`, not pytest.** A
   pytest-style module is collected as zero tests and passes silently.
 - **A mutation run that reports OK may never have applied.** One did in this

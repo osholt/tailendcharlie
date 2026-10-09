@@ -92,10 +92,36 @@ Without it, release builds silently fall back to the debug key - a plain
 real signing material. The GitHub Actions workflow is the only place
 `key.properties` gets created, from the secrets above, in `$RUNNER_TEMP`.
 
-Version codes come from `inputs.build_number` or, by default,
-`github.run_number` - the same monotonic-by-construction source the
-TestFlight workflow uses for iOS build numbers, so they never collide or go
-backwards.
+### Version codes: `build_number` is required
+
+`build_number` is a required input with no default, and it must be higher than
+every version code already in Play. It used to default to `github.run_number`,
+which is *not* monotonic with what has shipped: the run counter sat at 65 while
+codes 66 and 67 had been dispatched with explicit numbers, so a dispatch that
+omitted the input built, signed and uploaded for about 15 minutes and was then
+refused with "Version code 65 has already been used" (#630). The `TestFlight`
+workflow had the same default and now has the same rule.
+
+The first step of each workflow, before any build or signing work, runs
+`python -m tools.release.check_build_number` (tests:
+`tools/release/tests`, run by Server CI):
+
+- The number must be a plain positive integer, no leading zeros, at most
+  2,100,000,000 (Play's limit). Anything else fails at once.
+- With the Play service account it then reads every track *and* every uploaded
+  bundle through a throwaway Play edit (never committed, as in
+  `Play track status`) and fails if the number is not higher than the highest
+  code found. The message names the number to use. A code lower than the highest
+  would either be refused or reach no tester, because Play serves the highest.
+- The store lookup is best effort. If it cannot be made - network, permission,
+  an API change - the step prints a warning and the run continues, because
+  Play's own refusal at upload remains the backstop. Only a lookup that
+  succeeds and proves the number unusable stops the run.
+
+To pick the number, run `gh workflow run "Play track status"` and use one more
+than the highest code it prints, or one more than the last build in
+[tester-release-notes.md](./tester-release-notes.md). Android and iOS builds of
+the same release use the same number.
 
 ## Promotion
 
@@ -143,7 +169,7 @@ the result to `$GITHUB_ENV`:
 | Define | Source | Purpose |
 | --- | --- | --- |
 | `RIDE_RELAY_APP_VERSION` | `version:` in `apps/mobile/pubspec.yaml` | Marketing version; also passed as `--build-name` so the artefact and the reported value cannot drift. |
-| `RIDE_RELAY_APP_BUILD` | `inputs.build_number` or `github.run_number` | The Play version code / iOS build number. Unchanged monotonic scheme. |
+| `RIDE_RELAY_APP_BUILD` | `inputs.build_number` (required) | The Play version code / iOS build number. Chosen by the dispatcher and checked against the store before the build (#630). |
 | `RIDE_RELAY_DISTRIBUTION_TRACK` | `alpha`, `beta`, `internal`, `testflight`, `ci`, or `local` - the track the build is *destined for* | What the About screen shows as the distribution track, which store page its update button opens, and the `x-tailendcharlie-distribution-track` relay header. |
 | `RIDE_RELAY_BUILD_TIMESTAMP` | build time, UTC ISO-8601 | Drives the non-blocking "a newer tester build is probably available" prompt. |
 | `RIDE_RELAY_TESTER_NOTES_URL` | repository URL at the built commit | **What changed in this build** on the About screen. |
@@ -339,13 +365,15 @@ python3 tools/tester_notify/notify_testers.py \
 
 ```bash
 gh workflow run "Android internal testing" --ref <branch> \
+  --field build_number=<next unused number> \
   --field promote_to=alpha --field notification_mode=auto
 ```
 
-`promote_to` defaults to `alpha` and `notification_mode` to `auto`, so a plain
-`gh workflow run "Android internal testing" --ref <branch>` uploads, promotes to
-the closed track and notifies. Use `--field notification_mode=dry-run` for the
-first run after configuring the group, to read the mail before anyone else does.
+`build_number` is required (see above); the dispatch is rejected without it.
+`promote_to` defaults to `alpha` and `notification_mode` to `auto`, so with a
+build number the run uploads, promotes to the closed track and notifies. Use
+`--field notification_mode=dry-run` for the first run after configuring the
+group, to read the mail before anyone else does.
 
 Needs the `RIDE_RELAY_API_BASE_URL` repository variable set first (see
 [server-runbook.md](./server-runbook.md)) - the build fails clearly if it's
