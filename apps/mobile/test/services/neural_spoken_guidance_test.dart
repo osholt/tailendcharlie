@@ -26,54 +26,60 @@ void main() {
     expect(backend.allowCachedAudio, [isFalse]);
   });
 
-  test(
-    'stale neural distance is replaced before playback with current speech',
-    () async {
-      final playbackCalls = <String>[];
-      for (final name in [
-        'xyz.luan/audioplayers',
-        'xyz.luan/audioplayers.global',
-      ]) {
-        final channel = MethodChannel(name);
-        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-            .setMockMethodCallHandler(channel, (call) async {
-              playbackCalls.add(call.method);
-              throw PlatformException(code: 'unexpected-stale-playback');
-            });
-        addTearDown(
-          () => TestDefaultBinaryMessengerBinding
-              .instance
-              .defaultBinaryMessenger
-              .setMockMethodCallHandler(channel, null),
-        );
-      }
-      var phrase = 'In 400 metres, turn left';
-      final backend = _RecordingBackend()
-        ..onGenerate = (text) {
-          if (text != 'Ready.') phrase = 'In 300 metres, turn left';
-        };
-      final natural = NeuralSpokenGuidanceEngine(
-        backend: backend,
-        voiceProvider: () => NaturalNavigationVoice.george,
-        audioConfigurator: () async {},
+  test('a rendered prompt that is no longer what the ride says is dropped, '
+      'not given to the system voice (#616)', () async {
+    final playbackCalls = <String>[];
+    for (final name in [
+      'xyz.luan/audioplayers',
+      'xyz.luan/audioplayers.global',
+    ]) {
+      final channel = MethodChannel(name);
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, (call) async {
+            playbackCalls.add(call.method);
+            throw PlatformException(code: 'unexpected-stale-playback');
+          });
+      addTearDown(
+        () => TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(channel, null),
       );
-      final fallback = _RecordingEngine();
-      final engine = FailSafeNeuralSpokenGuidanceEngine(
-        neural: natural,
-        fallback: fallback,
-      );
-      await engine.configure();
-      await engine.warmUp();
-      await engine.speakFresh(() => phrase);
-      expect(backend.generatedPhrases, contains('In 400 metres, turn left'));
-      expect(fallback.spoken, ['In 300 metres, turn left']);
-      expect(
-        playbackCalls,
-        isEmpty,
-        reason: 'reject stale inference before touching the player',
-      );
-    },
-  );
+    }
+    var phrase = 'In 400 metres, turn left';
+    final backend = _RecordingBackend()
+      ..onGenerate = (text) {
+        if (text != 'Ready.') phrase = 'In 300 metres, turn left';
+      };
+    final natural = NeuralSpokenGuidanceEngine(
+      backend: backend,
+      voiceProvider: () => NaturalNavigationVoice.george,
+      audioConfigurator: () async {},
+    );
+    final fallback = _RecordingEngine();
+    final engine = FailSafeNeuralSpokenGuidanceEngine(
+      neural: natural,
+      fallback: fallback,
+    );
+    await engine.configure();
+    await engine.warmUp();
+    // What counts as stale is the caller's to say (`currentGuidancePhrase`);
+    // a different phrase here is a prompt the ride has moved on from. The
+    // caller has not consumed its stage, so the next fix announces it again.
+    await expectLater(
+      engine.speakFresh(() => phrase),
+      throwsA(isA<SpokenGuidanceSuperseded>()),
+    );
+    expect(backend.generatedPhrases, contains('In 400 metres, turn left'));
+    expect(
+      fallback.spoken,
+      isEmpty,
+      reason: 'a superseded prompt is not a failure of the natural voice',
+    );
+    expect(
+      playbackCalls,
+      isEmpty,
+      reason: 'reject stale inference before touching the player',
+    );
+  });
 
   test('a passed turn is silent when neural synthesis completes', () async {
     String? phrase = 'In 400 metres, turn left';

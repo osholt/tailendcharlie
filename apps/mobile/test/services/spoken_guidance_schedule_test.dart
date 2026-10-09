@@ -315,6 +315,174 @@ void main() {
     });
   });
 
+  group(
+    'a prompt rendered by a slow voice is checked against the ride (#616)',
+    () {
+      GuidanceAnnouncement? announceAt(
+        double meters, {
+        double speed = 6,
+        String instruction = 'At the fork, continue straight on',
+        String? following,
+        Set<String> spoken = const {},
+      }) => nextGuidanceAnnouncement(
+        maneuverIdentity: 'j',
+        instructionText: instruction,
+        distanceToManeuverMeters: meters,
+        speedMetersPerSecond: speed,
+        alreadySpokenKeys: spoken,
+        metersSincePreviousManeuver: null,
+        distanceFormatter: format,
+        followingInstructionText: following,
+      );
+
+      String? check({
+        required double issuedAt,
+        required double now,
+        double speed = 6,
+        String? followingNow,
+        bool refreshedAnnouncement = true,
+      }) {
+        final issued = announceAt(issuedAt, speed: speed)!;
+        return currentGuidancePhrase(
+          issued: issued,
+          issuedDistanceMeters: issuedAt,
+          refreshed: refreshedAnnouncement
+              ? announceAt(now, speed: speed, following: followingNow)
+              : null,
+          currentDistanceMeters: now,
+        );
+      }
+
+      test('the subject is what the prompt says without the distance', () {
+        final near = announceAt(123)!;
+        expect(near.subject, 'At the fork, continue straight on');
+        expect(
+          near.phrase,
+          endsWith(near.subject.toLowerCase().replaceFirst('a', 'a')),
+        );
+        // The final prompt has no distance, so it is all subject.
+        final last = announceAt(20)!;
+        expect(last.stage, GuidanceStage.immediate);
+        expect(last.subject, last.phrase);
+      });
+
+      test('words whose distance ticked over are still spoken as issued', () {
+        // The 4 October ride: "In 130 yd" decided at 123 m, 100 m by the time the
+        // natural voice had rendered it, when the words would read "In 110 yd".
+        final issued = announceAt(123)!;
+        final refreshed = announceAt(100)!;
+        expect(refreshed.phrase, isNot(issued.phrase));
+        expect(check(issuedAt: 123, now: 100), issued.phrase);
+      });
+
+      test('every distance on that ride stayed within what it tolerates', () {
+        // (decided, heard, speed) from the log.
+        const cases = [
+          (61.0, 46.0, 3.0),
+          (154.0, 137.0, 7.7),
+          (177.0, 146.0, 8.8),
+          (149.0, 128.0, 7.4),
+          (3963.0, 3860.0, 34.0),
+          (579.0, 470.0, 29.0),
+          (428.0, 330.0, 21.0),
+        ];
+        for (final (decided, heard, speed) in cases) {
+          expect(
+            check(issuedAt: decided, now: heard, speed: speed),
+            announceAt(decided, speed: speed)!.phrase,
+            reason: '$decided m heard at $heard m',
+          );
+        }
+      });
+
+      test(
+        'a distance two fifths gone is out of date, and says what is true now',
+        () {
+          // 428 m said, 250 m left: more than 40% covered, same stage.
+          final now = announceAt(250, speed: 15)!;
+          final said = check(issuedAt: 428, now: 250, speed: 15);
+          expect(said, now.phrase);
+          expect(said, isNot(announceAt(428, speed: 15)!.phrase));
+        },
+      );
+
+      test(
+        'a long distance is out of date after a fixed distance, not a fraction',
+        () {
+          // 40% of 3963 m would be 1585 m, a minute of riding.
+          final issued = announceAt(3963, speed: 34)!;
+          final now = announceAt(
+            3963 - guidanceStaleDistanceCapMeters - 50,
+            speed: 34,
+          )!;
+          expect(now.key, issued.key);
+          expect(
+            check(
+              issuedAt: 3963,
+              now: 3963 - guidanceStaleDistanceCapMeters - 50,
+              speed: 34,
+            ),
+            now.phrase,
+          );
+          expect(
+            check(
+              issuedAt: 3963,
+              now: 3963 - guidanceStaleDistanceCapMeters + 50,
+              speed: 34,
+            ),
+            issued.phrase,
+          );
+        },
+      );
+
+      test('a distance that grew is out of date too', () {
+        // A reroute or a bad fix: the junction is now further off than said.
+        expect(
+          check(issuedAt: 150, now: 250, speed: 15),
+          announceAt(250, speed: 15)!.phrase,
+        );
+      });
+
+      test(
+        'different words are a different prompt even at the same distance',
+        () {
+          // The following instruction appeared while the voice rendered.
+          final issued = announceAt(123)!;
+          final said = check(
+            issuedAt: 123,
+            now: 120,
+            followingNow: 'turn left',
+          );
+          expect(said, isNot(issued.phrase));
+          expect(said, contains('then turn left'));
+        },
+      );
+
+      test('a stage that is no longer due says nothing at all', () {
+        // The rider reached the final prompt's distance while it rendered.
+        expect(check(issuedAt: 123, now: 30), isNull);
+        // The junction has gone.
+        expect(
+          check(issuedAt: 123, now: 100, refreshedAnnouncement: false),
+          isNull,
+        );
+      });
+
+      test('a prompt with no distance in it never goes out of date', () {
+        expect(
+          check(issuedAt: 30, now: 10),
+          announceAt(30)!.phrase,
+          reason: 'the final prompt is the same words at any distance',
+        );
+      });
+
+      test('the same phrase is returned untouched', () {
+        final issued = announceAt(500, speed: 6)!;
+        expect(check(issuedAt: 500, now: 500, speed: 6), issued.phrase);
+      });
+    },
+  );
+
   group('nothing is invented from bad input', () {
     test('a negative or absent distance says nothing', () {
       for (final distance in [-1.0, double.nan]) {

@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import 'package:crypto/crypto.dart';
 import 'package:share_plus/share_plus.dart';
 
+import '../../controllers/app_update_gate_controller.dart';
 import '../../controllers/distance_unit_controller.dart';
 import '../../controllers/global_ride_heatmap_controller.dart';
 import '../../controllers/completed_rides_controller.dart';
@@ -54,6 +55,7 @@ import '../ride/previous_rides_screen.dart';
 import '../ride/route_recorder_screen.dart';
 import '../settings/unit_settings_sheet.dart';
 import '../settings/about_build_sheet.dart';
+import '../update/update_required_screen.dart';
 
 /// Runs the stateful half of a destination-search handoff in the only safe
 /// order: the route belongs to the ride that has just been created.
@@ -116,6 +118,7 @@ class HomeScreen extends StatefulWidget {
     this.testControl,
     this.spokenGuidance,
     this.rideDiagnostics,
+    this.updateGate,
     this.restoringRideCode,
     this.restorationError,
     this.onRetryRestoration,
@@ -152,6 +155,11 @@ class HomeScreen extends StatefulWidget {
   /// *here* offers the recorder too — wiring only the ride shell's sheet is
   /// what hid it from a tester who had never started a ride (#419).
   final RideDiagnosticsController? rideDiagnostics;
+
+  /// What the ride service has said about this build (#37). Null in a widget
+  /// test that does not exercise it. It only changes what the map says: the
+  /// banner and one full-screen explanation, never anything a ride depends on.
+  final AppUpdateGateController? updateGate;
 
   final String? restoringRideCode;
   final Object? restorationError;
@@ -240,6 +248,9 @@ class _HomeScreenState extends State<HomeScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) _publishHomeCarPlayState();
     });
+    widget.updateGate?.addListener(_onUpdateGateChanged);
+    unawaited(widget.updateGate?.check());
+    _onUpdateGateChanged();
     _takeRouteFromGroup();
     if (widget.openJoinGroup) {
       _scheduleJoinGroupSheet();
@@ -311,9 +322,49 @@ class _HomeScreenState extends State<HomeScreen> {
     if (!oldWidget.openJoinGroup && widget.openJoinGroup) {
       _scheduleJoinGroupSheet();
     }
+    if (oldWidget.updateGate != widget.updateGate) {
+      oldWidget.updateGate?.removeListener(_onUpdateGateChanged);
+      widget.updateGate?.addListener(_onUpdateGateChanged);
+      _onUpdateGateChanged();
+    }
     if (widget.sharedRoutes.pendingFreeRoamRoute != null) {
       setState(_takeRouteFromGroup);
     }
+  }
+
+  void _onUpdateGateChanged() {
+    if (!mounted) return;
+    // Rebuild for the banner; the full-screen explanation is offered at most
+    // once per launch, and only when nothing else owns the rider's attention.
+    setState(() {});
+    final gate = widget.updateGate;
+    if (gate == null ||
+        !shouldOfferUpdateScreen(
+          gate: gate,
+          hasActiveRide: widget.controller.hasActiveRide,
+          restoring: widget.onRetryRestoration != null,
+        )) {
+      return;
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted ||
+          ModalRoute.of(context)?.isCurrent != true ||
+          !shouldOfferUpdateScreen(
+            gate: gate,
+            hasActiveRide: widget.controller.hasActiveRide,
+            restoring: widget.onRetryRestoration != null,
+          )) {
+        return;
+      }
+      gate.markPresented();
+      unawaited(
+        UpdateRequiredScreen.show(
+          context,
+          identity: _buildIdentity,
+          state: gate.state,
+        ),
+      );
+    });
   }
 
   void _scheduleJoinGroupSheet() {
@@ -348,6 +399,7 @@ class _HomeScreenState extends State<HomeScreen> {
     // with the map and a client it lends to the geocoder.
     _position.removeListener(_publishHomeCarPlayState);
     _position.removeListener(_observeAutomaticUnits);
+    widget.updateGate?.removeListener(_onUpdateGateChanged);
     unawaited(_carPlayBridge.dispose());
     _position.dispose();
     _routingClient.close();
@@ -823,6 +875,8 @@ class _HomeScreenState extends State<HomeScreen> {
   /// the layout can answer — a notices area that reserved space for nothing would
   /// be a small panel, which is the thing being removed.
   List<Widget> _notices(BuildContext context) => [
+    if (widget.updateGate case final gate? when gate.updateRequired)
+      UpdateRequiredBanner(gate: gate, identity: _buildIdentity),
     TesterUpdateBanner(identity: _buildIdentity),
     if (widget.onRetryRestoration != null)
       _RideRestorationBanner(
@@ -1674,6 +1728,26 @@ class _JoinFormState extends State<_JoinForm> with WidgetsBindingObserver {
                   message,
                   style: TextStyle(color: Theme.of(context).colorScheme.error),
                 ),
+                // An old build cannot be helped by trying again; the way
+                // through is the update, so it is one tap away (#37).
+                if (widget.controller.errorNeedsUpdate)
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: TextButton.icon(
+                      key: const Key('join-update-required'),
+                      onPressed: () => unawaited(
+                        UpdateRequiredScreen.show(
+                          context,
+                          identity: BuildIdentity.fromEnvironment(),
+                          state: UpdateGateState.updateRequired(
+                            message: message,
+                          ),
+                        ),
+                      ),
+                      icon: const Icon(Icons.system_update_alt),
+                      label: const Text('Update Tail End Charlie'),
+                    ),
+                  ),
                 // A connection or service failure is worth another go, and there
                 // was nothing to press: the rider read a sentence about a relay
                 // handshake and had to guess (#208).

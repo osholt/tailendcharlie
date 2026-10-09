@@ -269,44 +269,6 @@ void main() {
       expect(RoutingServices.current, RoutingServiceEndpoints.publicFallback);
       relay.close();
     });
-
-    test('the launch refresh adopts the answer and survives failure', () async {
-      final configuration = InternetRelayConfiguration(
-        baseUri: Uri.parse('https://relay.example.test/api'),
-      );
-      await refreshAdvertisedRoutingServices(
-        configuration: configuration,
-        client: MockClient(
-          (request) async => http.Response(
-            jsonEncode({
-              'serverBuildCommit': 'unknown',
-              'serverProtocol': 1,
-              'minimumClientProtocol': 1,
-              'maximumClientProtocol': 1,
-              'capabilities': <String>[],
-              'requiredCapabilities': <String>[],
-              'cacheSeconds': 300,
-              'updateUrls': <String, String>{},
-              'serviceUrls': self.toJson(),
-            }),
-            200,
-          ),
-        ),
-      );
-      expect(RoutingServices.advertised, self);
-
-      await refreshAdvertisedRoutingServices(
-        configuration: configuration,
-        client: MockClient((request) async => http.Response('down', 503)),
-      );
-      expect(RoutingServices.advertised, self);
-
-      // No relay compiled in: nothing to ask.
-      await refreshAdvertisedRoutingServices(
-        configuration: const InternetRelayConfiguration(baseUri: null),
-        client: MockClient((request) async => fail('no request expected')),
-      );
-    });
   });
 
   group('Photon destination search', () {

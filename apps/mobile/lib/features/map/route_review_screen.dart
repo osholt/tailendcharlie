@@ -344,6 +344,10 @@ class _RouteReviewScreenState extends State<RouteReviewScreen> {
   bool _planRouted = false;
   String? _planError;
 
+  /// A named place whose pin is being dragged on the map, and where it is now
+  /// (#891). Counted as the plan's places are: start, stops, destination.
+  ({int index, GeoPoint point})? _draggedPlace;
+
   /// A fix the host fetched on request, for a host whose position does not
   /// update on its own.
   GeoPoint? _acquiredLocation;
@@ -664,6 +668,18 @@ class _RouteReviewScreenState extends State<RouteReviewScreen> {
     if (_reshapeCallback == null) return;
     // A plan still waiting for its first route has no line to drag.
     if (_plan != null && !_planRouted) return;
+    if (start.draggedPin case final pin?) {
+      // A named place moves with the finger and is routed when it is let go;
+      // the line under it is left alone (#891).
+      final index = planPlacePinIndex(pin);
+      if (_plan != null && index != null) {
+        setState(() {
+          _draggedPlace = (index: index, point: start.point);
+          _reshapeError = null;
+        });
+      }
+      return;
+    }
     final current = route.shapingPoints;
     _reshapeHistory.add(List.unmodifiable(current));
     if (_reshapeHistory.length > 20) _reshapeHistory.removeAt(0);
@@ -693,6 +709,10 @@ class _RouteReviewScreenState extends State<RouteReviewScreen> {
   }
 
   void _updateRouteReshape(GeoPoint point) {
+    if (_draggedPlace case final dragged?) {
+      setState(() => _draggedPlace = (index: dragged.index, point: point));
+      return;
+    }
     final activeId = _activeShapingPointId;
     if (activeId == null) return;
     final updated = [
@@ -706,6 +726,23 @@ class _RouteReviewScreenState extends State<RouteReviewScreen> {
   }
 
   void _endRouteReshape() {
+    if (_draggedPlace case final dragged?) {
+      _draggedPlace = null;
+      final plan = _plan;
+      if (plan == null) return;
+      // The places keep their order, so every drawn adjustment stays on the
+      // leg it was drawn on.
+      unawaited(
+        _replan(
+          plan.withPlaceMoved(
+            dragged.index,
+            dragged.point,
+            currentLocation: _currentLocation,
+          ),
+        ),
+      );
+      return;
+    }
     if (_activeShapingPointId == null) return;
     _activeShapingPointId = null;
     _queueReshape(immediate: true);
@@ -1157,6 +1194,17 @@ class _RouteReviewScreenState extends State<RouteReviewScreen> {
         .toList(growable: false);
     final reviewWaypoints = _reviewWaypoints(route);
     final plan = _plan;
+    // On the plan surface the pins are the plan's places, so a dragged or
+    // added stop is where the rider put it while its route is calculated.
+    final placePinPoints =
+        plan
+            ?.controls(currentLocation: _currentLocation)
+            ?.namedPlaces
+            .map((place) => place.point)
+            .toList(growable: false) ??
+        reviewWaypoints
+            .map((waypoint) => waypoint.point)
+            .toList(growable: false);
     // A drop-off group's leader plans marker positions, wherever the route
     // came from; choosing that mode on the plan surface brings the plan in.
     final showMarkerPlan =
@@ -1311,11 +1359,19 @@ class _RouteReviewScreenState extends State<RouteReviewScreen> {
                         key: const Key('route-review-map'),
                         paths: previewPaths,
                         referencePaths: comparisonPreviewPaths ?? const [],
-                        pins: reviewWaypoints.indexed
+                        pins: placePinPoints.indexed
                             .map(
                               (entry) => RoutePreviewPin(
-                                point: entry.$2.point,
+                                id: plan == null
+                                    ? null
+                                    : '$planPlacePinPrefix${entry.$1}',
+                                point: _draggedPlace?.index == entry.$1
+                                    ? _draggedPlace!.point
+                                    : entry.$2,
                                 kind: entry.$1 == 0 ? 'start' : 'waypoint',
+                                // A plan's start, stops and destination can
+                                // be dragged while drawing (#891).
+                                draggable: plan != null,
                               ),
                             )
                             .followedBy(
@@ -2152,6 +2208,19 @@ ImportedRoute placeholderPlanRoute(RidePlan plan, {GeoPoint? currentLocation}) {
 /// plan surface opens, so the list, the line and the drawn adjustments agree
 /// about which legs there are.
 @visibleForTesting
+/// The id prefix of a plan place's map pin; the rest is its index among the
+/// plan's start, stops and destination.
+const planPlacePinPrefix = 'plan-place-';
+
+/// Which of the plan's places [pin] is, or null when it is none of them.
+int? planPlacePinIndex(RoutePreviewPin pin) {
+  final id = pin.id;
+  if (!pin.draggable || id == null || !id.startsWith(planPlacePinPrefix)) {
+    return null;
+  }
+  return int.tryParse(id.substring(planPlacePinPrefix.length));
+}
+
 bool isRoutedPlan(ImportedRoute route, RidePlan plan) =>
     !plan.derivedFromGeometry &&
     route.paths.any((path) => path.points.length >= 2) &&

@@ -1,3 +1,4 @@
+import 'controllers/app_update_gate_controller.dart';
 import 'controllers/eta_calibration_controller.dart';
 import 'services/eta_population_client.dart';
 import 'dart:async';
@@ -142,7 +143,12 @@ Future<void> main() async {
     ),
   );
   unawaited(eta.refresh());
-  unawaited(refreshAdvertisedRoutingServices());
+  // Told early, so a build the ride service has retired says so before the first
+  // join or sync fails. It only informs; see AppUpdateGateController. The same
+  // compatibility answer also says where routing and geocoding live (#917):
+  // RoutingServices adopts every one, so this launch check moves them too.
+  final updateGate = AppUpdateGateController.fromEnvironment();
+  unawaited(updateGate.check());
   runApp(
     EtaCalibrationScope(
       controller: eta,
@@ -165,6 +171,7 @@ Future<void> main() async {
         testControlRegistry: testControlRegistry,
         spokenGuidance: spokenGuidance,
         rideDiagnostics: rideDiagnostics,
+        updateGate: updateGate,
         initializeController: controller.initialize,
       ),
     ),

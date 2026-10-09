@@ -187,6 +187,22 @@ class RelayClientDescriptor {
   /// screen and this header can never disagree.
   final String distributionTrack;
 
+  /// The build as a number, or null on an unstamped (`unknown`) build or one that
+  /// reports something other than a plain positive integer.
+  ///
+  /// The relay judges a build the same way (`client_build_gate.py`): a build that
+  /// cannot be read is never refused for being old, because there is nothing for
+  /// an update to be compared with. That keeps local development builds usable.
+  int? get buildNumber => RegExp(r'^[1-9][0-9]{0,9}$').hasMatch(appBuild)
+      ? int.parse(appBuild)
+      : null;
+
+  /// True only for a readable build strictly below a configured [minimum].
+  bool isBelowMinimumBuild(int? minimum) {
+    final build = buildNumber;
+    return minimum != null && build != null && build < minimum;
+  }
+
   /// False when the build channel did not inject its version, so callers can
   /// say "this build does not report its version" instead of quoting a wrong
   /// one.
@@ -221,6 +237,8 @@ class RelayCompatibilityResult {
     required this.validUntil,
     this.message,
     this.updateUri,
+    this.minimumClientBuild,
+    this.clientBuild,
   });
 
   final RelayCompatibilityDisposition disposition;
@@ -231,6 +249,12 @@ class RelayCompatibilityResult {
   final DateTime validUntil;
   final String? message;
   final Uri? updateUri;
+
+  /// The relay's minimum app build for this platform (#37), or null when the
+  /// relay declares none - which is every relay that predates the gate and every
+  /// relay that has not turned it on. This build's own number is [clientBuild].
+  final int? minimumClientBuild;
+  final int? clientBuild;
 
   bool get canSynchronize =>
       disposition == RelayCompatibilityDisposition.compatible ||
@@ -417,11 +441,16 @@ class RideCodeDirectoryException implements Exception {
     this.message, {
     this.codeConflict = false,
     this.retryable = false,
+    this.updateRequired = false,
   });
 
   final String message;
   final bool codeConflict;
   final bool retryable;
+
+  /// The relay refused this build as too old (#37). Updating the app is the only
+  /// way through, so the join form offers the update rather than a bare sentence.
+  final bool updateRequired;
 
   @override
   String toString() => 'RideCodeDirectoryException: $message';
@@ -602,6 +631,9 @@ class HttpRideCodeDirectory implements RideCodeDirectory {
         // way through it, so saying so now beats a confusing failure later.
         throw RideCodeDirectoryException(
           result.message ?? 'This app and the ride service are not compatible.',
+          updateRequired:
+              result.disposition ==
+              RelayCompatibilityDisposition.updateRequired,
         );
       } on InternetRelayException {
         if (attempt >= _compatibilityProbeAttempts - 1) return;
@@ -673,6 +705,10 @@ class HttpRideCodeDirectory implements RideCodeDirectory {
     429 => const RideCodeDirectoryException(
       'Too many ride-code attempts. Please wait a moment and try again.',
       retryable: true,
+    ),
+    426 => const RideCodeDirectoryException(
+      'Update Tail End Charlie to join or start a ride through the ride service.',
+      updateRequired: true,
     ),
     401 || 403 => const RideCodeDirectoryException(
       'Ride code service rejected this ride.',
@@ -1316,6 +1352,12 @@ class HttpPreStartPresenceClient implements PreStartPresenceApi {
   void close() => _client.close();
 }
 
+int? _minimumBuildFor(Object? raw, String platform) {
+  if (raw is! Map) return null;
+  final value = raw[platform];
+  return value is int && value > 0 ? value : null;
+}
+
 Future<RelayCompatibilityResult> _fetchCompatibility({
   required InternetRelayConfiguration configuration,
   required http.Client client,
@@ -1419,14 +1461,28 @@ Future<RelayCompatibilityResult> _fetchCompatibility({
     final updateUri = _safeUri(
       rawUpdateUrls[descriptor.platform] ?? rawUpdateUrls['default'],
     );
+    // Absent on a relay that predates the gate, and an empty map while it is
+    // off: both mean no build is refused. A malformed entry is ignored rather
+    // than failing the whole document, because a relay that cannot be read is
+    // treated as unreachable and this field must never be the reason.
+    final minimumClientBuild = _minimumBuildFor(
+      decoded['minimumClientBuilds'],
+      descriptor.platform,
+    );
+    final buildTooOld = descriptor.isBelowMinimumBuild(minimumClientBuild);
     final disposition =
         descriptor.protocolVersion < minimumClientProtocol ||
-            missingRequired.isNotEmpty
+            missingRequired.isNotEmpty ||
+            buildTooOld
         ? RelayCompatibilityDisposition.updateRequired
         : descriptor.protocolVersion > maximumClientProtocol
         ? RelayCompatibilityDisposition.serverUpgradeRequired
         : RelayCompatibilityDisposition.compatible;
     final message = switch (disposition) {
+      RelayCompatibilityDisposition.updateRequired when buildTooOld =>
+        'Build ${descriptor.appBuild} is older than the oldest build the ride '
+            'service supports ($minimumClientBuild). Update Tail End Charlie to '
+            'join or synchronize rides.',
       RelayCompatibilityDisposition.updateRequired =>
         'Update Tail End Charlie before joining or synchronizing this ride.',
       RelayCompatibilityDisposition.serverUpgradeRequired =>
@@ -1442,6 +1498,8 @@ Future<RelayCompatibilityResult> _fetchCompatibility({
       validUntil: now.add(Duration(seconds: cacheSeconds.clamp(30, 3600))),
       message: message,
       updateUri: updateUri,
+      minimumClientBuild: minimumClientBuild,
+      clientBuild: descriptor.buildNumber,
     );
   } on InternetRelayException {
     rethrow;
@@ -1466,35 +1524,6 @@ Future<RelayCompatibilityResult> _fetchCompatibility({
       retryable: true,
       code: 'temporarily_unavailable',
     );
-  }
-}
-
-/// Asks the relay where routing and geocoding live, once, at launch (#917).
-///
-/// Destination search and planning can happen before anything else talks to
-/// the relay, so the launch asks rather than waiting for the first ride. A
-/// failure changes nothing: the app keeps what it last adopted.
-Future<void> refreshAdvertisedRoutingServices({
-  InternetRelayConfiguration? configuration,
-  http.Client? client,
-}) async {
-  final resolved =
-      configuration ?? InternetRelayConfiguration.fromEnvironment();
-  if (!resolved.isConfigured) return;
-  final ownedClient = client == null;
-  final http.Client effectiveClient = client ?? http.Client();
-  try {
-    await _fetchCompatibility(
-      configuration: resolved,
-      client: effectiveClient,
-      descriptor: RelayClientDescriptor.current(),
-      clock: DateTime.now,
-      cached: null,
-    );
-  } on Object {
-    // Offline, or the relay is unwell: the services last adopted stay in force.
-  } finally {
-    if (ownedClient) effectiveClient.close();
   }
 }
 
