@@ -63,9 +63,12 @@ import {
   submissionPayload,
 } from "./discovery-suggestions.mjs";
 import {
+  GLOBAL_HEATMAP_INTENSITY,
+  GLOBAL_HEATMAP_LAYER_OPACITY,
   GLOBAL_HEATMAP_VISIBLE_KEY,
   GlobalHeatmapLoader,
-} from "./global-heatmap.mjs?v=ec9cf49f";
+  globalHeatmapColorExpression,
+} from "./global-heatmap.mjs?v=7de93f5d";
 
 const MAP_STYLE_URL = "https://tiles.openfreemap.org/styles/liberty";
 const ROUTING_URL = "https://router.project-osrm.org";
@@ -279,22 +282,10 @@ map.on("load", () => {
     source: "global-rides",
     paint: {
       "heatmap-weight": ["get", "weight"],
-      "heatmap-intensity": 0.8,
+      "heatmap-intensity": GLOBAL_HEATMAP_INTENSITY,
       "heatmap-radius": ["interpolate", ["linear"], ["zoom"], 5, 4, 12, 10, 17, 18],
-      "heatmap-color": [
-        "interpolate",
-        ["linear"],
-        ["heatmap-density"],
-        0,
-        "rgba(14,165,233,0)",
-        0.25,
-        "#0ea5e9",
-        0.7,
-        "#f59e0b",
-        1,
-        "#ef4444",
-      ],
-      "heatmap-opacity": 0.42,
+      "heatmap-color": globalHeatmapColorExpression(),
+      "heatmap-opacity": GLOBAL_HEATMAP_LAYER_OPACITY,
     },
     layout: {
       visibility: elements.layerGlobalRides.checked ? "visible" : "none",
