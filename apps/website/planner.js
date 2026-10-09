@@ -66,11 +66,14 @@ import {
   GLOBAL_HEATMAP_VISIBLE_KEY,
   GlobalHeatmapLoader,
 } from "./global-heatmap.mjs?v=ec9cf49f";
+import {
+  loadRoutingServices,
+  placeSearchResults,
+  placeSearchUrl,
+  resolveRoutingServices,
+} from "./planner-services.mjs?v=c45a35ab";
 
 const MAP_STYLE_URL = "https://tiles.openfreemap.org/styles/liberty";
-const ROUTING_URL = "https://router.project-osrm.org";
-const MOTORCYCLE_ROUTING_URL = "https://valhalla1.openstreetmap.de/route";
-const SEARCH_URL = "https://nominatim.openstreetmap.org/search";
 const ROUTING_TIMEOUT_MS = 8_000;
 const MAX_STOPS = 50;
 const SEARCH_CACHE_KEY = "tec-planner-search-v1";
@@ -80,6 +83,16 @@ const RELAY_API_URL = document
   .querySelector('meta[name="tec-discovery-api"]')
   ?.content?.replace(/\/$/, "");
 const DISCOVERY_API_URL = RELAY_API_URL;
+
+// Where routing and place search go (#917): the services the relay advertises,
+// else the public ones. Requests wait for the answer, which gives up after a
+// few seconds rather than holding the planner.
+let routingServices = resolveRoutingServices(null);
+const routingServicesReady = loadRoutingServices({ relayApiUrl: RELAY_API_URL }).then(
+  (services) => {
+    routingServices = services;
+  },
+);
 
 const elements = {
   clearRoute: document.querySelector("#clear-route"),
@@ -1487,11 +1500,12 @@ async function requestRoadRoute(controls, signal, { onStandardRoute } = {}) {
   return standardRoutingFallbackRoute(result.route, requestedPreferences);
 }
 
-function fetchStandardRoadRoute(controls, signal) {
+async function fetchStandardRoadRoute(controls, signal) {
+  await routingServicesReady;
   const coordinates = controls
     .map((control) => `${control.longitude.toFixed(6)},${control.latitude.toFixed(6)}`)
     .join(";");
-  const url = new URL(`/route/v1/driving/${coordinates}`, ROUTING_URL);
+  const url = new URL(`${routingServices.osrmBaseUrl}/route/v1/driving/${coordinates}`);
   url.searchParams.set("overview", "full");
   url.searchParams.set("geometries", "geojson");
   url.searchParams.set("steps", "true");
@@ -1543,7 +1557,8 @@ async function fetchMotorcycleRoute(controls, signal, preferences) {
     units: "kilometers",
     directions_options: { units: "kilometers" },
   };
-  const url = new URL(MOTORCYCLE_ROUTING_URL);
+  await routingServicesReady;
+  const url = new URL(routingServices.valhallaRouteUrl);
   url.searchParams.set("json", JSON.stringify(routingRequest));
   const response = await fetchRoutingResponse(url, signal);
   if (!response.ok) {
@@ -2104,13 +2119,11 @@ async function searchPlaces(event) {
   searchRequest = new AbortController();
   lastSearchAt = Date.now();
   renderSearchMessage("Searching…");
-  const url = new URL(SEARCH_URL);
-  url.searchParams.set("q", query);
-  url.searchParams.set("format", "jsonv2");
-  url.searchParams.set("limit", "5");
-  url.searchParams.set("addressdetails", "0");
-  url.searchParams.set("email", "privacy@tailendcharlie.app");
-  url.searchParams.set("accept-language", document.documentElement.lang || "en-GB");
+  await routingServicesReady;
+  const geocoder = routingServices.geocoder;
+  const url = placeSearchUrl(geocoder, query, {
+    language: document.documentElement.lang || "en-GB",
+  });
 
   try {
     const response = await fetch(url, {
@@ -2118,19 +2131,7 @@ async function searchPlaces(event) {
       signal: searchRequest.signal,
     });
     if (!response.ok) throw new Error("Search is unavailable.");
-    const data = await response.json();
-    const results = Array.isArray(data)
-      ? data
-          .map((result) => ({
-            latitude: Number(result.lat),
-            longitude: Number(result.lon),
-            name: String(
-              result.name || result.display_name?.split(",")[0] || "Search result",
-            ),
-            address: String(result.display_name || ""),
-          }))
-          .filter((result) => isCoordinate(result.longitude, result.latitude))
-      : [];
+    const results = placeSearchResults(geocoder, await response.json());
     cacheSearch(normalisedQuery, results);
     renderSearchResults(results);
   } catch (error) {
@@ -2271,10 +2272,11 @@ async function loadCatalogTravelTimes(start) {
 
   const results = await Promise.allSettled(
     batches.map(async (batch) => {
+      await routingServicesReady;
       const coordinates = [start, ...batch]
         .map((place) => `${place.longitude.toFixed(6)},${place.latitude.toFixed(6)}`)
         .join(";");
-      const url = new URL(`/table/v1/driving/${coordinates}`, ROUTING_URL);
+      const url = new URL(`${routingServices.osrmBaseUrl}/table/v1/driving/${coordinates}`);
       url.searchParams.set("sources", "0");
       url.searchParams.set(
         "destinations",
@@ -2315,22 +2317,22 @@ async function selectSearchResult(result) {
       await new Promise((resolve) => window.setTimeout(resolve, waitMilliseconds));
     }
     lastSearchAt = Date.now();
-    const url = new URL(SEARCH_URL);
-    url.searchParams.set("q", result.address || result.name);
-    url.searchParams.set("format", "jsonv2");
-    url.searchParams.set("limit", "1");
-    url.searchParams.set("email", "privacy@tailendcharlie.app");
-    url.searchParams.set("accept-language", document.documentElement.lang || "en-GB");
+    await routingServicesReady;
+    const geocoder = routingServices.geocoder;
+    const url = placeSearchUrl(geocoder, result.address || result.name, {
+      limit: 1,
+      language: document.documentElement.lang || "en-GB",
+    });
 
     try {
       const response = await fetch(url, { headers: { Accept: "application/json" } });
       if (!response.ok) throw new Error("Location lookup failed.");
-      const [match] = await response.json();
+      const [match] = placeSearchResults(geocoder, await response.json());
       selected = {
         name: result.name,
         address: result.address,
-        latitude: Number(match?.lat),
-        longitude: Number(match?.lon),
+        latitude: Number(match?.latitude),
+        longitude: Number(match?.longitude),
       };
     } catch {
       renderSearchMessage(
