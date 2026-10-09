@@ -58,7 +58,7 @@ class _NotificationPreferencesSheetState
             onChanged: (value) => setState(() => _safety = value),
             title: const Text('Safety and assistance updates'),
             subtitle: const Text(
-              'Stopped, mechanical, fuel and route-attention updates. Critical SOS alerts remain enabled when system permission allows.',
+              'Stopped, mechanical, fuel and route-attention updates, instructions from your leader such as pull over, and one-tap rider alerts. Critical SOS alerts remain enabled when system permission allows.',
             ),
           ),
           SwitchListTile(
