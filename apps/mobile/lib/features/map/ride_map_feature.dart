@@ -7204,6 +7204,13 @@ class _RideMapScreenState extends State<RideMapScreen>
     RidePlan plan, {
     ImportedRoute? editing,
     bool replanOnOpen = false,
+    bool keepRouteUntilEdited = false,
+    List<String> warnings = const [],
+    ImportedRoute? previousRoute,
+    ImportedRoute? comparisonRoute,
+    double? distanceMeters,
+    Duration? duration,
+    RouteVerification? verification,
   }) async {
     final outcome = await RouteReviewScreen.showPlan(
       context,
@@ -7222,18 +7229,74 @@ class _RideMapScreenState extends State<RideMapScreen>
         acquireCurrentLocation: widget.acquireCurrentPosition,
         confirmLabel: (_) => widget.rideStarted ? 'Update route' : 'Use route',
         replanOnOpen: replanOnOpen,
+        keepRouteUntilEdited: keepRouteUntilEdited,
         preferencesMemory: _preferencesMemory,
         exportCoordinator:
             widget.navigationExportCoordinator ??
             const NavigationExportCoordinator(),
       ),
       route: editing,
+      warnings: warnings,
+      previousRoute: previousRoute,
+      comparisonRoute: comparisonRoute,
+      distanceMeters: distanceMeters,
+      duration: duration,
+      verification: verification,
       distanceUnit: widget.distanceUnit,
       basemapConfiguration: _basemap,
       showMarkerPlan: widget.markerFeaturesEnabled,
     );
     if (outcome == null || !mounted) return null;
     return _commitRoute(outcome.route);
+  }
+
+  /// An imported GPX, a recording or a saved route, on the plan surface with
+  /// its line exactly as it came (#892).
+  ///
+  /// Imports used to open a separate review that could reshape the line but
+  /// not edit its start, stops or destination. Here they get the whole plan
+  /// surface, and nothing about the route changes until the rider changes
+  /// something: confirming it untouched rides the line that was imported. The
+  /// surface says, before any edit, that an edit re-plans it on roads.
+  Future<ImportedRoute?> _reviewImportOnPlanSurface(
+    ImportedRoute route, {
+    double? distanceMeters,
+    Duration? duration,
+    List<String> warnings = const [],
+    RouteVerification? verification,
+    ImportedRoute? comparisonRoute,
+  }) async {
+    // A backstop behind the rider-facing checks, as in [_reviewRoute].
+    if (widget.routeAuthority.routeChangeRefusal case final refusal?) {
+      throw FormatException(refusal);
+    }
+    // A GPX route (route points, not a track) still needs its roads; a track
+    // is never touched here.
+    final enrichment = await _routeGeometryEnricher.enrich(route);
+    final activeRoute = enrichment.route;
+    if (!mounted) return null;
+    return _planOnSurface(
+      RidePlan.fromRoute(activeRoute),
+      editing: activeRoute,
+      keepRouteUntilEdited: true,
+      warnings: [
+        ...warnings,
+        ?enrichment.warning,
+        if (enrichment.attempted &&
+            !enrichment.changed &&
+            enrichment.warning != null)
+          'Online road recalculation was unavailable. The original geometry '
+              'is shown and remains usable offline.',
+      ],
+      previousRoute: comparisonRoute ?? _route,
+      comparisonRoute: comparisonRoute,
+      distanceMeters: distanceMeters,
+      duration: duration,
+      // The geometry that is reviewed is what was checked (#840).
+      verification: enrichment.changed
+          ? enrichment.verification ?? verification
+          : verification,
+    );
   }
 
   Future<void> _planCircularRide() async {
@@ -7591,17 +7654,14 @@ class _RideMapScreenState extends State<RideMapScreen>
         warnings = [...warnings, ...match.reviewWarnings];
       }
     }
-    final review = await _reviewRoute(
+    return _reviewImportOnPlanSurface(
       route,
       distanceMeters: distanceMeters,
       duration: duration,
       warnings: warnings,
       verification: verification,
-      previousRoute: comparisonRoute,
       comparisonRoute: comparisonRoute,
     );
-    if (review.action != RouteReviewAction.confirm) return null;
-    return _commitRoute(review.route);
   }
 
   Future<({RouteReviewAction action, ImportedRoute route})> _reviewRoute(

@@ -59,6 +59,7 @@ class RidePlanEditing {
     this.replanOnOpen = false,
     this.preferencesMemory = const RoutePreferencesMemory(),
     this.exportCoordinator = const NavigationExportCoordinator(),
+    this.keepRouteUntilEdited = false,
   });
 
   final RidePlan plan;
@@ -96,6 +97,12 @@ class RidePlanEditing {
   /// Hands the planned route to another navigation app or a GPX file from
   /// beside the confirm button (#895). Null offers no hand-off.
   final NavigationExportCoordinator? exportCoordinator;
+
+  /// Whether the route being reviewed is kept exactly as it is until the plan
+  /// is first edited (#892): an imported GPX, a recording, a saved route. Its
+  /// line is confirmable as it came, and only a change to the start, a stop,
+  /// the destination, the options or the line re-plans it on roads.
+  final bool keepRouteUntilEdited;
 }
 
 /// A confirmed plan and the route it was routed to.
@@ -225,6 +232,11 @@ class RouteReviewScreen extends StatefulWidget {
     ImportedRoute? route,
     List<String> warnings = const [],
     bool showMarkerPlan = false,
+    ImportedRoute? previousRoute,
+    ImportedRoute? comparisonRoute,
+    double? distanceMeters,
+    Duration? duration,
+    RouteVerification? verification,
     Future<BikerPlaceCatalogue> Function()? pointOfInterestLoader,
     Future<MotorcycleDiscoveryCatalogue> Function()? discoveryLoader,
     Future<DiscoveryLayerPreferences> Function()? discoveryPreferencesLoader,
@@ -245,7 +257,11 @@ class RouteReviewScreen extends StatefulWidget {
           distanceUnit: distanceUnit,
           basemapConfiguration: basemapConfiguration,
           warnings: warnings,
-          previousRoute: route,
+          previousRoute: previousRoute ?? route,
+          comparisonRoute: comparisonRoute,
+          distanceMeters: distanceMeters,
+          duration: duration,
+          verification: verification,
           canEditStops: true,
           showMarkerPlan: showMarkerPlan,
           planning: planning,
@@ -365,6 +381,10 @@ class _RouteReviewScreenState extends State<RouteReviewScreen> {
   bool _planRouted = false;
   String? _planError;
 
+  /// Whether the line on screen is still the route as it came, untouched by
+  /// any edit (#892). The first edit re-plans it on roads.
+  late bool _lineIsOriginal = widget.planning?.keepRouteUntilEdited ?? false;
+
   /// A named place whose pin is being dragged on the map, and where it is now
   /// (#891). Counted as the plan's places are: start, stops, destination.
   ({int index, GeoPoint point})? _draggedPlace;
@@ -420,7 +440,9 @@ class _RouteReviewScreenState extends State<RouteReviewScreen> {
       // Anything else — a new plan, or a route whose waypoints are not the
       // plan's places — is routed now, so the line, the list and the drawn
       // adjustments all describe the same legs.
-      _planRouted = !planning.replanOnOpen && isRoutedPlan(widget.route, plan);
+      _planRouted =
+          planning.keepRouteUntilEdited ||
+          (!planning.replanOnOpen && isRoutedPlan(widget.route, plan));
       if (!_planRouted) {
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (mounted) unawaited(_replan(plan));
@@ -459,6 +481,7 @@ class _RouteReviewScreenState extends State<RouteReviewScreen> {
       _planError = null;
       _planRouted = false;
       _reshaping = routable;
+      _lineIsOriginal = false;
     });
     widget.onPlanChanged?.call(plan);
     if (!routable) {
@@ -854,6 +877,7 @@ class _RouteReviewScreenState extends State<RouteReviewScreen> {
             if (_plan != null) {
               _adoptRouteShapingPoints(result.route);
               _planRouted = true;
+              _lineIsOriginal = false;
             }
             _verification = result.verification;
           });
@@ -1709,6 +1733,7 @@ class _RouteReviewScreenState extends State<RouteReviewScreen> {
                   if (plan != null) ...[
                     RidePlanItinerary(
                       plan: plan,
+                      lineIsOriginal: _lineIsOriginal,
                       currentLocationKnown: _currentLocation != null,
                       // Edits stay possible while a route is calculated: the
                       // newest edit wins and an overtaken answer is dropped.
