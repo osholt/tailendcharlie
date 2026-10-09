@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
+import '../controllers/app_update_gate_controller.dart';
 import '../controllers/distance_unit_controller.dart';
 import '../controllers/global_ride_heatmap_controller.dart';
 import '../controllers/completed_rides_controller.dart';
@@ -50,6 +51,7 @@ class RideRelayApp extends StatelessWidget {
     this.testControlRegistry,
     this.spokenGuidance,
     this.rideDiagnostics,
+    this.updateGate,
     this.screenWakeLock = const WakelockPlusScreenWakeLock(),
     this.screenWakeReassertInterval = const Duration(seconds: 15),
     this.enableNativeServices = true,
@@ -86,6 +88,10 @@ class RideRelayApp extends StatelessWidget {
   /// Records what the app said beside what the bike did, when an instrumented
   /// build has it switched on (#419). Null in an ordinary build.
   final RideDiagnosticsController? rideDiagnostics;
+
+  /// Asks the ride service whether this build is still supported (#37). Null in
+  /// tests that do not exercise it; null never means "supported".
+  final AppUpdateGateController? updateGate;
 
   final bool enableNativeServices;
 
@@ -171,6 +177,7 @@ class RideRelayApp extends StatelessWidget {
             testControl: testControl,
             spokenGuidance: spokenGuidance,
             rideDiagnostics: rideDiagnostics,
+            updateGate: updateGate,
             restoringRideCode: controller.session?.rideCode,
             restorationError: restorationError,
             onRetryRestoration: retryRestoration,
@@ -240,6 +247,7 @@ class RideRelayApp extends StatelessWidget {
           testControl: testControl,
           spokenGuidance: spokenGuidance,
           rideDiagnostics: rideDiagnostics,
+          updateGate: updateGate,
           openJoinGroup: openJoinGroup,
           onJoinGroupOpened: consumeJoinGroupRequest,
           enableNativeServices: enableNativeServices,
