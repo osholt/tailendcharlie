@@ -29,9 +29,13 @@ jobs:
             deploy/relay-deploy-command \
             deploy/relay-self-heal \
             deploy/install-relay-self-heal.sh \
-            deploy/tests/relay-self-heal-test.sh
+            deploy/relay-smoke-retry.sh \
+            deploy/tests/relay-self-heal-test.sh \
+            deploy/tests/relay-smoke-retry-test.sh
       - name: Exercise automatic recovery thresholds and cooldown
         run: deploy/tests/relay-self-heal-test.sh
+      - name: Exercise the deploy smoke-test retry policy
+        run: deploy/tests/relay-smoke-retry-test.sh
 
   quality:
     name: Lint and test
