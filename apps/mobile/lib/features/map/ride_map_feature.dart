@@ -43,6 +43,7 @@ import '../../services/biker_place_catalogue.dart';
 import '../../services/circular_ride_planner.dart';
 import '../../services/ride_plan_remaining.dart';
 import '../../services/ride_plan_router.dart';
+import '../../services/route_preferences_memory.dart';
 import '../../services/demo_route_loader.dart';
 import '../../services/discovery_layer_preferences.dart';
 import '../../services/discovery_suggestion_queue.dart';
@@ -7182,8 +7183,17 @@ class _RideMapScreenState extends State<RideMapScreen>
       title: 'Where to?',
     );
     if (choice is! PlaceSearchPlace || !mounted) return;
-    await _planOnSurface(RidePlan.toDestination(choice.place));
+    await _planOnSurface(
+      RidePlan.toDestination(
+        choice.place,
+        preferences: await _preferencesMemory.load(),
+      ),
+    );
   }
+
+  /// The route options a new plan starts with: the rider's last (#894).
+  RoutePreferencesMemory get _preferencesMemory =>
+      const RoutePreferencesMemory();
 
   /// Opens the plan surface for [plan] and takes the route it confirms.
   ///
@@ -7212,6 +7222,7 @@ class _RideMapScreenState extends State<RideMapScreen>
         acquireCurrentLocation: widget.acquireCurrentPosition,
         confirmLabel: (_) => widget.rideStarted ? 'Update route' : 'Use route',
         replanOnOpen: replanOnOpen,
+        preferencesMemory: _preferencesMemory,
       ),
       route: editing,
       distanceUnit: widget.distanceUnit,
@@ -8970,7 +8981,12 @@ class _RideMapScreenState extends State<RideMapScreen>
     }
     final route = _route;
     if (route == null || route.waypoints.length < 2) {
-      await _planOnSurface(RidePlan.toDestination(place));
+      await _planOnSurface(
+        RidePlan.toDestination(
+          place,
+          preferences: await _preferencesMemory.load(),
+        ),
+      );
       return;
     }
     final withStop = insertRouteWaypoint(

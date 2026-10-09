@@ -165,7 +165,8 @@ turns. Plan mode adds four things:
    keep their order, so every shaping point stays on its leg. A nudge of up to
    150 m keeps the place's name; a longer drag makes it a "Dropped pin".
 2. **Route options**: the preferences that used to live in the destination
-   form, applied immediately by re-routing.
+   form, applied immediately by re-routing. The options a rider last
+   confirmed are a new plan's default (#894); an edited route keeps its own.
 3. **Who's riding**, where the host allows it: Solo or Group, and for a group
    Second-bike drop-off or Keep-together (#261's wording).
 4. **One confirm button named for what it does**: Start (solo), Create group
@@ -321,6 +322,8 @@ What phase 1 deliberately leaves alone: the active-ride map chrome (#533, #125,
 - Mid-ride Edit route trims the ridden part for the group, rather than
   re-planning from the original start.
 - A ride rename on the Ride tab (the ride name now defaults to the route name).
+  Shipped in #894 as a label on this phone: no rider reads the leader's name
+  from the journal, so renaming records no event.
 - Remember the rider's last route options as the default for the next plan.
 - One exit vocabulary across states: Leave (me), End (ride), Stop (navigating)
   (#626 item 6).

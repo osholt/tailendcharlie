@@ -1066,6 +1066,33 @@ class RideController extends ChangeNotifier {
     }
   }
 
+  /// Renames the ride on this phone (#894).
+  ///
+  /// The name was only ever chosen at creation, and now defaults to the
+  /// route's name, so a ride planned to "Town" stays "To Town" after the plan
+  /// changes. The name is this phone's label — the ride tab, My rides, the
+  /// shared summary — and no other rider reads it from the journal, so this
+  /// records no event and needs nothing from the relay. An empty name clears
+  /// it, and the ride is known by its code again.
+  Future<void> renameRide(String name) async {
+    await _run(() async {
+      final activeSession = _requireSession();
+      final trimmed = name.trim();
+      if (trimmed.length > RideSession.maximumRideNameLength) {
+        throw const FormatException(
+          'Keep the ride name to '
+          '${RideSession.maximumRideNameLength} characters.',
+        );
+      }
+      final updated = activeSession.copyWith(
+        rideName: trimmed.isEmpty ? null : trimmed,
+        clearRideName: trimmed.isEmpty,
+      );
+      _session = updated;
+      await _sessionStore.save(updated);
+    });
+  }
+
   Future<void> setRole(RideRole role) async {
     await _run(() async {
       final activeSession = _requireSession();
