@@ -4,6 +4,7 @@ import 'package:ride_relay/domain/distance_unit.dart';
 import 'package:ride_relay/domain/imported_route.dart';
 import 'package:ride_relay/domain/ride_coordination_mode.dart';
 import 'package:ride_relay/domain/ride_plan.dart';
+import 'package:ride_relay/features/map/resolved_route_map_preview.dart';
 import 'package:ride_relay/features/map/route_review_screen.dart';
 import 'package:ride_relay/services/basemap_configuration.dart';
 import 'package:ride_relay/services/biker_place_catalogue.dart';
@@ -138,10 +139,8 @@ void main() {
     expect(harness.routing.calls.last, [_here, _cafe, _pass, _town]);
     expect(_stopLabels(tester), ['Cafe', 'Pass']);
 
-    await _tapVisible(
-      tester,
-      find.byKey(const Key('ride-plan-move-stop-up-1')),
-    );
+    // Dragged by its handle above the first stop (#891).
+    await _dragStop(tester, from: 1, to: 0);
     expect(_stopLabels(tester), ['Pass', 'Cafe']);
     expect(harness.routing.calls.last, [_here, _pass, _cafe, _town]);
 
@@ -155,6 +154,111 @@ void main() {
       'Cafe',
       'Town',
     ]);
+  });
+
+  testWidgets('dragging a stop down keeps each adjustment on its leg', (
+    tester,
+  ) async {
+    final harness = _Harness(location: _here);
+    final routed = await RidePlanRouter(routingService: harness.routing).route(
+      RidePlan.toDestination(_townPlace)
+          .addStop(const RidePlanPlace(point: _cafe, label: 'Cafe'))
+          .addStop(const RidePlanPlace(point: _pass, label: 'Pass'))
+          .withShapingPoints(const [
+            RouteShapingPoint(
+              id: 'drawn',
+              point: GeoPoint(latitude: 52.05, longitude: -1.03),
+              legIndex: 0,
+            ),
+          ]),
+      currentLocation: _here,
+    );
+    harness.routing.calls.clear();
+    await harness.open(
+      tester,
+      RidePlan.fromRoute(routed.route),
+      route: routed.route,
+    );
+
+    await _dragStop(tester, from: 0, to: 1);
+
+    expect(_stopLabels(tester), ['Pass', 'Cafe']);
+    expect(harness.routing.calls.single, [
+      _here,
+      const GeoPoint(latitude: 52.05, longitude: -1.03),
+      _pass,
+      _cafe,
+      _town,
+    ]);
+    expect(harness.routing.shapingIndexes.last, {1});
+  });
+
+  testWidgets('a stop\'s pin dragged on the map moves the stop and re-plans', (
+    tester,
+  ) async {
+    final harness = _Harness(location: _here);
+    final routed = await RidePlanRouter(routingService: harness.routing).route(
+      RidePlan.toDestination(_townPlace)
+          .addStop(const RidePlanPlace(point: _cafe, label: 'Cafe'))
+          .withShapingPoints(const [
+            RouteShapingPoint(
+              id: 'drawn',
+              point: GeoPoint(latitude: 52.2, longitude: -1.03),
+              legIndex: 1,
+            ),
+          ]),
+      currentLocation: _here,
+    );
+    harness.routing.calls.clear();
+    await harness.open(
+      tester,
+      RidePlan.fromRoute(routed.route),
+      route: routed.route,
+      basemapConfiguration: _mapLibre,
+    );
+
+    RoutePreviewPin pinFor(int index) => tester
+        .widget<ResolvedRouteMapPreview>(find.byType(ResolvedRouteMapPreview))
+        .pins
+        .singleWhere((pin) => pin.id == 'plan-place-$index');
+    final preview = tester.widget<ResolvedRouteMapPreview>(
+      find.byType(ResolvedRouteMapPreview),
+    );
+    expect(pinFor(0).draggable, isTrue);
+    expect(pinFor(1).draggable, isTrue);
+    expect(pinFor(2).draggable, isTrue);
+
+    // About 55 metres north: the same cafe, on the road beside it.
+    const nudged = GeoPoint(latitude: 52.1005, longitude: -1.00);
+    preview.onReshapeStart!(
+      RoutePreviewReshapeStart(point: _cafe, draggedPin: pinFor(1)),
+    );
+    await _frames(tester);
+    preview.onReshapeUpdate!(nudged);
+    await _frames(tester);
+
+    // The pin follows the finger; nothing is routed until it is let go.
+    expect(pinFor(1).point, nudged);
+    expect(harness.routing.calls, isEmpty);
+
+    preview.onReshapeEnd!();
+    await _frames(tester);
+
+    expect(harness.routing.calls.single, [
+      _here,
+      nudged,
+      const GeoPoint(latitude: 52.2, longitude: -1.03),
+      _town,
+    ]);
+    expect(harness.routing.shapingIndexes.last, {2});
+    expect(_stopLabels(tester), ['Cafe']);
+    expect(pinFor(1).point, nudged);
+
+    await tester.tap(find.byKey(const Key('confirm-reviewed-route')));
+    await _frames(tester);
+    final outcome = harness.outcome!;
+    expect(outcome.plan.stops.single.point, nudged);
+    expect(outcome.plan.shapingPoints.single.legIndex, 1);
   });
 
   testWidgets('drawn adjustments are on the map, never in the stop list', (
@@ -279,6 +383,42 @@ void main() {
   });
 }
 
+/// MapLibre needs a network style, so a test that mounts it cannot wait for
+/// every frame to settle; these frames are enough for the plan to react.
+Future<void> _frames(WidgetTester tester) async {
+  for (var index = 0; index < 5; index += 1) {
+    await tester.pump(const Duration(milliseconds: 20));
+  }
+}
+
+const _mapLibre = BasemapConfiguration(
+  styleUrl: 'https://tiles.example.test/style.json',
+  attribution: 'Test tiles',
+);
+
+/// Drags stop [from] by its handle onto stop [to]'s row.
+Future<void> _dragStop(
+  WidgetTester tester, {
+  required int from,
+  required int to,
+}) async {
+  final handle = find.byKey(Key('ride-plan-drag-stop-$from'));
+  await _scrollTo(tester, handle);
+  final target = tester.getCenter(find.byKey(Key('ride-plan-stop-$to')));
+  final origin = tester.getCenter(find.byKey(Key('ride-plan-stop-$from')));
+  final gesture = await tester.startGesture(tester.getCenter(handle));
+  await tester.pump();
+  // Past the target's middle, in steps, as a finger moves.
+  final travel = target - origin;
+  final overshoot = Offset(0, travel.dy.sign * 12);
+  for (var step = 1; step <= 4; step += 1) {
+    await gesture.moveBy((travel + overshoot) / 4);
+    await tester.pump(const Duration(milliseconds: 20));
+  }
+  await gesture.up();
+  await tester.pumpAndSettle();
+}
+
 Future<void> _tapVisible(WidgetTester tester, Finder finder) async {
   await _scrollTo(tester, finder);
   await tester.tap(finder);
@@ -347,6 +487,7 @@ class _Harness {
     RidePlan plan, {
     ImportedRoute? route,
     String? confirmLabel,
+    BasemapConfiguration basemapConfiguration = const BasemapConfiguration(),
   }) async {
     final router = RidePlanRouter(routingService: routing);
     await tester.pumpWidget(
@@ -378,7 +519,7 @@ class _Harness {
                   ),
                   route: route,
                   distanceUnit: DistanceUnit.kilometres,
-                  basemapConfiguration: const BasemapConfiguration(),
+                  basemapConfiguration: basemapConfiguration,
                   pointOfInterestLoader: () async => BikerPlaceCatalogue.empty,
                   discoveryLoader: () async =>
                       const MotorcycleDiscoveryCatalogue([]),
@@ -392,7 +533,11 @@ class _Harness {
       ),
     );
     await tester.tap(find.text('plan'));
-    await tester.pumpAndSettle();
+    if (basemapConfiguration.usesMapLibre) {
+      await _frames(tester);
+    } else {
+      await tester.pumpAndSettle();
+    }
   }
 
   Future<void> choosePlace(

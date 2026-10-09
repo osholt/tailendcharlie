@@ -74,49 +74,63 @@ class RidePlanItinerary extends StatelessWidget {
                 child: const Text('Change'),
               ),
             ),
-            for (final (index, stop) in plan.stops.indexed)
-              ListTile(
-                key: Key('ride-plan-stop-$index'),
-                leading: CircleAvatar(
-                  radius: 13,
-                  child: Text(
-                    '${index + 1}',
-                    style: const TextStyle(fontSize: 12),
+            // Dragged by the handle, as in Google Maps (#891). The list adds
+            // "move before / after" to each row's semantics, so a screen
+            // reader keeps the reordering the up and down buttons gave it.
+            ReorderableListView.builder(
+              key: const Key('ride-plan-stops'),
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              buildDefaultDragHandles: false,
+              itemCount: plan.stops.length,
+              onReorderItem: (from, to) {
+                if (to != from) onMoveStop(from, to);
+              },
+              itemBuilder: (context, index) {
+                final stop = plan.stops[index];
+                return ListTile(
+                  key: Key('ride-plan-stop-$index'),
+                  leading: CircleAvatar(
+                    radius: 13,
+                    child: Text(
+                      '${index + 1}',
+                      style: const TextStyle(fontSize: 12),
+                    ),
                   ),
-                ),
-                title: Text(stop.label),
-                subtitle: Text('Stop ${index + 1}', style: muted),
-                trailing: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    IconButton(
-                      key: Key('ride-plan-move-stop-up-$index'),
-                      tooltip: 'Move stop earlier',
-                      visualDensity: VisualDensity.compact,
-                      onPressed: busy || index == 0
-                          ? null
-                          : () => onMoveStop(index, index - 1),
-                      icon: const Icon(Icons.arrow_upward),
-                    ),
-                    IconButton(
-                      key: Key('ride-plan-move-stop-down-$index'),
-                      tooltip: 'Move stop later',
-                      visualDensity: VisualDensity.compact,
-                      onPressed: busy || index == plan.stops.length - 1
-                          ? null
-                          : () => onMoveStop(index, index + 1),
-                      icon: const Icon(Icons.arrow_downward),
-                    ),
-                    IconButton(
-                      key: Key('ride-plan-remove-stop-$index'),
-                      tooltip: 'Remove stop',
-                      visualDensity: VisualDensity.compact,
-                      onPressed: busy ? null : () => onRemoveStop(index),
-                      icon: const Icon(Icons.close),
-                    ),
-                  ],
-                ),
-              ),
+                  title: Text(stop.label),
+                  subtitle: Text('Stop ${index + 1}', style: muted),
+                  trailing: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      IconButton(
+                        key: Key('ride-plan-remove-stop-$index'),
+                        tooltip: 'Remove stop',
+                        visualDensity: VisualDensity.compact,
+                        onPressed: busy ? null : () => onRemoveStop(index),
+                        icon: const Icon(Icons.close),
+                      ),
+                      ReorderableDragStartListener(
+                        key: Key('ride-plan-drag-stop-$index'),
+                        index: index,
+                        enabled: !busy && plan.stops.length > 1,
+                        child: Tooltip(
+                          message: 'Drag to reorder',
+                          child: Padding(
+                            padding: const EdgeInsets.all(8),
+                            child: Icon(
+                              Icons.drag_handle,
+                              color: busy || plan.stops.length < 2
+                                  ? const Color(0xFF5C6673)
+                                  : null,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              },
+            ),
             ListTile(
               key: const Key('ride-plan-destination'),
               leading: const Icon(Icons.place, color: Color(0xFFFF7A5C)),
