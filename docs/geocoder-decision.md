@@ -3,6 +3,15 @@
 Decision date: 12 August 2026
 Decision: **stay on the public Nominatim instance, search on submit only**
 
+> **Superseded in part, October 2026 (#917).** For the open beta the operator
+> chose to self-host Photon, with Valhalla, on an Oracle Always Free A1 VM; see
+> [`routing-service.md`](routing-service.md). That meets gate condition 2 below.
+> Search stays submit-only until condition 1 (a rider saying the tap is a real
+> problem) is also met. Photon permits as-you-type, so typeahead becomes a
+> product decision rather than a terms-of-use one. Until the relay advertises a
+> Photon URL, the app and planner keep using public Nominatim under the terms
+> below.
+
 The app keeps using `nominatim.openstreetmap.org` for destination search, and
 results appear when the rider submits the field rather than as they type. No
 geocoder is self-hosted and no commercial provider is engaged.

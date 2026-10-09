@@ -62,17 +62,22 @@ them on.
 
 ### G2 Infrastructure that can take strangers
 
-1. **Stop depending on the public demo servers.** Recommended: run our own
-   Valhalla for Great Britain (and Ireland, for Northern Ireland routes) plus
-   Photon or Nominatim for geocoding. Oracle's Always Free allowance includes
-   an Ampere A1 VM with far more memory than the relay box (check the current
-   allowance), which is enough to build and serve a GB graph.
-   - Put it behind the existing Caddy, with per-client rate limits and the
-     `X-Client-Id` header.
-   - Valhalla can serve every routing call the app makes, so the OSRM demo
-     dependency can go entirely.
-   - The paid alternative is a hosted Valhalla/geocoder provider. That is a
-     cost decision for the operator (see "Decisions needed").
+1. **Stop depending on the public demo servers.** Decided: self-host on an
+   Oracle Always Free Ampere A1 VM, separate from the relay (#917). The runbook
+   is [`routing-service.md`](routing-service.md). It covers provisioning,
+   verification, cut-over, rollback and cost.
+   - Valhalla (motorcycle and auto costing) and Photon for Great Britain,
+     Ireland, the Isle of Man and France, behind Caddy with per-client rate
+     limits and an `X-Client-Id` check. The stack is in `deploy/routing/`.
+   - The relay advertises the service URLs in `/api/v1/compatibility`, so the
+     app and the web planner move over without a release, and back again by
+     unsetting them.
+   - Oracle's A1 allowance is now **2 OCPU / 12 GB**, not the 4 OCPU / 24 GB this
+     plan first assumed. The stack is sized to fit it at £0. Whatever A1
+     capacity the relay uses comes out of the same allowance.
+   - Valhalla can serve every routing call the app makes. Moving the remaining
+     OSRM calls to Valhalla `auto` changes the routes riders get, so it is a
+     follow-up that needs field validation.
 2. **Relay hardening.**
    - Load-test N concurrent rides of 10 riders on the real VM size and record
      the result.
@@ -176,8 +181,8 @@ API (`android-internal-testing.md`). Write that into the incident runbook.
 
 ## Decisions needed from the operator
 
-1. Routing and geocoding: self-host on a free-tier ARM VM (recommended) or pay
-   a hosted provider.
+1. ~~Routing and geocoding: self-host on a free-tier ARM VM (recommended) or
+   pay a hosted provider.~~ Decided: self-host (#917).
 2. The phase 1 tester cap and the groups invited.
 3. The support address, and whether there is a public community channel.
 4. The minimum age.
@@ -189,7 +194,7 @@ API (`android-internal-testing.md`). Write that into the incident runbook.
 | Gate | Tickets |
 | --- | --- |
 | G1 | #839, #851, #853, #856, #855, #268, #616 |
-| G2 | #273, #337, #37, #630, #398, #421, #352 |
+| G2 | #917, #273, #337, #37, #630, #398, #421, #352 |
 | G3 | #338, #859 |
 | G4 | #42, #847, #306, #626 |
 | G5 | #698, #703 |
