@@ -23,6 +23,69 @@ class RunnerTests: XCTestCase {
     // See https://developer.apple.com/documentation/xctest for more information about using XCTest.
   }
 
+  // #912: the leader and the resolved Tail End Charlie are stars on the CarPlay
+  // map, in their own colour. The phone decides who; this side draws it.
+  func testCarPlayRiderMarkerShapeFollowsThePhonesDecision() {
+    XCTAssertEqual(CarPlayRiderMarkerShape(snapshotValue: "star"), .star)
+    XCTAssertEqual(CarPlayRiderMarkerShape(snapshotValue: "circle"), .circle)
+    // A snapshot from before the field existed, and values this build does not
+    // know, are circles. Neither a role nor `isTec` is re-read here.
+    XCTAssertEqual(CarPlayRiderMarkerShape(snapshotValue: nil), .circle)
+    XCTAssertEqual(CarPlayRiderMarkerShape(snapshotValue: "STAR"), .circle)
+    XCTAssertEqual(CarPlayRiderMarkerShape(snapshotValue: "pentagon"), .circle)
+    XCTAssertEqual(CarPlayRiderMarkerShape(snapshotValue: 1), .circle)
+    XCTAssertEqual(CarPlayRiderMarkerShape(snapshotValue: NSNull()), .circle)
+  }
+
+  func testCarPlayStarHasThePhonesProportions() {
+    let centre = CGPoint(x: 100, y: 200)
+    let vertices = CarPlayStarGeometry.vertices(center: centre, circleRadius: 19)
+    XCTAssertEqual(vertices.count, 10)
+    // One point straight up, like the phone's resting star.
+    XCTAssertEqual(vertices[0].x, centre.x, accuracy: 0.001)
+    XCTAssertEqual(vertices[0].y, centre.y - 19 * 1.06 / 0.8, accuracy: 0.001)
+    // Points and valleys alternate at the phone's shares of the circle's size,
+    // and five equal points are 72 degrees apart.
+    for (index, vertex) in vertices.enumerated() {
+      let reach = hypot(vertex.x - centre.x, vertex.y - centre.y)
+      let share: CGFloat = index % 2 == 0 ? 1.06 : 0.66
+      XCTAssertEqual(reach, 19 * share / 0.8, accuracy: 0.001, "vertex \(index)")
+      let angle = atan2(vertex.y - centre.y, vertex.x - centre.x)
+      XCTAssertEqual(
+        angle,
+        -CGFloat.pi / 2 + CGFloat(index) * CGFloat.pi / 5,
+        accuracy: 0.0001,
+        "vertex \(index)"
+      )
+    }
+    // The points reach past the circle they replace and the valleys stay inside
+    // it: a star no bigger than the circle would be the less conspicuous marker.
+    XCTAssertGreaterThan(19 * 1.06 / 0.8, 19)
+    XCTAssertLessThan(19 * 0.66 / 0.8, 19)
+  }
+
+  func testCarPlayMarkerStyleDrawsAStarOnlyForAStar() {
+    let circle = CarPlayRiderMarkerStyle(shape: .circle, badgeDiameter: 38)
+    XCTAssertFalse(circle.drawsStar)
+    XCTAssertNil(circle.starPath)
+    // Unchanged from before: a rounded, bordered badge with the glyph at full size.
+    XCTAssertEqual(circle.cornerRadius, 19)
+    XCTAssertEqual(circle.borderWidth, 2)
+    XCTAssertEqual(circle.glyphInset, 0)
+
+    let star = CarPlayRiderMarkerStyle(shape: .star, badgeDiameter: 38)
+    XCTAssertTrue(star.drawsStar)
+    // The view itself is not rounded or bordered: the star is the body.
+    XCTAssertEqual(star.cornerRadius, 0)
+    XCTAssertEqual(star.borderWidth, 0)
+    // The glyph is pulled in to the valleys, so it stays on the star's body.
+    XCTAssertEqual(star.glyphInset, 19 * (1 - 0.66 / 0.8), accuracy: 0.001)
+    let bounds = star.starPath?.bounds ?? .zero
+    // Centred on the badge, and its points reach past the badge's edge.
+    XCTAssertEqual(bounds.midX, 19, accuracy: 0.6)
+    XCTAssertGreaterThan(bounds.height, 38)
+  }
+
   func testCarPlayRootBecomesReadyOnlyForCurrentSuccessfulConnection() {
     var lifecycle = CarPlaySceneLifecycle()
     let first = lifecycle.beginConnection()

@@ -5,6 +5,8 @@ import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.Rect
 import android.graphics.RectF
+import kotlin.math.cos
+import kotlin.math.sin
 
 /**
  * Draws the ride onto whatever surface the head unit hands over.
@@ -74,6 +76,7 @@ internal class ProjectedMapRenderer {
                     camera.x(point),
                     camera.y(point),
                     snapshot.localHeadingDegrees,
+                    snapshot.localMarkerOutline,
                     palette,
                 )
             }
@@ -159,12 +162,28 @@ internal class ProjectedMapRenderer {
         rider: ProjectedRider,
         palette: ProjectedMapPalette,
     ) {
+        val outline = if (rider.needsAttention) ATTENTION else palette.riderOutlineArgb
+        if (rider.markerOutline == ProjectedMarkerOutline.STAR) {
+            // The leader and the Tail End Charlie, in their own colour (#912).
+            // The shape says the role, so the extra ring the back of the group
+            // used to be given is not drawn around it.
+            val star = ProjectedMarkerShape.starPath(x, y, RIDER_RADIUS_PX)
+            marker.style = Paint.Style.FILL
+            marker.color = rider.colourArgb
+            canvas.drawPath(star, marker)
+            marker.style = Paint.Style.STROKE
+            marker.strokeWidth = 3f
+            marker.strokeJoin = Paint.Join.ROUND
+            marker.color = outline
+            canvas.drawPath(star, marker)
+            return
+        }
         marker.style = Paint.Style.FILL
         marker.color = rider.colourArgb
         canvas.drawCircle(x, y, RIDER_RADIUS_PX, marker)
         marker.style = Paint.Style.STROKE
         marker.strokeWidth = 3f
-        marker.color = if (rider.needsAttention) ATTENTION else palette.riderOutlineArgb
+        marker.color = outline
         canvas.drawCircle(x, y, RIDER_RADIUS_PX + 3f, marker)
         if (rider.isTec) {
             // The back of the group is the one role a leader scans for.
@@ -192,6 +211,7 @@ internal class ProjectedMapRenderer {
         x: Float,
         y: Float,
         headingDegrees: Double?,
+        outline: ProjectedMarkerOutline,
         palette: ProjectedMapPalette,
     ) {
         if (headingDegrees != null) {
@@ -212,6 +232,14 @@ internal class ProjectedMapRenderer {
         }
         marker.style = Paint.Style.FILL
         marker.color = palette.markerHaloArgb
+        if (outline == ProjectedMarkerOutline.STAR) {
+            // This phone leads the group, or is its resolved Tail End Charlie
+            // (#912). Same white edge, same blue, in the shape of the role.
+            canvas.drawPath(ProjectedMarkerShape.starPath(x, y, LOCAL_RADIUS_PX + 4f), marker)
+            marker.color = 0xFF2F80ED.toInt()
+            canvas.drawPath(ProjectedMarkerShape.starPath(x, y, LOCAL_RADIUS_PX), marker)
+            return
+        }
         canvas.drawCircle(x, y, LOCAL_RADIUS_PX + 4f, marker)
         marker.color = 0xFF2F80ED.toInt()
         canvas.drawCircle(x, y, LOCAL_RADIUS_PX, marker)
@@ -264,5 +292,45 @@ internal data class ProjectedMapPalette(
         )
 
         fun forHost(darkMode: Boolean): ProjectedMapPalette = if (darkMode) night else day
+    }
+}
+
+/**
+ * The star a leader or a Tail End Charlie is drawn as on the car screen (#912).
+ *
+ * The proportions are the phone's `RiderMarkerShapePainter` for a resting star:
+ * five equal points, one straight up, reaching [STAR_TIP_SHARE] of half the box,
+ * with the valleys between them at [STAR_VALLEY_SHARE]. The phone's circle fills
+ * [CIRCLE_SHARE] of the same box, so the star is measured against the circle it
+ * replaces: its points reach `STAR_TIP_SHARE / CIRCLE_SHARE` times the circle's
+ * radius and its valleys `STAR_VALLEY_SHARE / CIRCLE_SHARE`. A star that were no
+ * bigger than the circle would be the less conspicuous marker, and with points no
+ * longer than the body is wide it reads as a pentagon.
+ */
+internal object ProjectedMarkerShape {
+    const val CIRCLE_SHARE = 0.8f
+    const val STAR_TIP_SHARE = 1.06f
+    const val STAR_VALLEY_SHARE = 0.66f
+
+    /** The ten vertices, the first being the point straight up, then clockwise. */
+    fun starVertices(
+        centreX: Float,
+        centreY: Float,
+        circleRadius: Float,
+    ): List<Pair<Float, Float>> = List(10) { index ->
+        val share = if (index % 2 == 0) STAR_TIP_SHARE else STAR_VALLEY_SHARE
+        val reach = circleRadius * share / CIRCLE_SHARE
+        val angle = -Math.PI / 2 + index * Math.PI / 5
+        Pair(
+            centreX + (reach * cos(angle)).toFloat(),
+            centreY + (reach * sin(angle)).toFloat(),
+        )
+    }
+
+    fun starPath(centreX: Float, centreY: Float, circleRadius: Float): Path = Path().apply {
+        starVertices(centreX, centreY, circleRadius).forEachIndexed { index, (x, y) ->
+            if (index == 0) moveTo(x, y) else lineTo(x, y)
+        }
+        close()
     }
 }
