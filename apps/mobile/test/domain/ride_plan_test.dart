@@ -308,6 +308,46 @@ void main() {
     });
   });
 
+  test(
+    'what is left of a plan starts here and keeps the legs ahead (#893)',
+    () {
+      final plan = RidePlan.toDestination(_place(_town, 'Town'))
+          .withStart(PlaceStart(_place(_here, 'Meeting point')))
+          .addStop(_place(_cafe, 'Cafe'))
+          .addStop(_place(_pass, 'Pass'))
+          .withShapingPoints(const [
+            RouteShapingPoint(
+              id: 'ridden',
+              point: GeoPoint(latitude: 52.05, longitude: -1.02),
+              legIndex: 0,
+            ),
+            RouteShapingPoint(
+              id: 'passed-on-this-leg',
+              point: GeoPoint(latitude: 52.12, longitude: -1.02),
+              legIndex: 1,
+            ),
+            RouteShapingPoint(
+              id: 'ahead',
+              point: GeoPoint(latitude: 52.25, longitude: -1.02),
+              legIndex: 2,
+            ),
+          ]);
+
+      final remaining = plan.remainingFromCurrentLocation(
+        passedStops: 1,
+        passedShapingPointIds: {'passed-on-this-leg'},
+      );
+
+      expect(remaining.startsAtCurrentLocation, isTrue);
+      expect(remaining.stops.map((stop) => stop.label), ['Pass']);
+      expect(remaining.destination!.label, 'Town');
+      expect(
+        {for (final point in remaining.shapingPoints) point.id: point.legIndex},
+        {'ahead': 1},
+      );
+    },
+  );
+
   group('reading a confirmed route back', () {
     test(
       'a start from the rider\'s position is still the rider\'s position',

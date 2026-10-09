@@ -210,7 +210,7 @@ search field.
 | --- | --- | --- |
 | Solo (free roam) | Map menu, and the ride-menu button on the navigation canvas: **Edit route** | Plan surface; Update route replaces the free-roam route in place. Navigation continues. |
 | Leader, before the start | Pre-start panel **Change**; Ride tab **Edit route** | Plan surface; Use route publishes a new revision. |
-| Leader, during the ride | Ride tab **Edit route** | Plan surface; Update route publishes a new revision. Riders behind a moved start are guided back by the existing off-route rejoin (#102). |
+| Leader, during the ride | Ride tab **Edit route** | Plan surface on what is left of the ride (#893): the start is the leader's position, and the stops and adjustments already behind the leader (measured on the navigation progress tracker's line, so a loop's finish is not its start) are dropped. Update route publishes a new revision without the ridden part. A leader not yet on the route (no progress, more than 250 m from it) keeps the meeting point. Riders behind the leader are guided back by the existing off-route rejoin (#102). Solo navigation edits the same way. |
 | Follower | none | The route belongs to the leader. Ride on alone gives a follower their own copy to edit. |
 
 The other route sources stay available as **Replace route** (the existing

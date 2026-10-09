@@ -498,6 +498,31 @@ class RidePlan {
     return copyWith(stops: [...stops]..[index] = stops[index].movedTo(to));
   }
 
+  /// What is still ahead of a rider part-way along this plan's route (#893).
+  ///
+  /// The first [passedStops] stops are behind them and so are the shaping
+  /// points in [passedShapingPointIds]; both are dropped, and the plan starts
+  /// from the rider's location. The remaining adjustments move onto the same
+  /// legs counted from there, so the leg the rider is on becomes leg 0. The
+  /// destination is kept even when it is behind them: an edit still goes
+  /// somewhere.
+  RidePlan remainingFromCurrentLocation({
+    required int passedStops,
+    Set<String> passedShapingPointIds = const {},
+  }) {
+    final passed = passedStops.clamp(0, stops.length);
+    return copyWith(
+      start: const CurrentLocationStart(),
+      stops: stops.sublist(passed),
+      shapingPoints: _sortedByLeg([
+        for (final point in shapingPoints)
+          if (point.legIndex >= passed &&
+              !passedShapingPointIds.contains(point.id))
+            _onLeg(point, point.legIndex - passed),
+      ]),
+    );
+  }
+
   GeoPoint? _legStart(int leg, {GeoPoint? currentLocation}) => leg == 0
       ? resolvedStart(currentLocation: currentLocation)?.point
       : stops[leg - 1].point;
