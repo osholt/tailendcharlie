@@ -225,23 +225,15 @@ run_smoke() {
 }
 
 # Compose returning only proves the container was started. On the small relay
-# host the API can need a few seconds to be scheduled after an image build, so
-# let the end-to-end smoke probe establish readiness instead of treating that
-# ordinary startup delay as a failed deployment.
-smoke_attempts=1
-test "$target" = staging && smoke_attempts=12
-smoke_ok=0
-for ((attempt = 1; attempt <= smoke_attempts; attempt += 1)); do
-  if run_smoke; then
-    smoke_ok=1
-    break
-  fi
-  if test "$attempt" -lt "$smoke_attempts"; then
-    echo "smoke: attempt $attempt/$smoke_attempts failed; retrying in 5 seconds" >&2
-    sleep 5
-  fi
-done
-test "$smoke_ok" = "1" || fail "$target smoke test failed after $smoke_attempts attempts"
+# host the API can need a while to answer after an image build, on either target,
+# so let the end-to-end smoke probe establish readiness instead of treating that
+# ordinary startup delay as a failed deployment (#910). The policy and its
+# reasons live in relay-smoke-retry.sh, sourced from this pinned checkout.
+# shellcheck source=deploy/relay-smoke-retry.sh
+source "$repo/deploy/relay-smoke-retry.sh"
+smoke_attempts="$(smoke_attempts_for "$target")"
+smoke_with_retries "$smoke_attempts" "$(smoke_delay_for "$target")" "$target" run_smoke ||
+  fail "$target smoke test failed after $smoke_attempts attempts"
 
 # Pre-production is an internal deployment gate, not a resident environment on
 # this memory-constrained host. Leave its containers and logs available for the

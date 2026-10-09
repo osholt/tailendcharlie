@@ -246,6 +246,13 @@ Things worth knowing before trusting it:
   and reads the GPX back, so the API, the encryption key and PostgreSQL all have
   to agree. It only writes on pre-production; production's database is riders'
   data, not a test fixture.
+- **The smoke test retries on both targets** (#910): pre-production 12 attempts
+  5 s apart, production 6 attempts 10 s apart. Production's checks are all reads,
+  so a retry is harmless. On 5 Oct 2026 a single production attempt failed on the
+  first readiness request after recreation, on the loaded host, although the
+  relay was healthy moments later. The log line `smoke: production passed on
+  attempt N/6 after S s` tracks how much headroom the host has. The policy lives
+  in `deploy/relay-smoke-retry.sh`.
 - **Both stacks share the one checkout**, so a staging deploy moves
   `/opt/tailendcharlie` before production is promoted. That is harmless —
   production keeps running its existing image — but it means `git log` on the
