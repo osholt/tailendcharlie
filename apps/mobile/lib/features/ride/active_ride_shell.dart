@@ -3017,6 +3017,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
                 (_locationController?.status.canSample ?? false)),
         basemap: selectedBasemap,
         mapStyleJson: _carPlayMapStyleJson,
+        localMarkerOutline: _localMarkerOutline,
         localPosition: _mapPosition.value,
         localHeadingDegrees: navigationPosition?.headingDegrees,
         localSpeedMetersPerSecond: navigationPosition?.speedMetersPerSecond,

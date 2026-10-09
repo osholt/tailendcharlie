@@ -52,6 +52,65 @@ class AndroidAutoCompanionTest {
     }
 
     @Test
+    fun `marker outline is the phone's decision and defaults to a circle`() {
+        val snapshot = ProjectedRideSnapshot.from(
+            mapOf(
+                "riders" to listOf(
+                    mapOf("label" to "Lead", "markerOutline" to "star"),
+                    mapOf("label" to "Charlie", "isTec" to true, "markerOutline" to "star"),
+                    mapOf("label" to "Rider", "markerOutline" to "circle"),
+                    // A snapshot from before the field existed, and a value this
+                    // build does not know. Neither may become a star: a Tail End
+                    // Charlie's own role or `isTec` is not re-read here.
+                    mapOf("label" to "Old", "role" to "Lead", "isTec" to true),
+                    mapOf("label" to "Odd", "markerOutline" to "STAR"),
+                    mapOf("label" to "Odder", "markerOutline" to 1),
+                ),
+            ),
+        )
+
+        assertEquals(
+            listOf(
+                ProjectedMarkerOutline.STAR,
+                ProjectedMarkerOutline.STAR,
+                ProjectedMarkerOutline.CIRCLE,
+                ProjectedMarkerOutline.CIRCLE,
+                ProjectedMarkerOutline.CIRCLE,
+                ProjectedMarkerOutline.CIRCLE,
+            ),
+            snapshot.riders.map { it.markerOutline },
+        )
+    }
+
+    @Test
+    fun `this phone's own marker outline comes from its own block`() {
+        fun outline(raw: Map<String, Any?>) = ProjectedRideSnapshot.from(raw).localMarkerOutline
+
+        // A group's leader is a star; a solo ride's creator holds the same role
+        // and is not, which only the phone knows.
+        assertEquals(
+            ProjectedMarkerOutline.STAR,
+            outline(mapOf("localRider" to mapOf("markerOutline" to "star"))),
+        )
+        assertEquals(
+            ProjectedMarkerOutline.CIRCLE,
+            outline(mapOf("localRider" to mapOf("markerOutline" to "circle", "role" to "Lead"))),
+        )
+        assertEquals(ProjectedMarkerOutline.CIRCLE, outline(emptyMap()))
+        // Without the block the rider list's entry for this phone says the same.
+        assertEquals(
+            ProjectedMarkerOutline.STAR,
+            outline(
+                mapOf(
+                    "riders" to listOf(
+                        mapOf("label" to "Me", "isLocal" to true, "markerOutline" to "star"),
+                    ),
+                ),
+            ),
+        )
+    }
+
+    @Test
     fun `snapshot parser supplies safe empty state`() {
         val snapshot = ProjectedRideSnapshot.from(emptyMap())
 
