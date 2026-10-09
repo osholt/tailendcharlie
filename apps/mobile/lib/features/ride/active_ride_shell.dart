@@ -1007,6 +1007,25 @@ List<RideDestination> rideDestinations({required bool simulation}) {
   ];
 }
 
+/// The destination a tapped push opens, as an index into [rideDestinations].
+///
+/// A leader's broadcast or a rider's alert opens the map, where it is shown
+/// (#881). Every other category keeps the destination it always had.
+@visibleForTesting
+int pushOpenDestinationIndex({
+  required bool isSimulation,
+  required PushOpenRequest request,
+}) {
+  if (request.isGroupInstruction) return 0;
+  final safetyAlert = request.category == PushCategory.safety;
+  return switch ((isSimulation, safetyAlert)) {
+    (true, true) => 3,
+    (true, false) => 2,
+    (false, true) => 2,
+    (false, false) => 1,
+  };
+}
+
 enum _StartRideDecision { cancel, chooseRoute, start }
 
 enum _MissingTecDecision { cancel, assignTec, startAnyway }
@@ -5413,14 +5432,11 @@ class _ActiveRideShellState extends State<ActiveRideShell>
       return;
     }
     _internetRelayController?.wake();
-    final safetyAlert = request.category == 'safety';
     setState(
-      () => _selectedIndex = switch ((_isSimulation, safetyAlert)) {
-        (true, true) => 3,
-        (true, false) => 2,
-        (false, true) => 2,
-        (false, false) => 1,
-      },
+      () => _selectedIndex = pushOpenDestinationIndex(
+        isSimulation: _isSimulation,
+        request: request,
+      ),
     );
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()

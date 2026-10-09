@@ -28,6 +28,7 @@ class RoutePreviewPin {
     this.label,
     this.interactive = false,
     this.includeInFraming = true,
+    this.draggable = false,
   });
 
   final GeoPoint point;
@@ -36,6 +37,35 @@ class RoutePreviewPin {
   final String? label;
   final bool interactive;
   final bool includeInFraming;
+
+  /// Whether a drag that begins on this pin, while drawing, moves the pin
+  /// rather than the line under it: a plan's named places (#891).
+  final bool draggable;
+}
+
+/// The pin a drawing drag that began at [tap] takes hold of, if any.
+///
+/// Shaping handles and draggable pins compete on distance alone, within
+/// [radius] screen pixels, so whichever the finger is actually on wins. [pins]
+/// and [screens] are parallel: each pin's on-screen position.
+RoutePreviewPin? grabbedRoutePreviewPin(
+  List<RoutePreviewPin> pins,
+  List<math.Point<num>> screens,
+  math.Point<num> tap, {
+  required double radius,
+}) {
+  RoutePreviewPin? closest;
+  var closestDistance = double.infinity;
+  for (var index = 0; index < pins.length && index < screens.length; index++) {
+    final pin = pins[index];
+    if (pin.kind != 'shape' && !pin.draggable) continue;
+    final distance = _screenDistance(tap, screens[index]);
+    if (distance < closestDistance) {
+      closestDistance = distance;
+      closest = pin;
+    }
+  }
+  return closestDistance <= radius ? closest : null;
 }
 
 /// Route controls always remain visible; optional discoveries share one density
@@ -67,7 +97,11 @@ List<RoutePreviewPin> visibleRoutePreviewPins(
 ];
 
 class RoutePreviewReshapeStart {
-  const RoutePreviewReshapeStart({required this.point, this.shapingPointIndex});
+  const RoutePreviewReshapeStart({
+    required this.point,
+    this.shapingPointIndex,
+    this.draggedPin,
+  });
 
   final GeoPoint point;
 
@@ -75,6 +109,10 @@ class RoutePreviewReshapeStart {
   /// shaping point. Otherwise this is the index among pins whose kind is
   /// `shape`.
   final int? shapingPointIndex;
+
+  /// The [RoutePreviewPin.draggable] pin the drag began on, which moves with
+  /// the finger instead of the line (#891).
+  final RoutePreviewPin? draggedPin;
 }
 
 /// A small MapLibre route canvas for review/recording surfaces that do not own
@@ -325,7 +363,7 @@ class _ResolvedRouteMapPreviewState extends State<ResolvedRouteMapPreview> {
                         vertical: 7,
                       ),
                       child: Text(
-                        'Drag route or handle · +/− zoom · Finish drawing to pan',
+                        'Drag route, handle or stop · +/− zoom · Finish drawing to pan',
                         textAlign: TextAlign.center,
                         style: TextStyle(color: Colors.white, fontSize: 12),
                       ),
@@ -695,27 +733,33 @@ class _ResolvedRouteMapPreviewState extends State<ResolvedRouteMapPreview> {
     final callback = widget.onReshapeStart;
     if (controller == null || callback == null) return;
     final tap = _platformPoint(localPosition);
-    final shapePins = widget.pins
-        .where((pin) => pin.kind == 'shape')
+    final grabbable = widget.pins
+        .where((pin) => pin.kind == 'shape' || pin.draggable)
         .toList(growable: false);
-    int? shapeIndex;
-    if (shapePins.isNotEmpty) {
+    RoutePreviewPin? grabbed;
+    if (grabbable.isNotEmpty) {
       final screens = await controller.toScreenLocationBatch(
-        shapePins.map(
+        grabbable.map(
           (pin) => ml.LatLng(pin.point.latitude, pin.point.longitude),
         ),
       );
-      var closestDistance = double.infinity;
-      for (var index = 0; index < screens.length; index += 1) {
-        final distance = _screenDistance(tap, screens[index]);
-        if (distance < closestDistance) {
-          closestDistance = distance;
-          shapeIndex = index;
-        }
-      }
-      if (closestDistance > 32 * _platformPixelScale) shapeIndex = null;
+      grabbed = grabbedRoutePreviewPin(
+        grabbable,
+        screens,
+        tap,
+        radius: 32 * _platformPixelScale,
+      );
     }
-    if (shapeIndex == null && !await _tapIsNearRoute(controller, tap)) return;
+    final shapeIndex = grabbed == null || grabbed.kind != 'shape'
+        ? null
+        : widget.pins
+              .where((pin) => pin.kind == 'shape')
+              .toList(growable: false)
+              .indexOf(grabbed);
+    final draggedPin = grabbed != null && grabbed.kind != 'shape'
+        ? grabbed
+        : null;
+    if (grabbed == null && !await _tapIsNearRoute(controller, tap)) return;
     final location = await controller.toLatLng(tap);
     if (gesture != _reshapeGesture) return;
     _reshapeAccepted = true;
@@ -726,6 +770,7 @@ class _ResolvedRouteMapPreviewState extends State<ResolvedRouteMapPreview> {
           longitude: location.longitude,
         ),
         shapingPointIndex: shapeIndex,
+        draggedPin: draggedPin,
       ),
     );
   }

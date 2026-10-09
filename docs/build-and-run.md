@@ -412,10 +412,15 @@ request. They need repository secrets and store credentials that are not in the
 repository.
 
 ```bash
-gh workflow run "TestFlight" --ref <branch>
+gh workflow run "TestFlight" --ref <branch> --field build_number=<next unused number>
 gh workflow run "Android internal testing" --ref <branch> \
+  --field build_number=<next unused number> \
   --field promote_to=alpha --field notification_mode=auto
 ```
+
+`build_number` is required on both and must be higher than every build already
+in the store; there is no default (the run number it used to default to
+collided with shipped numbers, #630). Each workflow checks it before building.
 
 Both require the `RIDE_RELAY_API_BASE_URL` repository variable and fail with a
 clear message without it. See

@@ -5,6 +5,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 
+import 'heatmap_ramp.dart';
+
 /// Kernels overlap adjacent cells, including diagonal neighbours. At country
 /// scale keep coverage visible without claiming a precise road-width trace.
 double heatmapCellRadiusPixels(
@@ -123,11 +125,24 @@ class RideHeatmapPainter extends CustomPainter {
     canvas.clipRect(Offset.zero & size);
     for (final point in bins.values) {
       final weight = point.weight.clamp(0.0, 1.0);
-      final color = Color.lerp(
-        global ? const Color(0xFF0EA5E9) : const Color(0xFF7C3AED),
-        const Color(0xFFF97316),
-        weight,
-      )!;
+      final Color color;
+      final double centreAlpha;
+      final double middleAlpha;
+      if (global) {
+        // The same ramp the MapLibre layer and the web planner use (#913).
+        final density = weight * globalHeatmapIntensity;
+        color = globalHeatmapRamp.colorAt(density);
+        centreAlpha = globalHeatmapRamp.alphaAt(density);
+        middleAlpha = centreAlpha * 0.63;
+      } else {
+        color = Color.lerp(
+          personalHeatmapRamp.stops.first.color,
+          personalHeatmapRamp.stops.last.color,
+          weight,
+        )!;
+        centreAlpha = 0.35 + 0.2 * weight;
+        middleAlpha = 0.22 + 0.12 * weight;
+      }
       canvas.drawCircle(
         point.position,
         radius,
@@ -136,8 +151,8 @@ class RideHeatmapPainter extends CustomPainter {
             point.position,
             radius,
             [
-              color.withValues(alpha: 0.35 + 0.2 * weight),
-              color.withValues(alpha: 0.22 + 0.12 * weight),
+              color.withValues(alpha: centreAlpha),
+              color.withValues(alpha: middleAlpha),
               color.withValues(alpha: 0),
             ],
             const [0, 0.45, 1],

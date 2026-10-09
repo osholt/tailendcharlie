@@ -5,10 +5,12 @@ app shows under **Settings → About & build**. Testers reach this file from
 **What changed in this build** on that screen.
 
 Android build numbers are Play version codes and come from the
-`Android internal testing` workflow's run number (or its `build_number` input).
-iOS build numbers come from the `TestFlight` workflow the same way, so the two
-platforms do not share a numbering sequence - always say which platform a build
-number belongs to.
+`Android internal testing` workflow's required `build_number` input. iOS build
+numbers come from the `TestFlight` workflow's required `build_number` input in
+the same way. Neither defaults to a run number (#630); the dispatcher chooses a
+number higher than every build already in the store. Recent releases use the
+same number on both platforms, but that is a convention, so always say which
+platform a build number belongs to.
 
 ## How to add an entry
 

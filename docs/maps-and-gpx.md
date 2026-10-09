@@ -26,6 +26,65 @@ identifier ([#860](#provider-labels-never-show-an-identifier-860)). They use the
 source and offline tile cache; only their small style-document caches are kept
 separate so switching cannot serve the wrong palette.
 
+## Global ride heatmap colours (#913)
+
+The opt-in global layer is pink, through a deeper pink, to crimson, and gets
+more opaque as a road gets busier. It replaced a blue, amber, red ramp. Since
+[#905](https://github.com/osholt/tailendcharlie/issues/905) the layer draws
+road-level cells, and most roads have few rides, so most of what was drawn sat at
+the cold end: the blue of the good-biking-road highlight, 13 CIEDE2000 from it.
+The amber and red above it were 16 and 20 from the twisty orange.
+
+| density | colour | opacity | restrained light | original light | dark | vs twisty / pass / good-road | vs personal violet / dark orange / orange |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 0.20 (one low-use cell) | `#EC4899` | 0.50 | 1.68-1.82 | 1.50-1.83 | 2.02-2.14 | 39 / 55 / 41 | 28 / 34 / 39 |
+| 0.55 | `#DB2777` | 0.60 | 2.24-2.48 | 1.96-2.50 | 1.94-2.12 | 38 / 71 / 43 | 28 / 29 / 38 |
+| 1.00 | `#BE123C` | 0.75 | 3.47-3.96 | 2.89-4.02 | 1.85-2.09 | 33 / 67 / 46 | 35 / 19 / 33 |
+| *old 0.25* | `#0EA5E9` | 0.42 | 1.39-1.48 | 1.20-1.50 | 2.05-2.13 | 53 / 28 / **13** | n/a |
+| *old 0.70* | `#F59E0B` | 0.42 | 1.23-1.33 | 1.12-1.34 | 2.39-2.47 | **16** / 46 / 57 | |
+| *old 1.00* | `#EF4444` | 0.42 | 1.60-1.71 | 1.49-1.72 | 1.71-1.78 | **20** / 62 / 47 | |
+
+The contrast columns are WCAG 2.1 of the heat blended over the basemap ground at
+the stop's effective opacity, against that ground: the lowest to highest over
+background, park, water and (restrained light only) building. The phone draws the
+layer below the road layers, so road fills are not behind it; the planner has no
+road layer to sit under, so its test also measures the Liberty road fills (white,
+`#FFEEAA`, `#FFCC88`), all at 1.5 or more. The restrained light and dark grounds
+are `RouteTrailStyle.lightBasemapSurfaces` and `darkBasemapSurfaces`; the original
+light ground is the provider's own `#F8F4F0`, `#D8E8C8` and `#9EBDFF`. The distance
+columns are CIEDE2000 between the full-strength colours: about 2 is the smallest
+difference an eye can see, and every pair above is 19 or more. Blended into the
+basemap, no stop is under 20 from a highlight colour.
+
+Why these:
+
+- **Not blue, teal or orange.** The three discovery highlights are the orange
+  `#F97316`, the teal `#0F9D8A` and the blue `#2583E9`. A pink to crimson haze is
+  at least 33 from every one of them, where a heat ramp's usual yellow or amber
+  end was never going to clear the orange, and a yellow end would also have
+  vanished on the light basemaps (1.0-1.3:1).
+- **Related to the personal layer, not the same.** The personal layer runs violet
+  `#7C3AED` to orange `#F97316`. Both are warm, saturated and cold-to-hot, and
+  neither has a blue or green stop, but the global layer shares no colour with it:
+  its nearest stop to a personal one is 19 away (the crimson against the dark
+  orange).
+- **Opacity carries "hotter", not lightness.** No single colour is lighter than
+  both a light and a dark basemap, so the colour stays mid-tone and the busiest
+  roads simply cover more. That is also why the minimum contrast rose with
+  density instead of falling on one basemap.
+
+One definition drives all three renderers: `globalHeatmapRamp` in
+`apps/mobile/lib/features/map/heatmap_ramp.dart` feeds the MapLibre
+`heatmap-color` expression and the Flutter painter, and
+`GLOBAL_HEATMAP_RAMP` in `apps/website/global-heatmap.mjs` is the planner's copy,
+which also draws the legend swatch. `heatmap_ramp_test.dart` reads the planner's
+file and fails if the two drift. The personal layer is the same type with its
+unchanged violet to orange stops.
+
+Numbers do not show that a haze reads as heat in daylight. That needs a
+photograph of the global layer on a mounted phone over the light and dark maps,
+beside the discovery highlights, which #913 stays open for.
+
 ## Saved-route place labels stay offline
 
 The Ride library labels stored geometry with an approximate start and finish
