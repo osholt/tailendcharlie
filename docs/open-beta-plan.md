@@ -77,7 +77,7 @@ them on.
      capacity the relay uses comes out of the same allowance.
    - Valhalla can serve every routing call the app makes. Moving the remaining
      OSRM calls to Valhalla `auto` changes the routes riders get, so it is a
-     follow-up that needs field validation.
+     follow-up that needs field validation (#930).
 2. **Relay hardening.**
    - Load-test N concurrent rides of 10 riders on the real VM size and record
      the result.

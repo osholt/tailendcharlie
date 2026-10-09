@@ -284,7 +284,7 @@ app release. The app and the web planner read `serviceUrls` from
   they use today.
 - A `--dart-define` set at build time still overrides both, for development.
 
-This needs the relay and app change from #917's second PR. Builds without it
+This needs the relay and app change in #927, and the planner change in #929. Builds without it
 keep calling the public services whatever the relay says.
 
 1. In the relay's `deploy/.env`, add:
@@ -361,7 +361,7 @@ are:
 - the rejoin planner;
 - the web planner's `/table` travel times.
 
-#917 tracks that change as a follow-up. Until it lands, those calls stay on the
+#930 tracks that change. Until it lands, those calls stay on the
 OSRM demo through the same configuration, and a relay can point them at an
 OSRM-compatible host with `RIDE_RELAY_SERVICE_OSRM_URL`.
 
