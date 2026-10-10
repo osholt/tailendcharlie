@@ -101,6 +101,10 @@ them on.
   beta actually does: live location sharing and its retention, relay storage
   and deletion, opt-in heatmap and ETA contributions, diagnostics, and Nearby.
 - The DPIA and retention decision is complete (#338).
+- Global heatmap contribution is opt-in and asked at setup (#957, operator
+  decision of 10 October 2026). A rider who has not chosen contributes nothing;
+  riders from before the question existed are asked once on the home map. The
+  Data safety answer for approximate location says so.
 - No phone keeps sharing for hours after a group disperses (#859).
 - Terms with clear safety wording:
   - the app is not an emergency service;

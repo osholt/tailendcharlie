@@ -483,7 +483,10 @@ class UnitSettingsSheet extends StatelessWidget {
               const SizedBox(height: 8),
               DropdownButtonFormField<HeatmapContributionConsent>(
                 key: const Key('global-heatmap-consent'),
-                initialValue: heatmap.consent,
+                // Empty until the rider has chosen (#957), rather than showing
+                // Never as though they had. Nothing is shared meanwhile.
+                initialValue: heatmap.consentAnswered ? heatmap.consent : null,
+                hint: const Text('Not chosen yet: nothing is shared'),
                 decoration: const InputDecoration(
                   labelText: 'Contribute completed rides',
                 ),
@@ -502,7 +505,10 @@ class UnitSettingsSheet extends StatelessWidget {
                   ),
                 ],
                 onChanged: (value) async {
-                  if (value == null || value == heatmap.consent) return;
+                  if (value == null ||
+                      (value == heatmap.consent && heatmap.consentAnswered)) {
+                    return;
+                  }
                   if (value != HeatmapContributionConsent.never &&
                       !await _confirmHeatmapContribution(context, heatmap)) {
                     return;

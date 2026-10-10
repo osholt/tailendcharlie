@@ -51,3 +51,16 @@ test("an un-ended ride is kept from the last synchronisation, not from creation"
   );
   assert.doesNotMatch(text, /72 hours from creation/);
 });
+
+test("global heatmap contribution is opt-in, asked at setup, and nothing is shared until chosen (#957)", () => {
+  // The operator decided on 10 October 2026: "at setup ask about contributing
+  // to the global heat map". The page must not call contribution a default.
+  assert.match(text, /Contribution of completed rides is opt-in and off until you choose/);
+  assert.match(text, /First setup asks, with no option pre-selected, and skipping it means Never/);
+  assert.match(text, /asked once on the home map and shares nothing until you answer/);
+  assert.doesNotMatch(text, /Contribution of completed rides is on by default/);
+  const match = text.match(/Effective (\d{1,2}) (\w+) (\d{4}) ·/);
+  assert.ok(match, "the page states an effective date");
+  const effective = new Date(`${match[1]} ${match[2]} ${match[3]} 00:00:00 UTC`);
+  assert.ok(effective >= new Date("2026-10-10T00:00:00Z"), match[0]);
+});
