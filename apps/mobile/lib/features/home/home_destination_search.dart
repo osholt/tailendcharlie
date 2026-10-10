@@ -148,6 +148,7 @@ class HomeDestinationSearchSheet extends StatefulWidget {
 
   /// Injected by tests; otherwise the phone's own is opened.
   final PlaceMemory? memory;
+
   /// "Navigate to fuel" or "Navigate to charger", from the rider's fuel
   /// preference (#951). Null offers neither.
   final String? fuelSearchLabel;
