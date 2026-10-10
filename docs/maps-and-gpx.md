@@ -1083,6 +1083,30 @@ alone still decides when there is no heading to trust (below 3 m/s, the floor
 the reroute bearing uses) and inside 20 m of the line, where GPS course lag
 through a bend or round a ring must not blank the banner mid-junction.
 
+Off route on your own, Where To reroutes the way a group follower does (#940).
+Before this, the reroute lived only in the group ride shell. On the 10 October
+ride a Where To rider was off route for four minutes and then eight, and heard
+nothing. `SoloNavigationReroute` (`lib/services/solo_navigation_reroute.dart`)
+works like this:
+
+- Once the rider has been on the route, three fixes more than 120 m from it
+  put them off route. "Off route. Recalculating directions." is said once. A
+  rider still on the way to a route that starts elsewhere is not off it;
+  Navigate to start covers that.
+- The group planner then routes from the rider's position and heading back to
+  a point ahead on the planned route. The map navigates by that route and draws
+  it in the rejoin colour.
+- Without a leader there is no "massively off route" band. A long detour still
+  gets a route back (`RouteRejoinThresholds.solo`).
+- The rider is back on route after two fixes within 60 m that are also
+  travelling along the route. Crossing it at a junction does not count.
+- Neither a new rejoin route nor the return to the planned route is switched
+  inside a junction, and a failed retry keeps the last route back.
+- A rejoin is rejected, and a later join point tried, if it would arrive on the
+  planned route facing back along it. That is the other end of a U-turn, as a
+  route that starts against the rider's heading is the first.
+- The log gains `REROUTE` lines and off/back-on-route notes.
+
 ### Roundabouts, direction and symbols
 
 OSRM reports a roundabout as joining the ring and then leaving it, and the
