@@ -178,7 +178,11 @@ class Settings(BaseSettings):
     fuel_finder_base_url: str = "https://www.fuel-finder.service.gov.uk"
     fuel_prices_france_enabled: bool = False
     fuel_prices_france_url: str = "https://donnees.roulez-eco.fr/opendata/instantane"
-    fuel_price_refresh_seconds: int = Field(default=900, ge=300, le=3600)
+    # Fuel Finder's Fair Use policy: a service showing prices to the public calls
+    # the API on average at least every five minutes, so riders never see prices
+    # that differ materially from the source. Four leaves room for a slow pass;
+    # anything slower than five is refused rather than quietly breaking it.
+    fuel_price_refresh_seconds: int = Field(default=240, ge=60, le=300)
     # Between Fuel Finder requests. It allows one at a time and 100 a minute.
     fuel_price_request_interval_seconds: float = Field(default=3.0, ge=0.6, le=60)
     fuel_price_timeout_seconds: int = Field(default=30, ge=5, le=120)

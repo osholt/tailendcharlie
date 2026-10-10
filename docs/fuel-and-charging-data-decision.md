@@ -95,7 +95,7 @@ How the design meets those terms:
   [Report an error in fuel prices or forecourt details](https://www.gov.uk/guidance/report-an-error-in-fuel-prices-or-forecourt-details).
 - **Open question for the operator to put to the Fuel Finder team** (via the
   portal's [contact page](https://www.developer.fuel-finder.service.gov.uk/fuel-finder/contact-us)):
-  that an app's own server caching prices for 15 minutes and serving them to
+  that an app's own server caching prices for up to five minutes and serving them to
   that app's users per viewport is permitted use and not "redistribution of raw
   API data". The developer guidelines' own caching advice implies it is, but it
   is not stated.
@@ -234,13 +234,18 @@ stations appear from the relay's positions.
 
 The relay (954 MB host, one worker) holds the price snapshot in memory:
 
-- **UK.** A full station list at start-up and every six hours (the guidance's one
-  hour is a cache ceiling, and forecourts rarely move). A full price load at
-  start-up and daily; in between, changes since the last successful check every
-  **15 minutes**, with a 45-minute overlap so a price reported at the end of its
+- **UK.** A full station list at start-up and every hour, the guidelines' cache
+  ceiling, so a closure reaches riders within it. A full price load at start-up
+  and daily; in between, changes since the last successful check every **four
+  minutes**, with a 45-minute overlap so a price reported at the end of its
   30-minute window is not missed. Requests are serial, at most one every three
   seconds: a full load is about 34 requests over two minutes.
-- **France.** The instantaneous ZIP every 15 minutes, with `If-Modified-Since`.
+- **Fair Use cadence.** The Fair Use policy accepted at registration (10 October
+  2026) requires a service that shows prices to the public to call the API on
+  average at least every five minutes. The relay refuses a
+  `fuel_price_refresh_seconds` above 300, and the app reuses a map tile's prices
+  for at most four minutes.
+- **France.** The instantaneous ZIP on the same cadence, with `If-Modified-Since`.
 - **Bounded.** At most 20,000 stations per source; response, ZIP and XML size
   caps; a viewport limited to 0.5° of latitude by 0.8° of longitude and 600
   stations. About 20,000 stations take a few megabytes of memory.
