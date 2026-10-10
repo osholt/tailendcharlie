@@ -1464,7 +1464,7 @@ exact version it was written against.
 
 Not changed, and still costly: above zoom 14 each tile re-parses its zoom-14
 parent. A fresh zoom-in to 17.5 spends about three quarters of its decode time on
-that repeat (#954 tracks sharing the parse).
+that repeat (#964 tracks sharing the parse).
 
 ## CarPlay draws with MapLibre, and shares the phone's tiles
 
