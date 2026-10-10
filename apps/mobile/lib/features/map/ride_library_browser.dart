@@ -9,6 +9,7 @@ import '../../domain/imported_route.dart' show GeoPoint;
 import '../../services/basemap_configuration.dart';
 import '../../services/flutter_vector_style.dart';
 import '../../services/measurement_formatter.dart';
+import 'ride_vector_tile_layer.dart';
 
 class RideLibraryEntry {
   const RideLibraryEntry({
@@ -435,15 +436,7 @@ class _RideLibraryBrowserState extends State<RideLibraryBrowser> {
               ),
               children: [
                 if (style != null)
-                  vmt.VectorTileLayer(
-                    tileProviders: style.providers,
-                    theme: style.theme,
-                    sprites: style.sprites,
-                    maximumZoom: 16,
-                    concurrency: 2,
-                    fileCacheTtl: Duration.zero,
-                    fileCacheMaximumSizeInBytes: 0,
-                  ),
+                  RideVectorTileLayer(style: style, maximumZoom: 16),
                 GestureDetector(
                   onTap: () => _selectHits(entries),
                   child: PolylineLayer<String>(

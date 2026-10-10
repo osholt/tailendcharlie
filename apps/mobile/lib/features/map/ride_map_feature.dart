@@ -1,6 +1,7 @@
 import '../../controllers/eta_calibration_controller.dart';
 import 'heatmap_ramp.dart';
 import 'ride_heatmap_layer.dart';
+import 'ride_vector_tile_layer.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:math' as math;
@@ -3940,14 +3941,9 @@ class _RideMapScreenState extends State<RideMapScreen>
       options: options,
       children: [
         if (vectorStyle != null)
-          vmt.VectorTileLayer(
-            tileProviders: vectorStyle.providers,
-            theme: vectorStyle.theme,
-            sprites: vectorStyle.sprites,
+          RideVectorTileLayer(
+            style: vectorStyle,
             maximumZoom: _basemap.maximumNativeZoom.toDouble(),
-            concurrency: 2,
-            fileCacheTtl: Duration.zero,
-            fileCacheMaximumSizeInBytes: 0,
           ),
         if (_basemap.usesLegacyRaster)
           TileLayer(
@@ -10442,15 +10438,7 @@ class _GroupMiniMapState extends State<_GroupMiniMap> {
                 },
               ),
               children: [
-                vmt.VectorTileLayer(
-                  tileProviders: style.providers,
-                  theme: style.theme,
-                  sprites: style.sprites,
-                  maximumZoom: 16,
-                  concurrency: 2,
-                  fileCacheTtl: Duration.zero,
-                  fileCacheMaximumSizeInBytes: 0,
-                ),
+                RideVectorTileLayer(style: style, maximumZoom: 16),
                 if (visibleRoutePaths.isNotEmpty)
                   PolylineLayer(
                     polylines: _miniMapPolylines(
