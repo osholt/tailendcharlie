@@ -51,9 +51,18 @@ class LaunchDocTests(unittest.TestCase):
         for filename, (name, _) in EXPECTED.items():
             with self.subTest(workflow=name):
                 self.assertRegex(workflow_text(filename), rf"(?m)^name: {re.escape(name)}$")
-                self.assertIn(f'"{name}"', DOC) if name != "TestFlight" else self.assertIn(
-                    "workflow run TestFlight", DOC
-                )
+                self.assertIn(name, DOC)
+
+    def test_the_ios_upload_command_names_the_workflow_as_a_person_must_type_it(self):
+        self.assertIn("gh workflow run TestFlight --ref main", DOC)
+
+    def test_every_gh_command_in_the_doc_names_a_real_workflow(self):
+        names = {name for name, _ in EXPECTED.values()}
+        typed = re.findall(r'gh workflow run (?:"([^"]+)"|(\w+))', DOC)
+        self.assertTrue(typed)
+        for quoted, bare in typed:
+            with self.subTest(command=quoted or bare):
+                self.assertIn(quoted or bare, names)
 
     def test_every_input_the_doc_passes_exists_in_its_workflow(self):
         for filename, (name, inputs) in EXPECTED.items():
@@ -66,16 +75,23 @@ class LaunchDocTests(unittest.TestCase):
         self.assertEqual(CONFIRMATION_PHRASE, "publish-open-testing")
         self.assertIn(f"confirm_open_testing={CONFIRMATION_PHRASE}", DOC)
         self.assertIn("enable-public-link", DOC)
-        self.assertIn('test "$CONFIRM" = "enable-public-link"', workflow_text("testflight-public-link.yml"))
+        self.assertIn(
+            'test "$CONFIRM" = "enable-public-link"', workflow_text("testflight-public-link.yml")
+        )
 
     def test_the_default_cap_in_the_doc_is_the_one_in_the_tool(self):
         from tools.testflight.beta_distribution import DEFAULT_LINK_LIMIT
 
-        self.assertIn(f"link_limit={DEFAULT_LINK_LIMIT}", DOC)
-        self.assertIn(f"default: '{DEFAULT_LINK_LIMIT}'", workflow_text("testflight-public-link.yml"))
+        caps = re.findall(r"link_limit=(\d+)", DOC)
+        self.assertTrue(caps)
+        self.assertEqual(set(caps), {str(DEFAULT_LINK_LIMIT)})
+        self.assertIn(
+            f"default: '{DEFAULT_LINK_LIMIT}'", workflow_text("testflight-public-link.yml")
+        )
 
     def test_the_invite_variable_the_doc_asks_for_is_the_one_the_build_reads(self):
-        self.assertIn("RIDE_RELAY_TESTFLIGHT_INVITE_URL", DOC)
+        mentioned = set(re.findall(r"RIDE_RELAY_[A-Z_]*INVITE[A-Z_]*", DOC))
+        self.assertEqual(mentioned, {"RIDE_RELAY_TESTFLIGHT_INVITE_URL"})
         self.assertIn("vars.RIDE_RELAY_TESTFLIGHT_INVITE_URL", workflow_text("testflight.yml"))
 
     def test_the_decisions_are_stated_where_the_operator_will_look(self):

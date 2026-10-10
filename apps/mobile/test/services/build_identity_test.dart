@@ -188,7 +188,7 @@ void main() {
     const stamped = BuildIdentity(
       appVersion: '1.0.1',
       appBuild: '137',
-      track: DistributionTrack.playClosedAlpha,
+      track: DistributionTrack.playOpenBeta,
       platform: TargetPlatform.android,
       relayHost: 'relay.tailendcharlie.app',
     );
@@ -210,7 +210,7 @@ void main() {
         final query = Uri.splitQueryString(uri.query);
         expect(query['subject'], 'Tail End Charlie beta feedback (build 137)');
         expect(query['body'], contains(stamped.bugReportLine));
-        expect(query['body'], contains('Play closed testing (alpha)'));
+        expect(query['body'], contains('Play open testing (beta)'));
       },
     );
 
