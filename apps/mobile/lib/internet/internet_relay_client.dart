@@ -10,6 +10,7 @@ import '../domain/ride_event.dart';
 import '../domain/rider_location.dart';
 import '../domain/ride_session.dart';
 import '../relay/relay_event_compatibility.dart';
+import '../services/routing_service_endpoints.dart';
 
 class InternetRelayConfiguration {
   const InternetRelayConfiguration({
@@ -1446,6 +1447,14 @@ Future<RelayCompatibilityResult> _fetchCompatibility({
         cacheSeconds is! int) {
       throw const FormatException('Compatibility fields are invalid.');
     }
+    // Where routing and geocoding live (#917). Every fresh answer is adopted,
+    // an empty one included: that is how the operator moves the services, and
+    // how a cut-over is rolled back, without an app release.
+    unawaited(
+      RoutingServices.adopt(
+        AdvertisedRoutingServices.parse(decoded['serviceUrls']),
+      ),
+    );
     final capabilities = rawCapabilities.cast<String>().toSet();
     final required = rawRequired.cast<String>().toSet();
     final missingRequired = required.difference(descriptor.capabilities);

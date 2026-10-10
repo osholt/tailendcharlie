@@ -30,6 +30,7 @@ import 'data/sqlite_event_store.dart';
 import 'services/nearby_bridge.dart';
 import 'services/global_ride_heatmap.dart';
 import 'internet/internet_relay_client.dart';
+import 'services/routing_service_endpoints.dart';
 import 'services/test_control_registry.dart';
 import 'services/test_control_session.dart';
 import 'services/test_control_server.dart';
@@ -73,6 +74,9 @@ Future<void> main() async {
     rideInvitationLinks,
     routeProgressDisplay,
     miniMapDisplay,
+    // Where routing and geocoding live, as the relay last said (#917). Before
+    // the first frame, so the first search already goes to the right service.
+    _,
   ) = await (
     (
       RiderProfileController.load(),
@@ -92,6 +96,7 @@ Future<void> main() async {
     RideInvitationLinkController.load(),
     RouteProgressDisplayController.load(),
     MiniMapDisplayController.load(),
+    RoutingServices.restore(),
   ).wait;
 
   final completedRides = await CompletedRidesController.load(
@@ -139,7 +144,9 @@ Future<void> main() async {
   );
   unawaited(eta.refresh());
   // Told early, so a build the ride service has retired says so before the first
-  // join or sync fails. It only informs; see AppUpdateGateController.
+  // join or sync fails. It only informs; see AppUpdateGateController. The same
+  // compatibility answer also says where routing and geocoding live (#917):
+  // RoutingServices adopts every one, so this launch check moves them too.
   final updateGate = AppUpdateGateController.fromEnvironment();
   unawaited(updateGate.check());
   runApp(

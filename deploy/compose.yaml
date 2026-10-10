@@ -84,6 +84,12 @@ services:
       RIDE_RELAY_UPDATE_URL: ${RIDE_RELAY_UPDATE_URL:-https://tailendcharlie.app}
       RIDE_RELAY_IOS_UPDATE_URL: ${RIDE_RELAY_IOS_UPDATE_URL:-https://tailendcharlie.app}
       RIDE_RELAY_ANDROID_UPDATE_URL: ${RIDE_RELAY_ANDROID_UPDATE_URL:-https://tailendcharlie.app}
+      # Self-hosted routing and geocoding, advertised to clients. Unset keeps
+      # them on the public endpoints. See docs/routing-service.md.
+      RIDE_RELAY_SERVICE_VALHALLA_URL: ${RIDE_RELAY_SERVICE_VALHALLA_URL:-}
+      RIDE_RELAY_SERVICE_PHOTON_URL: ${RIDE_RELAY_SERVICE_PHOTON_URL:-}
+      RIDE_RELAY_SERVICE_NOMINATIM_URL: ${RIDE_RELAY_SERVICE_NOMINATIM_URL:-}
+      RIDE_RELAY_SERVICE_OSRM_URL: ${RIDE_RELAY_SERVICE_OSRM_URL:-}
     depends_on:
       db:
         condition: service_healthy

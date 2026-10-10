@@ -379,6 +379,7 @@ def create_app(
                 "android": settings.android_update_url,
             },
             minimumClientBuilds=configured_minimum_builds(),
+            serviceUrls=settings.service_urls,
         )
 
     def _heatmap_rate_limit(

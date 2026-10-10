@@ -1481,9 +1481,9 @@ class _ActiveRideShellState extends State<ActiveRideShell>
     final carPlayRouting = RoutingConfiguration.fromEnvironment();
     _carPlayRoutingClient = http.Client();
     _carPlayDestinationPlanner = DestinationRoutePlanner(
-      searchService: NominatimDestinationSearchService(
+      searchService: buildDestinationSearchService(
         client: _carPlayRoutingClient,
-        baseUrl: carPlayRouting.geocodingBaseUrl,
+        configuration: carPlayRouting,
       ),
       routingService: buildPlanningRoutingService(
         client: _carPlayRoutingClient,
