@@ -48,6 +48,7 @@ from .discovery import (
     suggestion_json,
 )
 from .eta import EtaProfileRequest, public_factors, remove_profile, save_profile
+from .fuel import FUEL_PRICES_CAPABILITY, FuelPriceService, validate_fuel_viewport
 from .heatmap import (
     accept_contribution,
     authenticate_contributor,
@@ -106,6 +107,7 @@ def create_app(
     settings: Settings | None = None,
     *,
     traffic_provider: TrafficIncidentProvider | None = None,
+    fuel_price_service: FuelPriceService | None = None,
 ) -> FastAPI:
     settings = settings or get_settings()
     engine = create_database_engine(settings)
@@ -177,6 +179,10 @@ def create_app(
         maximum_requests=max(5, settings.traffic_incident_rate_limit_requests // 6),
         window_seconds=settings.traffic_incident_rate_limit_window_seconds,
     )
+    fuel_price_limiter = SlidingWindowRateLimiter(
+        maximum_requests=settings.fuel_price_rate_limit_requests,
+        window_seconds=settings.fuel_price_rate_limit_window_seconds,
+    )
     eta_write_limiter = SlidingWindowRateLimiter(maximum_requests=30, window_seconds=3600)
     eta_read_limiter = SlidingWindowRateLimiter(maximum_requests=120, window_seconds=3600)
     heatmap_registration_limiter = SlidingWindowRateLimiter(
@@ -242,14 +248,25 @@ def create_app(
     )
     push_dispatcher = PushDispatcher.from_settings(settings, cipher)
     traffic_provider = traffic_provider or TomTomOrbisTrafficProvider(settings)
+    fuel_price_service = fuel_price_service or FuelPriceService(settings)
+    fuel_price_requests = Counter(
+        "ride_relay_fuel_price_requests_total",
+        "Fuel price viewport requests, without viewport labels",
+        ("outcome",),
+        registry=registry,
+    )
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
         if settings.auto_create_schema:
             initialize_schema(engine)
+        # Background refresh of every configured fuel price source (#951). A
+        # relay with none configured starts nothing.
+        fuel_price_service.start()
         yield
         push_dispatcher.close()
         await traffic_provider.close()
+        await fuel_price_service.close()
         engine.dispose()
 
     app = FastAPI(
@@ -273,6 +290,7 @@ def create_app(
     app.state.service = service
     app.state.push_dispatcher = push_dispatcher
     app.state.traffic_provider = traffic_provider
+    app.state.fuel_price_service = fuel_price_service
 
     def database_session():
         yield from session_dependency(session_factory)
@@ -370,7 +388,13 @@ def create_app(
             serverProtocol=settings.protocol_version,
             minimumClientProtocol=settings.minimum_client_protocol,
             maximumClientProtocol=settings.protocol_version,
-            capabilities=sorted(set(settings.supported_capabilities)),
+            capabilities=sorted(
+                set(settings.supported_capabilities)
+                # Fuel prices are advertised only while a source is configured,
+                # so the operator switches them on and off for every app from
+                # the relay's environment alone (#951).
+                | ({FUEL_PRICES_CAPABILITY} if fuel_price_service.configured else set())
+            ),
             requiredCapabilities=sorted(set(settings.required_capabilities)),
             cacheSeconds=settings.compatibility_cache_seconds,
             updateUrls={
@@ -547,6 +571,49 @@ def create_app(
                 },
             )
         return JSONResponse(content=result)
+
+    @app.get("/api/v1/fuel/prices", include_in_schema=False)
+    def fuel_prices(
+        request: Request,
+        west: float = Query(ge=-180, le=180),
+        south: float = Query(ge=-90, le=90),
+        east: float = Query(ge=-180, le=180),
+        north: float = Query(ge=-90, le=90),
+    ) -> Response:
+        try:
+            validate_fuel_viewport(
+                west,
+                south,
+                east,
+                north,
+                maximum_latitude_span=settings.fuel_price_maximum_latitude_span,
+                maximum_longitude_span=settings.fuel_price_maximum_longitude_span,
+            )
+        except ValueError as error:
+            fuel_price_requests.labels(outcome="invalid").inc()
+            raise RelayServiceError(400, str(error)) from error
+        if not fuel_price_service.configured:
+            fuel_price_requests.labels(outcome="unconfigured").inc()
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "code": "fuel_prices_unconfigured",
+                    "message": "Fuel prices are not configured on this relay.",
+                },
+            )
+        client_ip = request.client.host if request.client is not None else "unknown"
+        retry_after = fuel_price_limiter.check(f"fuel:{client_ip}")
+        if retry_after is not None:
+            fuel_price_requests.labels(outcome="rate_limited").inc()
+            return JSONResponse(
+                status_code=429,
+                headers={"retry-after": str(min(retry_after, 300))},
+                content={"error": "Fuel price rate limit exceeded"},
+            )
+        fuel_price_requests.labels(outcome="served").inc()
+        return JSONResponse(
+            content=fuel_price_service.viewport(west=west, south=south, east=east, north=north)
+        )
 
     @app.post("/api/v1/traffic/reroutes", include_in_schema=False)
     async def traffic_reroute(

@@ -208,6 +208,45 @@ still requires Apple's beta review, privacy, age-rating, export-compliance and
 test-information metadata, but the workflow now submits the eligible build
 without a manual App Store Connect click.
 
+### Public link for the open beta
+
+An open beta lets strangers join the external group through its **public link**
+(`https://testflight.apple.com/join/<id>`), up to a cap. The `TestFlight public
+link` workflow (`tools/testflight/beta_distribution.py`) is the only thing in
+this repository that changes it, with the same App Manager review key as
+`submit_external.py` and `RIDE_RELAY_IOS_EXTERNAL_TESTER_GROUP`:
+
+| `action` | What it does |
+| --- | --- |
+| `verify` | Read-only. Reports the link, its cap, the tester count, whether a build testers can install is assigned, and whether the test information and review contact are present. Exits non-zero when `expect_link` is not met or a launch requirement is missing. |
+| `test-info` | Sets the en-GB beta description, feedback email (`testing@tailendcharlie.app`) and privacy URL from `docs/open-beta-listing/testflight-beta-description.txt`. |
+| `public-link-enable` | Enables the link, enforces the cap (`link_limit`, default 100, at most 10000), and refuses while no assigned build can be installed. |
+| `public-link-disable` | Turns the link off. |
+
+Every write is a dry run until `apply` is ticked, and a write is read back and
+fails if the group does not say what was asked. Enabling for real also needs
+`confirm_public_link` to be `enable-public-link`; disabling needs neither, so
+stopping new joins in an incident is one click.
+
+Things to know before using it:
+
+- **A link may already exist.** `docs/tester-update-guide.md` and the printed
+  join sheet already give testers a `testflight.apple.com/join/...` address.
+  Run `verify` first: if that is this group's public link, enabling only sets the
+  cap and the address does not change. Do not disable and re-enable it to see.
+- **Disabling the link does not remove anyone.** Testers who already joined keep
+  their build. To stop them, expire the build in App Store Connect (TestFlight >
+  the build > Expire Build), which is a deliberate, separate decision.
+- **A public link needs an installable build.** Beta App Review must have
+  approved a build assigned to the group, or enabling is refused.
+- **Builds stamp the link in.** Set the `RIDE_RELAY_TESTFLIGHT_INVITE_URL`
+  repository variable to the address `verify` prints so the next iOS build's
+  update button opens it (`docs/android-internal-testing.md`, build identity).
+- **The beta text is stored in Apple's systems**, not here: `test-info` writes it,
+  and a change to the file does nothing until it is re-run.
+- The workflow cannot see tester behaviour, crash rates or Apple's review queue.
+  Crash-free sessions come from TestFlight's crash reports in App Store Connect.
+
 ## Before public App Store distribution
 
 Create a separate release checklist covering bundle IDs, Apple Developer and

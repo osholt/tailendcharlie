@@ -17,6 +17,21 @@ if (hasReleaseKeystore) {
     keystoreProperties.load(FileInputStream(keystorePropertiesFile))
 }
 
+// Android Auto is left out of every build unless this is explicitly switched on:
+// `-PandroidAuto=true`, or `ORG_GRADLE_PROJECT_androidAuto=true` in the
+// environment (Flutter does not forward -P flags, so a Flutter build uses the
+// environment form). Off is the default and is what every Play track ships: the
+// open-testing track must not carry it, because an Android Auto bundle puts the
+// whole release behind Google's blocking Android for Cars review (#861).
+//
+// On, the preserved src/androidAuto manifest is merged into the *release* build
+// and the Car App Library is packaged instead of compiled against. Release only,
+// because the debug and profile source sets already carry their own manifests
+// and a source set takes a single one. A car-capable bundle is built by
+// `Android internal testing` with android_auto=true and is refused for `beta`.
+val includeAndroidAuto =
+    (project.findProperty("androidAuto") as String?).equals("true", ignoreCase = true)
+
 val dartDefines =
     (project.findProperty("dart-defines") as String?)
         .orEmpty()
@@ -105,6 +120,9 @@ android {
 
     sourceSets {
         getByName("test").resources.srcDir("../../test/fixtures")
+        if (includeAndroidAuto) {
+            getByName("release").manifest.srcFile("src/androidAuto/AndroidManifest.xml")
+        }
     }
 }
 
@@ -141,12 +159,17 @@ dependencies {
         }
     }
 
-    // Keep the future Android Auto implementation compiling without packaging
-    // Car App Library components into phone/Play builds. The inactive
-    // src/androidAuto manifest is likewise excluded until a dedicated build
-    // variant is approved for car distribution.
-    compileOnly("androidx.car.app:app:1.7.0")
-    compileOnly("androidx.car.app:app-projected:1.7.0")
+    // The Android Auto implementation always compiles, but the Car App Library is
+    // only packaged into a build made with -PandroidAuto=true (see above). Without
+    // it, phone and Play builds carry no Car App Library components and the inactive
+    // src/androidAuto manifest is not merged.
+    if (includeAndroidAuto) {
+        implementation("androidx.car.app:app:1.7.0")
+        implementation("androidx.car.app:app-projected:1.7.0")
+    } else {
+        compileOnly("androidx.car.app:app:1.7.0")
+        compileOnly("androidx.car.app:app-projected:1.7.0")
+    }
     implementation("androidx.core:core:1.13.0")
     // The Flutter map plugin already packages this exact MapLibre runtime. An
     // explicit app dependency makes its off-screen snapshotter available to the

@@ -9,6 +9,7 @@ import '../../controllers/map_style_mode_controller.dart';
 import '../../controllers/ride_diagnostics_controller.dart';
 import '../../data/ride_diagnostics_log_store.dart';
 import '../../controllers/shared_route_controller.dart' show PendingInAppRoute;
+import '../../controllers/speed_adaptive_zoom_controller.dart';
 import '../../controllers/speed_limit_display_controller.dart';
 import '../../controllers/spoken_guidance_controller.dart';
 import '../../domain/completed_ride.dart';
@@ -52,6 +53,7 @@ class HomeMapBackdrop extends StatefulWidget {
     super.key,
     required this.mapStyleMode,
     required this.speedLimitDisplay,
+    this.speedAdaptiveZoom,
     required this.distanceUnit,
     this.spokenGuidance,
     this.rideDiagnostics,
@@ -94,6 +96,7 @@ class HomeMapBackdrop extends StatefulWidget {
 
   final MapStyleModeController mapStyleMode;
   final SpeedLimitDisplayController speedLimitDisplay;
+  final SpeedAdaptiveZoomController? speedAdaptiveZoom;
   final SpokenGuidanceController? spokenGuidance;
   final RideDiagnosticsController? rideDiagnostics;
   final DistanceUnit distanceUnit;
@@ -721,6 +724,7 @@ class _HomeMapBackdropState extends State<HomeMapBackdrop>
             restrainedLightMapStyle:
                 widget.mapStyleMode.dayStyle == DayMapStyle.restrained,
             speedLimitDisplay: widget.speedLimitDisplay,
+            speedAdaptiveZoom: widget.speedAdaptiveZoom,
             distanceUnit: widget.distanceUnit,
             onMapStyleResolved: widget.onMapStyleResolved,
             hostChrome: chrome,

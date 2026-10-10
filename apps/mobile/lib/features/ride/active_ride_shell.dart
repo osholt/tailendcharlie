@@ -22,6 +22,7 @@ import '../../controllers/ride_controller.dart';
 import '../../controllers/ride_location_lifecycle_controller.dart';
 import '../../controllers/demo_route_choice_controller.dart';
 import '../../controllers/mini_map_display_controller.dart';
+import '../../controllers/speed_adaptive_zoom_controller.dart';
 import '../../controllers/route_progress_display_controller.dart';
 import '../../controllers/road_rating_controller.dart';
 import '../../controllers/ride_push_notification_controller.dart';
@@ -351,6 +352,7 @@ class ActiveRideShell extends StatefulWidget {
     this.routeProgressDisplay,
     this.miniMapDisplay,
     this.demoRouteChoice,
+    this.speedAdaptiveZoom,
     this.completedRideStore,
     this.globalRideHeatmap,
     this.pushTokenSource,
@@ -401,6 +403,7 @@ class ActiveRideShell extends StatefulWidget {
   /// Which bundled demo route a Ride Lab simulation rides, and remembers (#934).
   /// Null where it is not wired, which rides the default route.
   final DemoRouteChoiceController? demoRouteChoice;
+  final SpeedAdaptiveZoomController? speedAdaptiveZoom;
   final CompletedRideStore? completedRideStore;
   final GlobalRideHeatmapController? globalRideHeatmap;
   final PushTokenSource? pushTokenSource;
@@ -4875,6 +4878,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
       ),
       distanceUnit: widget.distanceUnits.value,
       speedLimitDisplay: widget.speedLimitDisplay,
+      speedAdaptiveZoom: widget.speedAdaptiveZoom,
       showRouteProgress: widget.routeProgressDisplay?.enabled ?? true,
       showGroupMiniMap: widget.miniMapDisplay?.visibleFor(_miniMapRole) ?? true,
       ridingDisplaySize: widget.mapStyleMode.ridingDisplaySize,
@@ -6585,6 +6589,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
       speedLimitDisplay: widget.speedLimitDisplay,
       routeProgressDisplay: widget.routeProgressDisplay,
       miniMapDisplay: widget.miniMapDisplay,
+      speedAdaptiveZoom: widget.speedAdaptiveZoom,
       miniMapRole: _miniMapRole,
       currentRideActive: true,
       lastRelaySync: _internetRelayController?.status.lastSuccessfulSync,
