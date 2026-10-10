@@ -1,0 +1,29 @@
+Tail End Charlie helps a group of motorcyclists ride together without losing anyone at a turn.
+
+One rider starts a ride and shares a six-digit code or a link. Everyone who joins sees the group on one map. Riders take roles: a leader at the front, a Tail End Charlie at the back, and junction markers who hold a turn until the last rider has passed. You can plan a route from a destination, import a GPX file, or send a route to another navigation app.
+
+WHAT IS IN THIS BETA
+- Group rides with live positions, roles, and rider-submitted hazard, police and speed-camera reports.
+- An emergency-stop alert that reaches the riders in your own group.
+- Route planning, turn-by-turn guidance with spoken prompts, and a mapped speed limit.
+- Ride recording, a personal heatmap kept on your phone, and sharing a finished ride.
+- Optional read-only links that let one trusted person, or a whole-group watcher, follow a ride.
+
+THIS IS AN EARLY BETA
+Tail End Charlie is in open testing, starting in the United Kingdom. Things will change and some will break. It is not an emergency service and cannot call for help: the emergency-stop alert reaches only the riders in your group. Navigation and speed limits are advisory and can be wrong or out of date. Road signs and the law come first. Never handle your phone while riding; set it up before you move off.
+
+Some features are experimental and not yet proven on the road. Sharing between nearby phones by Bluetooth when there is no signal has not been verified, so do not rely on it. Android Auto is not supported in this beta.
+
+WHY IT ASKS FOR WHAT IT ASKS FOR
+- Location, also while the screen is off or another app is in front, but only during an active ride. Android shows a notification while it runs. How reliably this works in a pocket or tank bag is still being proven.
+- Notifications: ride alerts from your group.
+- Camera: scanning a ride invitation code. Optional.
+- Nearby devices: the experimental phone-to-phone sharing above. Optional.
+
+PRIVACY
+Your location is shared with your own ride group while a ride is active. There are no accounts, no advertising and no analytics. Privacy policy: https://tailendcharlie.app/privacy.html
+
+You must be 17 or over to join this beta.
+
+SUPPORT AND FEEDBACK
+testing@tailendcharlie.app. Please include the build number from Settings > About & build.
