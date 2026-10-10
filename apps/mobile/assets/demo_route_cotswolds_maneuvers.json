@@ -1,0 +1,88 @@
+{
+  "source": "OSRM navigation steps for the Castle Combe to Tetbury route, left-hand traffic confirmed by hand (the public OSRM server reports right)",
+  "maneuvers": [
+    {
+      "type": "turn",
+      "modifier": "right",
+      "latitude": 51.510801,
+      "longitude": -2.235262,
+      "drivingSide": "left",
+      "trafficSideConfirmed": true
+    },
+    {
+      "type": "turn",
+      "modifier": "left",
+      "latitude": 51.518584,
+      "longitude": -2.205553,
+      "drivingSide": "left",
+      "trafficSideConfirmed": true
+    },
+    {
+      "type": "turn",
+      "modifier": "right",
+      "latitude": 51.557542,
+      "longitude": -2.186616,
+      "drivingSide": "left",
+      "trafficSideConfirmed": true
+    },
+    {
+      "type": "turn",
+      "modifier": "left",
+      "latitude": 51.558042,
+      "longitude": -2.165615,
+      "drivingSide": "left",
+      "trafficSideConfirmed": true
+    },
+    {
+      "type": "turn",
+      "modifier": "left",
+      "latitude": 51.559217,
+      "longitude": -2.164712,
+      "drivingSide": "left",
+      "trafficSideConfirmed": true
+    },
+    {
+      "type": "turn",
+      "modifier": "right",
+      "latitude": 51.587391,
+      "longitude": -2.172425,
+      "drivingSide": "left",
+      "trafficSideConfirmed": true
+    },
+    {
+      "type": "turn",
+      "modifier": "left",
+      "latitude": 51.590091,
+      "longitude": -2.127497,
+      "drivingSide": "left",
+      "trafficSideConfirmed": true
+    },
+    {
+      "type": "turn",
+      "modifier": "left",
+      "latitude": 51.590255,
+      "longitude": -2.127461,
+      "drivingSide": "left",
+      "trafficSideConfirmed": true
+    },
+    {
+      "type": "turn",
+      "modifier": "slight right",
+      "name": "The Street",
+      "latitude": 51.603615,
+      "longitude": -2.159446,
+      "drivingSide": "left",
+      "trafficSideConfirmed": true
+    },
+    {
+      "type": "end of road",
+      "modifier": "right",
+      "name": "Bath Road",
+      "ref": "A433",
+      "latitude": 51.62543,
+      "longitude": -2.170044,
+      "drivingSide": "left",
+      "trafficSideConfirmed": true
+    }
+  ]
+}

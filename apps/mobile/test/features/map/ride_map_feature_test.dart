@@ -11,6 +11,8 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:maplibre_gl/maplibre_gl.dart' as ml;
+import 'package:ride_relay/controllers/demo_route_choice_controller.dart';
+import 'package:ride_relay/services/demo_route_loader.dart';
 import 'package:ride_relay/controllers/speed_limit_display_controller.dart';
 import 'package:ride_relay/controllers/global_ride_heatmap_controller.dart';
 import 'package:ride_relay/controllers/personal_ride_heatmap_controller.dart';
@@ -3897,6 +3899,9 @@ void main() {
 
     final routeStore = _RecordingRouteStore();
     final publishedRoutes = <ImportedRoute?>[];
+    // Starts on France, so the picked UK route below is the rider's own choice
+    // and not the default (#934).
+    final demoChoice = DemoRouteChoiceController.inMemory(DemoRoutes.france);
     await tester.pumpWidget(
       MaterialApp(
         theme: ThemeData.dark(useMaterial3: true),
@@ -3909,6 +3914,7 @@ void main() {
           distanceUnit: DistanceUnit.miles,
           onRouteChanged: publishedRoutes.add,
           rideStarted: false,
+          demoRouteChoice: demoChoice,
         ),
       ),
     );
@@ -3931,8 +3937,18 @@ void main() {
       await tester.pump(const Duration(milliseconds: 100));
     }
 
+    // The demo is a choice, not a fixed route (#934): offered, with the last
+    // choice marked, and the one picked is what gets reviewed and remembered.
+    expect(find.text('Choose a demo route'), findsOneWidget);
+    expect(find.text(DemoRoutes.france.title), findsOneWidget);
+    await tester.tap(find.byKey(Key('demo-route-${DemoRoutes.cotswolds.id}')));
+    for (var i = 0; i < 5; i += 1) {
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+
     expect(find.byKey(const Key('route-review-title')), findsOneWidget);
-    expect(find.text('Argentat to Saint-Privat — France'), findsOneWidget);
+    expect(find.text(DemoRoutes.cotswolds.title), findsOneWidget);
+    expect(demoChoice.current, same(DemoRoutes.cotswolds));
     await tester.scrollUntilVisible(
       find.byKey(const Key('confirm-reviewed-route')),
       250,

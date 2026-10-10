@@ -11,6 +11,7 @@ import '../controllers/map_style_mode_controller.dart';
 import '../controllers/ride_code_preference_controller.dart';
 import '../controllers/ride_controller.dart';
 import '../controllers/ride_invitation_link_controller.dart';
+import '../controllers/demo_route_choice_controller.dart';
 import '../controllers/mini_map_display_controller.dart';
 import '../controllers/speed_adaptive_zoom_controller.dart';
 import '../controllers/route_progress_display_controller.dart';
@@ -42,6 +43,7 @@ class RideRelayApp extends StatelessWidget {
     required this.speedLimitDisplay,
     this.routeProgressDisplay,
     this.miniMapDisplay,
+    this.demoRouteChoice,
     this.speedAdaptiveZoom,
     required this.recordedRoutes,
     required this.completedRides,
@@ -70,6 +72,9 @@ class RideRelayApp extends StatelessWidget {
   final SpeedLimitDisplayController speedLimitDisplay;
   final RouteProgressDisplayController? routeProgressDisplay;
   final MiniMapDisplayController? miniMapDisplay;
+
+  /// Which bundled demo route a demo ride and the map's demo action use (#934).
+  final DemoRouteChoiceController? demoRouteChoice;
   final SpeedAdaptiveZoomController? speedAdaptiveZoom;
   final RecordedRouteStore recordedRoutes;
   final CompletedRidesController completedRides;
@@ -174,6 +179,7 @@ class RideRelayApp extends StatelessWidget {
             speedLimitDisplay: speedLimitDisplay,
             routeProgressDisplay: routeProgressDisplay,
             miniMapDisplay: miniMapDisplay,
+            demoRouteChoice: demoRouteChoice,
             speedAdaptiveZoom: speedAdaptiveZoom,
             recordedRoutes: recordedRoutes,
             completedRides: completedRides,
@@ -219,6 +225,7 @@ class RideRelayApp extends StatelessWidget {
             speedLimitDisplay: speedLimitDisplay,
             routeProgressDisplay: routeProgressDisplay,
             miniMapDisplay: miniMapDisplay,
+            demoRouteChoice: demoRouteChoice,
             speedAdaptiveZoom: speedAdaptiveZoom,
             completedRideStore: completedRides,
             globalRideHeatmap: globalRideHeatmap,
@@ -246,6 +253,7 @@ class RideRelayApp extends StatelessWidget {
           speedLimitDisplay: speedLimitDisplay,
           routeProgressDisplay: routeProgressDisplay,
           miniMapDisplay: miniMapDisplay,
+          demoRouteChoice: demoRouteChoice,
           speedAdaptiveZoom: speedAdaptiveZoom,
           recordedRoutes: recordedRoutes,
           completedRides: completedRides,

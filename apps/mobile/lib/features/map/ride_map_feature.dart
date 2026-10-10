@@ -1,3 +1,4 @@
+import '../../controllers/demo_route_choice_controller.dart';
 import '../../controllers/eta_calibration_controller.dart';
 import 'heatmap_ramp.dart';
 import 'ride_heatmap_layer.dart';
@@ -47,6 +48,7 @@ import '../../services/circular_ride_planner.dart';
 import '../../services/ride_plan_remaining.dart';
 import '../../services/ride_plan_router.dart';
 import '../../services/route_preferences_memory.dart';
+import '../simulation/demo_route_picker.dart';
 import '../../services/demo_route_loader.dart';
 import '../../services/discovery_layer_preferences.dart';
 import '../../services/discovery_suggestion_queue.dart';
@@ -528,6 +530,7 @@ class RideMapFeature extends StatefulWidget {
     this.routeAuthority = RouteAuthority.leader,
     this.navigating,
     this.hostChrome,
+    this.demoRouteChoice,
     this.offlineTileCache,
     this.mapLibreOfflineManager,
     this.mapStyleString,
@@ -610,6 +613,7 @@ class RideMapFeature extends StatefulWidget {
     RouteAuthority routeAuthority = RouteAuthority.leader,
     bool? navigating,
     HostMapChrome? hostChrome,
+    DemoRouteChoiceController? demoRouteChoice,
     DistanceUnit distanceUnit = DistanceUnit.kilometres,
     RidingDisplaySize ridingDisplaySize = RidingDisplaySize.small,
     SpeedLimitDisplayController? speedLimitDisplay,
@@ -684,6 +688,7 @@ class RideMapFeature extends StatefulWidget {
     routeAuthority: routeAuthority,
     navigating: navigating,
     hostChrome: hostChrome,
+    demoRouteChoice: demoRouteChoice,
     distanceUnit: distanceUnit,
     ridingDisplaySize: ridingDisplaySize,
     speedLimitDisplay: speedLimitDisplay,
@@ -814,6 +819,9 @@ class RideMapFeature extends StatefulWidget {
   /// Top-band chrome the host draws through this map rather than over it.
   /// See [HostMapChrome] — null means the map owns its own title and actions.
   final HostMapChrome? hostChrome;
+
+  /// Which bundled demo route "Load demo route" offers (#934).
+  final DemoRouteChoiceController? demoRouteChoice;
   final OfflineTileCache? offlineTileCache;
   final MapLibreOfflineManager? mapLibreOfflineManager;
   final String? mapStyleString;
@@ -996,6 +1004,7 @@ class _RideMapFeatureState extends State<RideMapFeature> {
         routeAuthority: widget.routeAuthority,
         navigating: widget.navigating,
         hostChrome: widget.hostChrome,
+        demoRouteChoice: widget.demoRouteChoice,
         onRouteChanged: widget.onRouteChanged,
         onRouteCommitted: widget.onRouteCommitted,
         onNavigationGuidanceChanged: widget.onNavigationGuidanceChanged,
@@ -1120,6 +1129,7 @@ class RideMapScreen extends StatefulWidget {
     this.routeGeometryEnricher,
     this.importedTrackMatcher,
     this.demoRouteLoader,
+    this.demoRouteChoice,
     this.recordedRouteStore,
     this.completedRideStore,
     this.personalRideHeatmap,
@@ -1282,6 +1292,10 @@ class RideMapScreen extends StatefulWidget {
   final RouteGeometryEnricher? routeGeometryEnricher;
   final ImportedTrackMatcher? importedTrackMatcher;
   final Future<ImportedRoute> Function()? demoRouteLoader;
+
+  /// Which bundled demo route "Load demo route" offers, and remembers (#934).
+  /// Null where the choice is not wired, which loads the default route.
+  final DemoRouteChoiceController? demoRouteChoice;
 
   /// Stored geometry, resolved from the app's own on-disk stores when these are
   /// null.
@@ -7981,15 +7995,24 @@ class _RideMapScreenState extends State<RideMapScreen>
 
   Future<void> _loadDemoRoute() async {
     try {
-      final loader = widget.demoRouteLoader ?? _loadBundledDemoRoute;
-      await _reviewAndActivateRoute(await loader());
+      final injected = widget.demoRouteLoader;
+      if (injected != null) {
+        await _reviewAndActivateRoute(await injected());
+        return;
+      }
+      final choice = widget.demoRouteChoice;
+      var demo = choice?.current ?? DemoRoutes.fallback;
+      if (choice != null) {
+        final picked = await showDemoRoutePicker(context, current: demo);
+        // Dismissed: the rider changed their mind, so load nothing.
+        if (picked == null || !mounted) return;
+        demo = picked;
+        await choice.choose(picked);
+      }
+      await _reviewAndActivateRoute(await BundledDemoRouteLoader(demo).load());
     } catch (error) {
       _showMessage('Could not load demo route: $error');
     }
-  }
-
-  Future<ImportedRoute> _loadBundledDemoRoute() async {
-    return const BundledDemoRouteLoader().load();
   }
 
   /// Picks a route out of the geometry already on this phone - a recorded
