@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -9,6 +10,8 @@ import 'package:ride_relay/domain/ride_role.dart';
 import 'package:ride_relay/domain/ride_session.dart';
 import 'package:ride_relay/domain/geo_point.dart' as presence;
 import 'package:ride_relay/domain/rider_location.dart';
+import 'package:ride_relay/domain/ride_coordination_mode.dart';
+import 'package:ride_relay/domain/rider_marker_outline.dart';
 import 'package:ride_relay/domain/rider_color.dart';
 import 'package:ride_relay/features/map/motorcycle_icon.dart';
 import 'package:ride_relay/services/android_auto_navigation_projection.dart';
@@ -246,6 +249,7 @@ void main() {
       'riderSymbol': 'emoji:🦊',
       'motorcycleStyle': 'scrambler',
       'riderColor': 'purple',
+      'markerOutline': 'circle',
       'latitude': 51.46,
       'longitude': -2.51,
       'headingDegrees': null,
@@ -929,6 +933,7 @@ void main() {
         'riderSymbol': 'initials',
         'motorcycleStyle': 'adventureTourer',
         'riderColor': 'orange',
+        'markerOutline': 'circle',
         'latitude': 51.45,
         'longitude': -2.58,
         'headingDegrees': 123.0,
@@ -1063,6 +1068,189 @@ void main() {
     final riders = (received!.arguments as Map)['riders'] as List;
     expect((riders.single as Map)['role'], 'Tail End Charlie');
     expect((riders.single as Map)['isTec'], isFalse);
+  });
+
+  group('marker outline for the head unit (#912)', () {
+    final now = DateTime.utc(2026, 10, 9, 12);
+    RiderLocation location(String riderId, RideRole role) => RiderLocation(
+      riderId: riderId,
+      displayName: riderId,
+      role: role,
+      sample: LocationSample(
+        position: const presence.GeoPoint(latitude: 51.45, longitude: -2.58),
+        recordedAt: now,
+        accuracyMeters: 6,
+      ),
+      receivedAt: now,
+    );
+    RideSession session(RideRole role) => RideSession(
+      rideId: 'ride-1',
+      rideCode: '123456',
+      inviteSecret: 'secret',
+      joinToken: 'token',
+      localRiderId: 'me',
+      displayName: 'Me',
+      role: role,
+      joinedAt: now,
+      riderSymbol: const RiderSymbol.initials(),
+      riderColor: RiderColor.orange,
+    );
+
+    Future<Map<Object?, Object?>> publish({
+      required List<RiderLocation> riders,
+      RideSession? session,
+      Set<String> effectiveTecRiderIds = const {},
+      RiderMarkerOutline? localMarkerOutline,
+    }) async {
+      MethodCall? received;
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        received = call;
+        return null;
+      });
+      final bridge = CarPlayBridge(channel: channel);
+      addTearDown(bridge.dispose);
+      await bridge.publish(
+        session: session,
+        riderLocations: riders,
+        routeAlerts: const [],
+        activeHazards: const [],
+        effectiveTecRiderIds: effectiveTecRiderIds,
+        localPosition: session == null
+            ? null
+            : const GeoPoint(latitude: 51.45, longitude: -2.58),
+        localMarkerOutline: localMarkerOutline ?? RiderMarkerOutline.circle,
+      );
+      return received!.arguments as Map<Object?, Object?>;
+    }
+
+    Map<Object?, Object?> byRider(Map<Object?, Object?> snapshot, String id) =>
+        (snapshot['riders'] as List).cast<Map<Object?, Object?>>().singleWhere(
+          (rider) => rider['riderId'] == id,
+        );
+
+    test(
+      'the leader and the resolved TEC are stars, a rider is a circle',
+      () async {
+        final snapshot = await publish(
+          riders: [
+            location('lead', RideRole.lead),
+            location('back', RideRole.tailEndCharlie),
+            location('rider', RideRole.rider),
+          ],
+          effectiveTecRiderIds: const {'back'},
+        );
+        expect(byRider(snapshot, 'lead')['markerOutline'], 'star');
+        expect(byRider(snapshot, 'back')['markerOutline'], 'star');
+        expect(byRider(snapshot, 'rider')['markerOutline'], 'circle');
+      },
+    );
+
+    test(
+      'a second rider claiming the role is a circle, as on the phone',
+      () async {
+        // #128: two riders carry the role in the journal; the ride resolved one.
+        final snapshot = await publish(
+          riders: [
+            location('claimant', RideRole.tailEndCharlie),
+            location('resolved', RideRole.tailEndCharlie),
+          ],
+          effectiveTecRiderIds: const {'resolved'},
+        );
+        expect(byRider(snapshot, 'resolved')['markerOutline'], 'star');
+        expect(byRider(snapshot, 'claimant')['markerOutline'], 'circle');
+      },
+    );
+
+    test(
+      'a rider whose own role says TEC is a circle until one is resolved',
+      () async {
+        final snapshot = await publish(
+          riders: [location('back', RideRole.tailEndCharlie)],
+        );
+        expect(byRider(snapshot, 'back')['markerOutline'], 'circle');
+      },
+    );
+
+    test(
+      'this phone sends its own outline, which knows about solo rides',
+      () async {
+        // A solo ride's creator holds the lead role but has nobody to lead.
+        final solo = await publish(
+          session: session(RideRole.lead),
+          riders: [location('me', RideRole.lead)],
+          localMarkerOutline: localRiderMarkerOutline(
+            role: RideRole.lead,
+            localRiderId: 'me',
+            effectiveTecRiderIds: const {},
+            coordinationMode: RideCoordinationMode.solo,
+          ),
+        );
+        expect(byRider(solo, 'me')['markerOutline'], 'circle');
+        expect((solo['localRider'] as Map)['markerOutline'], 'circle');
+
+        final group = await publish(
+          session: session(RideRole.lead),
+          riders: [location('me', RideRole.lead)],
+          localMarkerOutline: localRiderMarkerOutline(
+            role: RideRole.lead,
+            localRiderId: 'me',
+            effectiveTecRiderIds: const {},
+            coordinationMode: RideCoordinationMode.keepTogether,
+          ),
+        );
+        expect(byRider(group, 'me')['markerOutline'], 'star');
+        expect((group['localRider'] as Map)['markerOutline'], 'star');
+      },
+    );
+
+    test(
+      'this phone is a star as the resolved TEC, whatever its journal role',
+      () async {
+        final snapshot = await publish(
+          session: session(RideRole.rider),
+          riders: [location('me', RideRole.rider)],
+          localMarkerOutline: localRiderMarkerOutline(
+            role: RideRole.rider,
+            localRiderId: 'me',
+            effectiveTecRiderIds: const {'me'},
+            coordinationMode: RideCoordinationMode.keepTogether,
+          ),
+        );
+        expect(byRider(snapshot, 'me')['markerOutline'], 'star');
+      },
+    );
+
+    test('the ride shell hands the bridge this phone\'s own outline', () {
+      // The shell publishes only with native services running, which a widget
+      // test cannot reach (map chrome is not built without them), so the
+      // wiring is held at its source: dropping it would leave every leader's own
+      // marker a circle on the head unit with every test above still green.
+      final source = File(
+        'lib/features/ride/active_ride_shell.dart',
+      ).readAsStringSync();
+      // Beside the bridge's own style argument: the map widget is handed the
+      // same outline elsewhere in the shell, which must not satisfy this.
+      expect(
+        source,
+        matches(
+          RegExp(
+            r'mapStyleJson: _carPlayMapStyleJson,\s+'
+            r'localMarkerOutline: _localMarkerOutline,',
+          ),
+        ),
+      );
+    });
+
+    test(
+      'without a resolved outline this phone defaults to a circle',
+      () async {
+        final snapshot = await publish(
+          session: session(RideRole.lead),
+          riders: [location('me', RideRole.lead)],
+        );
+        expect(byRider(snapshot, 'me')['markerOutline'], 'circle');
+      },
+    );
   });
 
   test('publishes the resolved back-marker beside the rider list', () async {

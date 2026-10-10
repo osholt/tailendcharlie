@@ -556,6 +556,11 @@ red.
   alert. What must never be true is that a commit which *does* affect the relay
   is sitting undeployed — that is the five-day, 22-commit gap in #393, with the
   h2 advisory fix in it, stated exactly.
+- Retiring an old app build is a configuration change, not a deploy:
+  `RIDE_RELAY_MINIMUM_CLIENT_BUILD_IOS` / `_ANDROID` in `deploy/.env` (`0` is
+  off). Follow the order in
+  [internet-relay.md](./internet-relay.md#minimum-app-build-and-the-update-required-screen-37)
+  and watch `ride_relay_client_update_required_total`.
 - Alert if readiness fails, 5xx rises, sync latency grows, PostgreSQL storage
   grows unexpectedly, or cleanup stops logging hourly completion.
 - Back up with `pg_dump -Fc` to encrypted off-host storage and test restore.

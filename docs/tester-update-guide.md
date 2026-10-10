@@ -198,9 +198,13 @@ applies unchanged.
 | Install path | Closed-testing opt-in link | Google Play listing | TestFlight app |
 
 The app's update prompt is deliberately non-blocking on every channel. The only
-hard block is a build the relay reports as genuinely incompatible, which shows
-**App update required** and cannot be dismissed - that one you must act on
-before the app will sync.
+hard limit is a build the ride service reports as no longer supported: the home
+map then shows **Update required** and opens an **Update required** screen once,
+with a button for the right page for your channel, and joining rides and syncing
+with your group is paused until you update. The screen can always be closed
+("Continue without updating"), and nothing on your phone is switched off: SOS and
+the alert buttons, navigation and recording all keep working, and what you record
+is kept and sent once you have updated. Update before your next group ride.
 
 Play's own pages occasionally change their wording; the link and the sequence
 are what matter, not the exact button text.

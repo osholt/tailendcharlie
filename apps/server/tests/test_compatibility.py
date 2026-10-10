@@ -41,6 +41,7 @@ def test_compatibility_document_advertises_protocol_and_capabilities(client) -> 
             "iOS": "https://tailendcharlie.app",
             "android": "https://tailendcharlie.app",
         },
+        "minimumClientBuilds": {},
     }
 
 
