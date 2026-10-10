@@ -22,6 +22,7 @@
 		A11000012F10000100ABCDEF /* NearbyConnections in Frameworks */ = {isa = PBXBuildFile; productRef = A11000022F10000100ABCDEF /* NearbyConnections */; };
 		AA01SETTINGSBUNDLE000002 /* Settings.bundle in Resources */ = {isa = PBXBuildFile; fileRef = AA01SETTINGSBUNDLE000001 /* Settings.bundle */; };
 		B20500012F21000100ABCDEF /* BackgroundLocationPermissionBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20500022F21000100ABCDEF /* BackgroundLocationPermissionBridge.swift */; };
+		C33200012F32000100ABCDEF /* InstallationIdentityBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = C33200022F32000100ABCDEF /* InstallationIdentityBridge.swift */; };
 		E04BE3280FA73C412CA641E7 /* Pods_RunnerTests.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = F99D062836AB664A5D413FF7 /* Pods_RunnerTests.framework */; };
 /* End PBXBuildFile section */
 
@@ -73,6 +74,7 @@
 		A1D2B056354767C959084127 /* Pods-RunnerTests.profile.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-RunnerTests.profile.xcconfig"; path = "Target Support Files/Pods-RunnerTests/Pods-RunnerTests.profile.xcconfig"; sourceTree = "<group>"; };
 		AA01SETTINGSBUNDLE000001 /* Settings.bundle */ = {isa = PBXFileReference; lastKnownFileType = "wrapper.plug-in"; path = Settings.bundle; sourceTree = "<group>"; };
 		B20500022F21000100ABCDEF /* BackgroundLocationPermissionBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackgroundLocationPermissionBridge.swift; sourceTree = "<group>"; };
+		C33200022F32000100ABCDEF /* InstallationIdentityBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InstallationIdentityBridge.swift; sourceTree = "<group>"; };
 		B3DCECE0E50014ABADBAB860 /* Pods-RunnerTests.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-RunnerTests.release.xcconfig"; path = "Target Support Files/Pods-RunnerTests/Pods-RunnerTests.release.xcconfig"; sourceTree = "<group>"; };
 		B4970B5F3BAA5823AFFF0067 /* Pods-Runner.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-Runner.debug.xcconfig"; path = "Target Support Files/Pods-Runner/Pods-Runner.debug.xcconfig"; sourceTree = "<group>"; };
 		DEC9B7AEA2B57892D7252838 /* CarPlayStatusTemplate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CarPlayStatusTemplate.swift; sourceTree = "<group>"; };
@@ -164,6 +166,7 @@
 				1498D2331E8E89220040F4C2 /* GeneratedPluginRegistrant.m */,
 				74858FAE1ED2DC5600515810 /* AppDelegate.swift */,
 				B20500022F21000100ABCDEF /* BackgroundLocationPermissionBridge.swift */,
+				C33200022F32000100ABCDEF /* InstallationIdentityBridge.swift */,
 				7884E8672EC3CC0400C636F2 /* SceneDelegate.swift */,
 				DFF41AC64EBB3006D44B5C4B /* CarPlaySceneDelegate.swift */,
 				DEC9B7AEA2B57892D7252838 /* CarPlayStatusTemplate.swift */,
@@ -391,6 +394,7 @@
 			files = (
 				74858FAF1ED2DC5600515810 /* AppDelegate.swift in Sources */,
 				B20500012F21000100ABCDEF /* BackgroundLocationPermissionBridge.swift in Sources */,
+				C33200012F32000100ABCDEF /* InstallationIdentityBridge.swift in Sources */,
 				1498D2341E8E89220040F4C2 /* GeneratedPluginRegistrant.m in Sources */,
 				7884E8682EC3CC0700C636F2 /* SceneDelegate.swift in Sources */,
 				9C35A0ED575356A8FE1FE6E7 /* CarPlaySceneDelegate.swift in Sources */,
