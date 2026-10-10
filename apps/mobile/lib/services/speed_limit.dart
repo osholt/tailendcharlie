@@ -5,6 +5,7 @@ import 'package:http/http.dart' as http;
 
 import '../domain/imported_route.dart';
 import 'road_routing.dart' show ValhallaMotorcycleRoutingService;
+import 'routing_service_endpoints.dart';
 
 enum SpeedLimitLookupOutcome {
   known,
@@ -163,16 +164,18 @@ class ValhallaSpeedLimitConfiguration {
     this.timeout = const Duration(seconds: 8),
   });
 
-  factory ValhallaSpeedLimitConfiguration.fromEnvironment() {
-    const raw = String.fromEnvironment(
-      'RIDE_RELAY_SPEED_LIMIT_URL',
-      defaultValue: 'https://valhalla1.openstreetmap.de/trace_attributes',
-    );
-    final parsed = Uri.tryParse(raw.trim());
+  /// `trace_attributes` on the Valhalla deployment in force: a build-time
+  /// override, else what the relay advertised, else the public instance (#917).
+  factory ValhallaSpeedLimitConfiguration.fromEnvironment() =>
+      ValhallaSpeedLimitConfiguration.fromEndpoints(RoutingServices.current);
+
+  factory ValhallaSpeedLimitConfiguration.fromEndpoints(
+    RoutingServiceEndpoints endpoints,
+  ) {
+    final parsed = endpoints.valhallaTraceAttributesUrl;
     return ValhallaSpeedLimitConfiguration(
       lookupUri:
-          parsed != null &&
-              parsed.scheme == 'https' &&
+          parsed.scheme == 'https' &&
               parsed.host.isNotEmpty &&
               parsed.userInfo.isEmpty &&
               !parsed.hasQuery &&
@@ -591,7 +594,7 @@ class ValhallaSpeedLimitProvider
     'accept': 'application/json',
     'content-type': 'application/json',
     'user-agent': 'TailEndCharlie/0.1 speed-limit-display',
-    'x-client-id': 'tailendcharlie.app',
+    'x-client-id': routingClientId,
   };
 
   /// Asks `locate` for every road near a stationary fix and picks the one the

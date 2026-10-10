@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 from functools import lru_cache
+from urllib.parse import urlsplit
 
 from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -188,6 +189,15 @@ class Settings(BaseSettings):
     fcm_client_email: str = Field(default="", max_length=320)
     fcm_private_key_base64: SecretStr | None = None
     push_delivery_timeout_seconds: int = Field(default=8, ge=2, le=30)
+    # Self-hosted routing and geocoding (#917, docs/routing-service.md). Each is
+    # the base URL of one service, advertised to the app and the web planner in
+    # the compatibility document so the services can move without an app
+    # release. Empty advertises nothing, and clients keep their built-in public
+    # endpoints.
+    service_valhalla_url: str = ""
+    service_photon_url: str = ""
+    service_nominatim_url: str = ""
+    service_osrm_url: str = ""
 
     @field_validator("data_encryption_key", "cursor_signing_key")
     @classmethod
@@ -226,6 +236,30 @@ class Settings(BaseSettings):
             return None
         return value
 
+    @field_validator(
+        "service_valhalla_url",
+        "service_photon_url",
+        "service_nominatim_url",
+        "service_osrm_url",
+    )
+    @classmethod
+    def validate_service_url(cls, value: str) -> str:
+        """An advertised URL is followed by every phone, so only a plain HTTPS base."""
+        value = value.strip()
+        if not value:
+            return ""
+        parsed = urlsplit(value)
+        if (
+            parsed.scheme != "https"
+            or not parsed.hostname
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.query
+            or parsed.fragment
+        ):
+            raise ValueError("must be an https URL without credentials, a query or a fragment")
+        return value.rstrip("/")
+
     @model_validator(mode="after")
     def push_provider_settings_are_complete(self) -> Settings:
         apns_values = (
@@ -244,6 +278,17 @@ class Settings(BaseSettings):
         if any(fcm_values) and not all(fcm_values):
             raise ValueError("FCM requires project ID, client email and private key")
         return self
+
+    @property
+    def service_urls(self) -> dict[str, str]:
+        """The configured routing and geocoding services, by API, for clients."""
+        configured = {
+            "valhalla": self.service_valhalla_url,
+            "photon": self.service_photon_url,
+            "nominatim": self.service_nominatim_url,
+            "osrm": self.service_osrm_url,
+        }
+        return {api: url for api, url in configured.items() if url}
 
     @property
     def apns_configured(self) -> bool:

@@ -12,6 +12,7 @@ import 'package:ride_relay/services/discovery_layer_preferences.dart';
 import 'package:ride_relay/services/motorcycle_discovery.dart';
 import 'package:ride_relay/services/ride_plan_router.dart';
 import 'package:ride_relay/services/road_routing.dart';
+import 'package:ride_relay/services/route_preferences_memory.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 // Synthetic places; none is a rider's start, finish or home.
@@ -344,6 +345,33 @@ void main() {
     expect(harness.routing.preferences.last.avoidMotorways, isTrue);
     await harness.confirm(tester);
     expect(harness.outcome!.route.preferences?.avoidMotorways, isTrue);
+  });
+
+  testWidgets('confirmed route options are remembered for the next plan', (
+    tester,
+  ) async {
+    final harness = _Harness(location: _here);
+    await harness.open(tester, RidePlan.toDestination(_townPlace));
+    await _tapVisible(tester, find.text('Route options'));
+    await _tapVisible(tester, find.byKey(const Key('avoid-motorways-switch')));
+
+    // Cancelling is not a choice: nothing is remembered.
+    await tester.tap(find.byTooltip('Cancel route review'));
+    await tester.pumpAndSettle();
+    expect(
+      (await const RoutePreferencesMemory().load()).avoidMotorways,
+      isFalse,
+    );
+
+    await harness.open(tester, RidePlan.toDestination(_townPlace));
+    await _tapVisible(tester, find.text('Route options'));
+    await _tapVisible(tester, find.byKey(const Key('avoid-motorways-switch')));
+    await harness.confirm(tester);
+
+    expect(
+      (await const RoutePreferencesMemory().load()).avoidMotorways,
+      isTrue,
+    );
   });
 
   testWidgets('a confirmed route reopens with its stops and can change', (
