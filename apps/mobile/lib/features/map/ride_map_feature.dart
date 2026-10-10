@@ -82,6 +82,9 @@ import '../../services/rider_trail_recorder.dart';
 import '../../services/road_routing.dart';
 import '../../services/route_geometry_enricher.dart';
 import '../../services/route_importer.dart';
+import '../../services/fuel_preference.dart';
+import '../../services/fuel_prices.dart';
+import '../../services/fuel_station_catalogue.dart';
 import '../../services/fuel_stop_finder.dart';
 import '../../services/route_marker_plan.dart';
 import '../../services/route_journey_progress.dart';
@@ -96,6 +99,8 @@ import '../../services/stored_route_library.dart';
 import '../../services/trail_direction_arrows.dart';
 import 'place_search_sheet.dart';
 import 'circular_ride_sheet.dart';
+import 'discovery_layer_toggles.dart'
+    show chargerLayerColour, fuelStationLayerColour;
 import 'discovery_layer_visibility.dart';
 import 'fuel_stop_flow.dart';
 import 'fuel_stop_sheet.dart';
@@ -1355,6 +1360,8 @@ class _RideMapScreenState extends State<RideMapScreen>
   static const _navigationGuidancePlanner = NavigationGuidancePlanner();
   static const _discoveryLineSource = 'ride-relay-discovery-lines';
   static const _discoveryPointSource = 'ride-relay-discovery-points';
+  static const _fuelPointSource = 'ride-relay-fuel-points';
+  static const _fuelPointLayer = 'ride-relay-fuel-stations';
 
   final MapControllerImpl _mapController = MapControllerImpl();
   final _localTravelDirection = RiderTravelDirection();
@@ -1681,6 +1688,14 @@ class _RideMapScreenState extends State<RideMapScreen>
   List<String> _discoveryLayerFailures = const [];
   bool _bikerCafesVisible = true;
   List<GeoPoint>? _discoveryViewportCorners;
+
+  /// The bundled fuel station and charger layer, the rider's fuel, whether the
+  /// layer is switched on, and the latest prices for the view (#951).
+  FuelStationCatalogue _fuelStationCatalogue = FuelStationCatalogue.empty;
+  FuelPreferenceController? _fuelPreference;
+  bool _fuelStationsVisible = true;
+  FuelPriceSnapshot _fuelPrices = FuelPriceSnapshot.empty;
+  Timer? _fuelPriceDebounce;
 
   BasemapConfiguration get _basemap => widget.offlineTileCache.configuration;
 
@@ -2063,6 +2078,8 @@ class _RideMapScreenState extends State<RideMapScreen>
     if (_ownsPersonalRideHeatmap) _personalRideHeatmap?.dispose();
     widget.globalRideHeatmap?.removeListener(_onGlobalRideHeatmapChanged);
     _globalHeatmapDebounce?.cancel();
+    _fuelPriceDebounce?.cancel();
+    _fuelPreference?.removeListener(_onFuelPreferenceChanged);
     unawaited(_groupPipBridge.dispose());
     _routingClient.close();
     if (widget.disposeOfflineTileCache) widget.offlineTileCache.dispose();
@@ -2294,6 +2311,18 @@ class _RideMapScreenState extends State<RideMapScreen>
             ..clear()
             ..addAll(preferences.categories);
           _bikerCafesVisible = preferences.bikerCafesVisible;
+          _fuelStationsVisible = preferences.fuelStationsVisible;
+        });
+      }),
+      load('the fuel station layer', () async {
+        final catalogue = await FuelStationCatalogue.shared();
+        final preference = await FuelPreferenceController.shared();
+        if (!mounted) return;
+        _fuelPreference?.removeListener(_onFuelPreferenceChanged);
+        preference.addListener(_onFuelPreferenceChanged);
+        setState(() {
+          _fuelStationCatalogue = catalogue;
+          _fuelPreference = preference;
         });
       }),
     ]);
@@ -4108,6 +4137,27 @@ class _RideMapScreenState extends State<RideMapScreen>
                 )
                 .toList(growable: false),
           ),
+        if (_visibleFuelStations.isNotEmpty)
+          MarkerLayer(
+            key: const Key('fuel-stations-layer'),
+            markers: [
+              for (final option in _visibleFuelOptions)
+                Marker(
+                  point: LatLng(
+                    option.station.point.latitude,
+                    option.station.point.longitude,
+                  ),
+                  width: 92,
+                  height: 52,
+                  alignment: Alignment.topCenter,
+                  child: _FuelPin(
+                    option: option,
+                    label: fuelPinLabel(option, DateTime.now()),
+                    onTap: () => unawaited(_showFuelStation(option)),
+                  ),
+                ),
+            ],
+          ),
         // Both the completed plan and actual travelled trails remain visible
         // behind the rider. The former keeps route progress legible even when
         // location recording has a gap; the latter shows where the bike really
@@ -5335,6 +5385,7 @@ class _RideMapScreenState extends State<RideMapScreen>
     setState(() => _discoveryViewportCorners = corners);
     _scheduleMapLibreSync(overlays: true);
     _scheduleGlobalHeatmapRefresh();
+    _scheduleFuelPriceRefresh();
   }
 
   void _updateViewportZoom(double zoom) {
@@ -6083,6 +6134,40 @@ class _RideMapScreenState extends State<RideMapScreen>
           circleStrokeColor: '#10151C',
         ),
       );
+      // Fuel stations and chargers for the rider's fuel, with the price and
+      // its age under each (#951).
+      await controller.addGeoJsonSource(_fuelPointSource, _fuelPointGeoJson());
+      await controller.addCircleLayer(
+        _fuelPointSource,
+        _fuelPointLayer,
+        const ml.CircleLayerProperties(
+          circleRadius: 6,
+          circleColor: ['get', 'color'],
+          circleStrokeWidth: 3,
+          circleStrokeColor: '#10151C',
+        ),
+      );
+      await controller.addSymbolLayer(
+        _fuelPointSource,
+        'ride-relay-fuel-prices',
+        const ml.SymbolLayerProperties(
+          textField: ['get', 'price'],
+          textFont: ['Noto Sans Regular'],
+          textSize: 11,
+          textOffset: [0, 1.3],
+          textAnchor: 'top',
+          textColor: [
+            'case',
+            ['get', 'current'],
+            '#F5F7FA',
+            '#98A3B1',
+          ],
+          textHaloColor: '#10151C',
+          textHaloWidth: 1.5,
+          textOptional: true,
+        ),
+        enableInteraction: false,
+      );
       await controller.addGeoJsonSource(
         _riddenRouteSource,
         _riddenRouteGeoJson(),
@@ -6412,6 +6497,7 @@ class _RideMapScreenState extends State<RideMapScreen>
         (_personalHeatmapSource, _visiblePersonalHeatmap.toGeoJson),
         (_discoveryLineSource, _discoveryLineGeoJson),
         (_discoveryPointSource, _discoveryPointGeoJson),
+        (_fuelPointSource, _fuelPointGeoJson),
         (_riddenRouteSource, _riddenRouteGeoJson),
         (_remainingRouteSource, _remainingRouteGeoJson),
         (_riderTrailSource, _riderTrailGeoJson),
@@ -6503,6 +6589,7 @@ class _RideMapScreenState extends State<RideMapScreen>
           (_personalHeatmapSource, _visiblePersonalHeatmap.toGeoJson),
           (_discoveryLineSource, _discoveryLineGeoJson),
           (_discoveryPointSource, _discoveryPointGeoJson),
+          (_fuelPointSource, _fuelPointGeoJson),
           (_riderTrailSource, _riderTrailGeoJson),
           (_markerPlanSource, _markerPlanGeoJson),
           (_overlaySource, _overlayGeoJson),
@@ -6819,6 +6906,275 @@ class _RideMapScreenState extends State<RideMapScreen>
   List<BikerPlace> get _visibleBikerCafes =>
       _selectedDiscoveries.whereType<BikerPlace>().toList(growable: false);
 
+  Object? _fuelSelectionKey;
+  List<FuelStation> _fuelSelectionCache = const [];
+
+  /// The fuel stations or chargers drawn (#951): for the rider's fuel, in
+  /// view, thinned like the discovery pins but on a budget of their own, so
+  /// pumps never crowd out cafés and roads. Drawn under [fuelLayerShownIn].
+  List<FuelStation> get _visibleFuelStations {
+    final preference = _fuelPreference?.value;
+    if (preference == null ||
+        !fuelLayerShownIn(
+          _discoveryLayerContext,
+          layerEnabled: _fuelStationsVisible,
+          riderAskedForFuel: _fuelStopRequested,
+        )) {
+      _fuelSelectionKey = null;
+      return _fuelSelectionCache = const [];
+    }
+    final anchors = _discoveryAnchorPoints;
+    final key = (
+      _fuelStationCatalogue,
+      preference,
+      _usesMapLibreRenderer,
+      Object.hashAll(anchors.map((point) => (point.latitude, point.longitude))),
+      (_lastViewportZoom * 4).floor(),
+    );
+    if (key == _fuelSelectionKey) return _fuelSelectionCache;
+    _fuelSelectionKey = key;
+    if (anchors.isEmpty || _lastViewportZoom < fuelStationMinimumZoom) {
+      return _fuelSelectionCache = const [];
+    }
+    final stations = _fuelStationCatalogue
+        .within(
+          west: anchors.map((p) => p.longitude).reduce(math.min) - .02,
+          south: anchors.map((p) => p.latitude).reduce(math.min) - .02,
+          east: anchors.map((p) => p.longitude).reduce(math.max) + .02,
+          north: anchors.map((p) => p.latitude).reduce(math.max) + .02,
+          kind: preference.isElectric
+              ? FuelStationKind.charging
+              : FuelStationKind.fuel,
+        )
+        .where(
+          (station) =>
+              station.compatibilityWith(preference) !=
+              FuelCompatibility.incompatible,
+        );
+    return _fuelSelectionCache = selectDiscoveryMarkers<FuelStation>(
+      [
+        for (final station in stations)
+          DiscoveryMarkerCandidate(
+            id: station.id,
+            group: 'fuel',
+            point: GeoPoint(
+              latitude: station.point.latitude,
+              longitude: station.point.longitude,
+            ),
+            value: station,
+          ),
+      ],
+      zoom: (_lastViewportZoom * 4).floor() / 4,
+      viewport: _discoveryViewportCorners ?? const [],
+      tileSize: _usesMapLibreRenderer ? 512 : 256,
+      maximumMarkers: 40,
+    );
+  }
+
+  Object? _fuelOptionsKey;
+  List<FuelStopOption> _fuelOptionsCache = const [];
+
+  /// [_visibleFuelStations] with the prices the relay has for them.
+  List<FuelStopOption> get _visibleFuelOptions {
+    final stations = _visibleFuelStations;
+    final preference = _fuelPreference?.value;
+    if (stations.isEmpty || preference == null) return const [];
+    final key = (stations, _fuelPrices, preference);
+    if (key == _fuelOptionsKey) return _fuelOptionsCache;
+    _fuelOptionsKey = key;
+    final byId = {
+      for (final option in attachFuelPrices(
+        stations: stations,
+        snapshot: _fuelPrices,
+        preference: preference,
+      ))
+        option.station.id: option,
+    };
+    return _fuelOptionsCache = [
+      for (final station in stations) byId[station.id]!,
+    ];
+  }
+
+  void _onFuelPreferenceChanged() {
+    if (!mounted) return;
+    setState(() => _fuelPrices = FuelPriceSnapshot.empty);
+    _scheduleMapLibreSync(overlays: true);
+    _scheduleFuelPriceRefresh(immediate: true);
+  }
+
+  /// Prices for the stations in view (#951). Only for liquid fuel (there is
+  /// no charger tariff source), only while the layer is drawn, and only at a
+  /// zoom where the view fits the relay's small boxes. The relay client
+  /// caches, so panning back and forth asks nothing new.
+  void _scheduleFuelPriceRefresh({bool immediate = false}) {
+    _fuelPriceDebounce?.cancel();
+    final corners = _discoveryViewportCorners;
+    final preference = _fuelPreference?.value;
+    if (corners == null ||
+        corners.length < 2 ||
+        preference == null ||
+        preference.isElectric ||
+        _visibleFuelStations.isEmpty) {
+      return;
+    }
+    final west = math.min(corners[0].longitude, corners[1].longitude);
+    final east = math.max(corners[0].longitude, corners[1].longitude);
+    final south = math.min(corners[0].latitude, corners[1].latitude);
+    final north = math.max(corners[0].latitude, corners[1].latitude);
+    if (north - south > 1.0 || east - west > 1.5) return;
+    _fuelPriceDebounce = Timer(
+      immediate ? Duration.zero : const Duration(milliseconds: 600),
+      () async {
+        final result = await RelayFuelPriceClient.shared().fetch(
+          fuelPriceTiles(
+            west: west,
+            south: south,
+            east: east,
+            north: north,
+            limit: 4,
+          ),
+        );
+        if (!mounted ||
+            result.availability != FuelPriceAvailability.available) {
+          return;
+        }
+        setState(() => _fuelPrices = result.snapshot);
+        _scheduleMapLibreSync(overlays: true);
+      },
+    );
+  }
+
+  Map<String, dynamic> _fuelPointGeoJson() {
+    final now = DateTime.now();
+    return MapGeoJson.points([
+      for (final option in _visibleFuelOptions)
+        MapGeoJsonPoint(
+          id: 'fuel-station-${option.station.id}',
+          point: GeoPoint(
+            latitude: option.station.point.latitude,
+            longitude: option.station.point.longitude,
+          ),
+          properties: {
+            'name': option.label,
+            'color': _hexColor(
+              option.station.kind == FuelStationKind.charging
+                  ? chargerLayerColour
+                  : fuelStationLayerColour,
+            ),
+            // Only a current price is drawn at full strength; a stale one is
+            // dimmed by the layer, and an unconfirmed one is left off.
+            'price': fuelPinLabel(option, now)?.text ?? '',
+            'current': fuelPinLabel(option, now)?.current ?? false,
+          },
+        ),
+    ]);
+  }
+
+  /// A fuel station or charger tapped on the map (#951).
+  Future<void> _showFuelStation(FuelStopOption option) async {
+    final station = option.station;
+    final now = DateTime.now();
+    final price = option.priceText(now);
+    final catalogue = _fuelStationCatalogue;
+    final go = await showModalBottomSheet<bool>(
+      context: context,
+      showDragHandle: true,
+      builder: (sheetContext) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.only(top: 3, right: 12),
+                    child: Icon(
+                      station.kind == FuelStationKind.charging
+                          ? Icons.ev_station
+                          : Icons.local_gas_station,
+                      color: station.kind == FuelStationKind.charging
+                          ? chargerLayerColour
+                          : fuelStationLayerColour,
+                    ),
+                  ),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          option.label,
+                          style: Theme.of(sheetContext).textTheme.titleLarge,
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          key: const Key('fuel-station-detail'),
+                          station.kind == FuelStationKind.charging
+                              ? '${station.chargerSummary}. Tariff and '
+                                    'availability not shown.'
+                              : price ?? 'No price available.',
+                        ),
+                        if (option.quote?.reportedAt case final reported?)
+                          Text(
+                            'Price reported '
+                            '${MaterialLocalizations.of(sheetContext).formatMediumDate(reported.toLocal())}'
+                            ' ${TimeOfDay.fromDateTime(reported.toLocal()).format(sheetContext)}',
+                            style: const TextStyle(
+                              color: Color(0xFF98A3B1),
+                              fontSize: 12,
+                            ),
+                          ),
+                        const SizedBox(height: 4),
+                        for (final credit in [
+                          catalogue.attribution,
+                          ?option.source?.attribution,
+                        ])
+                          Text(
+                            credit,
+                            style: const TextStyle(
+                              color: Color(0xFF98A3B1),
+                              fontSize: 12,
+                            ),
+                          ),
+                        if (option.source?.reportErrorUrl case final url?)
+                          TextButton(
+                            style: TextButton.styleFrom(
+                              padding: EdgeInsets.zero,
+                            ),
+                            onPressed: () => unawaited(
+                              launchUrl(
+                                url,
+                                mode: LaunchMode.externalApplication,
+                              ),
+                            ),
+                            child: const Text('Report a wrong price'),
+                          ),
+                      ],
+                    ),
+                  ),
+                  // A way out that is not "act on it" (#592).
+                  const SheetCloseButton(),
+                ],
+              ),
+              const SizedBox(height: 18),
+              FilledButton.icon(
+                key: const Key('route-via-fuel-station'),
+                onPressed: _routing
+                    ? null
+                    : () => Navigator.of(sheetContext).pop(true),
+                icon: const Icon(Icons.add_road_outlined),
+                label: Text(_route == null ? 'Go here' : 'Add as a stop'),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (go == true && mounted) await _addPlaceToPlan(fuelStopPlace(option));
+  }
+
   Map<String, dynamic> _discoveryLineGeoJson() => {
     'type': 'FeatureCollection',
     'features': [
@@ -7093,6 +7449,14 @@ class _RideMapScreenState extends State<RideMapScreen>
     String layerId,
     ml.Annotation? annotation,
   ) {
+    if (layerId == _fuelPointLayer && id.startsWith('fuel-station-')) {
+      final stationId = id.substring('fuel-station-'.length);
+      final option = _visibleFuelOptions
+          .where((option) => option.station.id == stationId)
+          .firstOrNull;
+      if (option != null) unawaited(_showFuelStation(option));
+      return;
+    }
     if (layerId == 'ride-relay-discovery-lines' ||
         layerId == 'ride-relay-discovery-points') {
       if (id.startsWith('biker-cafe-')) {
@@ -8257,6 +8621,29 @@ class _RideMapScreenState extends State<RideMapScreen>
                     _scheduleMapLibreSync(overlays: true);
                   },
                 ),
+                CheckboxListTile(
+                  key: const Key('fuel-stations-layer-toggle'),
+                  value: _fuelStationsVisible,
+                  secondary: const Icon(
+                    Icons.local_gas_station,
+                    color: fuelStationLayerColour,
+                  ),
+                  title: const Text('Fuel stations and chargers'),
+                  subtitle: const Text('For the fuel set in Settings'),
+                  contentPadding: EdgeInsets.zero,
+                  onChanged: (enabled) {
+                    final visible = enabled ?? false;
+                    setState(() => _fuelStationsVisible = visible);
+                    setSheetState(() {});
+                    unawaited(
+                      _discoveryLayerPreferences?.setFuelStationsVisible(
+                        visible,
+                      ),
+                    );
+                    _scheduleMapLibreSync(overlays: true);
+                    _scheduleFuelPriceRefresh(immediate: true);
+                  },
+                ),
                 for (final category in MotorcycleDiscoveryCategory.values)
                   CheckboxListTile(
                     key: Key('discovery-layer-${category.apiValue}'),
@@ -9079,6 +9466,7 @@ class _RideMapScreenState extends State<RideMapScreen>
     }
     setState(() => _fuelStopRequested = true);
     _scheduleMapLibreSync(overlays: true);
+    _scheduleFuelPriceRefresh(immediate: true);
     try {
       final finder = await FuelStopFinder.shared();
       if (!mounted) return;
@@ -13695,6 +14083,67 @@ class _RideCompletionSuggestion extends StatelessWidget {
               ),
               child: const Text('End ride'),
             ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// A fuel station or charger on the flutter_map renderer, with its price and
+/// the price's age under it (#951).
+class _FuelPin extends StatelessWidget {
+  const _FuelPin({
+    required this.option,
+    required this.label,
+    required this.onTap,
+  });
+
+  final FuelStopOption option;
+  final ({String text, bool current})? label;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final charging = option.station.kind == FuelStationKind.charging;
+    final label = this.label;
+    return Semantics(
+      button: true,
+      label: [
+        charging ? 'Charger' : 'Fuel station',
+        option.label,
+        ?label?.text,
+      ].join(': '),
+      child: GestureDetector(
+        onTap: onTap,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              charging ? Icons.ev_station : Icons.local_gas_station,
+              color: charging ? chargerLayerColour : fuelStationLayerColour,
+              size: 28,
+              shadows: const [Shadow(color: Color(0xFF10151C), blurRadius: 4)],
+            ),
+            if (label != null)
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 4),
+                decoration: BoxDecoration(
+                  color: const Color(0xCC10151C),
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                child: Text(
+                  label.text,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 10,
+                    color: label.current
+                        ? const Color(0xFFF5F7FA)
+                        : const Color(0xFF98A3B1),
+                  ),
+                ),
+              ),
           ],
         ),
       ),

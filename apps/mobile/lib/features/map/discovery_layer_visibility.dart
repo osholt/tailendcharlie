@@ -40,6 +40,19 @@ bool discoveryLayersShownIn(DiscoveryLayerContext context) => switch (context) {
   DiscoveryLayerContext.rideNavigation => false,
 };
 
+/// Whether the fuel station and charger layer is drawn (#951).
+///
+/// It follows the discovery layers' rule, because a pin beside the route reads
+/// as part of it, with one exception: a rider who has just asked for fuel sees
+/// the stations, navigating or not and whatever the layer switch says, because
+/// that is the moment they need them. Like [discoveryLayersShownIn], this only
+/// decides what is drawn; the saved switch is never changed by it.
+bool fuelLayerShownIn(
+  DiscoveryLayerContext context, {
+  required bool layerEnabled,
+  required bool riderAskedForFuel,
+}) => riderAskedForFuel || (layerEnabled && discoveryLayersShownIn(context));
+
 /// The context the live map is in.
 ///
 /// [navigating] is "following a route right now", ride or no ride;
@@ -59,3 +72,8 @@ DiscoveryLayerContext discoveryLayerContextFor({
       ? DiscoveryLayerContext.planning
       : DiscoveryLayerContext.freeRoamBrowsing;
 }
+
+/// Below this zoom fuel pins are not drawn (#951). Pumps are everywhere, so at
+/// a regional view forty of them say nothing about which one is near; at a
+/// town's scale they are what a rider is looking for.
+const fuelStationMinimumZoom = 10.0;

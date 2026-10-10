@@ -262,7 +262,15 @@ already has both. Charger OCPI aggregation, if it ever happens, belongs there.
   or electric with the connectors the bike takes.
 - **Map layer**, bundled and offline, drawn under the discovery layers'
   visibility rule (#846): shown while browsing and planning, hidden while
-  navigating, **except** after the rider has asked for fuel.
+  navigating, **except** while the rider is choosing a fuel stop they asked
+  for. It has its own switch in the layer menu (on by default), shows only
+  stations for the rider's fuel, from zoom 10, at most 40 at a time on a
+  budget separate from the café and road pins. Each pin carries the price and
+  the time it was confirmed ("142.9p · 14:05"), dimmed with its date once
+  stale, and nothing once unconfirmed; the pin's sheet has the full wording,
+  the source's own report time, the credits and "Report a wrong price".
+  Forecourts that Fuel Finder lists and OpenStreetMap does not are offered by
+  Navigate to fuel but not drawn as pins.
 - **Prices** only when the relay advertises `fuel-prices-v1`. That capability is
   the feature flag: the operator turns prices on and off from the relay.
 - **Navigate to fuel / Navigate to charger** in Where to? and on the Plan
