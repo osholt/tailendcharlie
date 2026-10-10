@@ -103,7 +103,19 @@ class RouteDeviationDetector {
     distanceFromRouteMeters: distanceFromRouteMeters,
   );
 
-  RouteDeviationAssessment evaluate(LocationSample sample, DateTime now) {
+  /// Judges one fix.
+  ///
+  /// [headingAcrossRoute] is the caller's verdict that the rider, near the
+  /// line, is heading across it or against it (`route_travel_alignment.dart`).
+  /// Such a fix never counts towards recovery: a rider on another road at a
+  /// junction is near the route without being back on it, and handing them the
+  /// planned junction's directions there is what sent one the wrong way
+  /// (#940, #941). It does not make a rider off route on its own.
+  RouteDeviationAssessment evaluate(
+    LocationSample sample,
+    DateTime now, {
+    bool headingAcrossRoute = false,
+  }) {
     final usableSegments = _routeSegments
         .where((segment) => segment.length >= 2)
         .toList(growable: false);
@@ -149,7 +161,8 @@ class RouteDeviationDetector {
         math.max(0, distance - sample.accuracyMeters) >
         config.enterOffRouteMeters;
     final confidentlyInside =
-        distance + sample.accuracyMeters < config.exitOffRouteMeters;
+        distance + sample.accuracyMeters < config.exitOffRouteMeters &&
+        !headingAcrossRoute;
 
     if (_stableState == RouteTrackingState.offRoute) {
       if (confidentlyInside) {

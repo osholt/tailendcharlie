@@ -26,21 +26,47 @@
 /// its terms and abusing it. A live-as-you-type field would need a geocoder we run
 /// ourselves, which is a provider decision of the kind `docs/traffic-provider-
 /// decision.md` exists to record, and it is not made here.
+///
+/// ## Saved places and history (#937)
+///
+/// > I would like for the search box to show a history of where I have searched
+/// > before, and allow common destinations 'home', 'work' or other custom saved
+/// > locations to be available too.
+///
+/// The empty search offers Home, Work and the rider's own places, then the
+/// places they chose before. Typing filters those rows **locally**; it sends
+/// nothing, so the rule above is untouched. Both lists stay on the phone
+/// (`lib/services/place_memory.dart`).
 library;
+
+import 'dart:async';
 
 import 'package:flutter/material.dart';
 
 import '../map/destination_search_field.dart';
+import '../map/place_memory_panel.dart';
+import '../map/place_search_sheet.dart';
 
 import '../../domain/imported_route.dart' show GeoPoint;
+import '../../domain/ride_plan.dart';
+import '../../services/place_memory.dart';
 import '../../services/road_routing.dart';
 
 /// What a rider picked out of the search.
 class DestinationChoice {
-  const DestinationChoice({required this.label, required this.point});
+  const DestinationChoice({
+    required this.label,
+    required this.point,
+    this.place,
+  });
 
   final String label;
   final GeoPoint point;
+
+  /// The place as the plan should name it, when the rider picked one they had
+  /// named or chosen before ("Home" rather than the address it points at).
+  /// Null for a search result, which the plan names from its address.
+  final RidePlanPlace? place;
 }
 
 /// The search control standing on the home map.
@@ -109,10 +135,19 @@ class HomeDestinationSearchSheet extends StatefulWidget {
     super.key,
     required this.searchService,
     this.hasPosition = true,
+    this.currentPoint,
+    this.memory,
     this.fuelSearchLabel,
   });
 
   final DestinationSearchService searchService;
+
+  /// Where the rider is, when known, so it can be saved as a place of its own.
+  /// Never sent anywhere.
+  final GeoPoint? currentPoint;
+
+  /// Injected by tests; otherwise the phone's own is opened.
+  final PlaceMemory? memory;
 
   /// "Navigate to fuel" or "Navigate to charger", from the rider's fuel
   /// preference (#951). Null offers neither.
@@ -127,6 +162,8 @@ class HomeDestinationSearchSheet extends StatefulWidget {
     BuildContext context, {
     required DestinationSearchService searchService,
     bool hasPosition = true,
+    GeoPoint? currentPoint,
+    PlaceMemory? memory,
     String? fuelSearchLabel,
   }) => showModalBottomSheet<HomeSearchOutcome>(
     context: context,
@@ -136,6 +173,8 @@ class HomeDestinationSearchSheet extends StatefulWidget {
     builder: (_) => HomeDestinationSearchSheet(
       searchService: searchService,
       hasPosition: hasPosition,
+      currentPoint: currentPoint,
+      memory: memory,
       fuelSearchLabel: fuelSearchLabel,
     ),
   );
@@ -151,10 +190,66 @@ class _HomeDestinationSearchSheetState
   List<DestinationMatch>? _results;
   bool _searching = false;
   String? _error;
+  PlaceMemory? _memory;
+  PlaceMemoryActions? _actions;
+  bool _ownsMemory = false;
+  String _typed = '';
+
+  @override
+  void initState() {
+    super.initState();
+    _controller.addListener(_onTyped);
+    unawaited(_openMemory());
+  }
+
+  /// Filters the saved places and history as the rider types. Local only: the
+  /// search itself still waits for the rider to submit it.
+  void _onTyped() {
+    if (_controller.text != _typed) setState(() => _typed = _controller.text);
+  }
+
+  Future<void> _openMemory() async {
+    final injected = widget.memory;
+    final memory = injected ?? await PlaceMemory.open();
+    if (!mounted) {
+      if (injected == null) memory.dispose();
+      return;
+    }
+    setState(() {
+      _ownsMemory = injected == null;
+      _memory = memory;
+      _actions = PlaceMemoryActions(memory: memory, pickPlace: _pickPlace);
+    });
+  }
+
+  /// Where a saved place should point: the plan's own place search, without
+  /// saved places, so choosing never nests.
+  Future<RidePlanPlace?> _pickPlace(String title) async {
+    final here = widget.currentPoint;
+    final choice = await PlaceSearchSheet.show(
+      context,
+      searchService: widget.searchService,
+      title: title,
+      offerCurrentLocation: here != null,
+      currentPoint: here,
+      showPlaceMemory: false,
+    );
+    return switch (choice) {
+      PlaceSearchPlace(:final place) => place,
+      PlaceSearchCurrentLocation() when here != null => RidePlanPlace(
+        point: here,
+        label: currentLocationPlaceLabel,
+      ),
+      _ => null,
+    };
+  }
 
   @override
   void dispose() {
-    _controller.dispose();
+    _controller
+      ..removeListener(_onTyped)
+      ..dispose();
+    if (_ownsMemory) _memory?.dispose();
     super.dispose();
   }
 
@@ -182,6 +277,18 @@ class _HomeDestinationSearchSheetState
     }
   }
 
+  /// A saved or recent place is chosen the way a result is, and goes on named
+  /// the way the rider named it.
+  void _chooseKnown(RidePlanPlace place) => Navigator.of(context).pop(
+    HomeSearchDestination(
+      choice: DestinationChoice(
+        label: place.label,
+        point: place.point,
+        place: place,
+      ),
+    ),
+  );
+
   /// A rider does not need to read a FormatException.
   static String _readable(Object error) => error is FormatException
       ? error.message
@@ -195,6 +302,13 @@ class _HomeDestinationSearchSheetState
   /// and riding with others is offered afterwards, once there is a route to
   /// bring along (#600).
   void _choose(DestinationMatch match) {
+    // Remembered as the plan will name it. A search that was typed and never
+    // chosen from is not a destination and is not kept.
+    unawaited(
+      _memory?.remember(
+        RidePlanPlace.fromSearchResult(label: match.label, point: match.point),
+      ),
+    );
     Navigator.of(context).pop(
       HomeSearchDestination(
         choice: DestinationChoice(label: match.label, point: match.point),
@@ -267,7 +381,34 @@ class _HomeDestinationSearchSheetState
                       leading: const Icon(Icons.place_outlined),
                       title: Text(match.label),
                       onTap: () => _choose(match),
+                      trailing: _actions == null
+                          ? null
+                          : IconButton(
+                              key: Key('home-search-save-${match.label}'),
+                              tooltip: 'Save this place',
+                              icon: const Icon(Icons.bookmark_add_outlined),
+                              onPressed: () => unawaited(
+                                _actions!.saveAs(
+                                  context,
+                                  RidePlanPlace.fromSearchResult(
+                                    label: match.label,
+                                    point: match.point,
+                                  ),
+                                ),
+                              ),
+                            ),
                     ),
+                if (_actions case final actions?)
+                  PlaceMemoryPanel(
+                    actions: actions,
+                    query: _typed,
+                    keyPrefix: 'home-search',
+                    onPickSaved: (saved) => _chooseKnown(saved.toPlanPlace()),
+                    onPickRecent: (recent) {
+                      unawaited(_memory?.remember(recent.toPlanPlace()));
+                      _chooseKnown(recent.toPlanPlace());
+                    },
+                  ),
                 const Divider(height: 12),
                 // Searching for "petrol" would ask the geocoder for a place
                 // called that. This asks the bundled station map instead, for

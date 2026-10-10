@@ -14,7 +14,13 @@ import 'package:ride_relay/domain/geo_point.dart' as rider_domain;
 import 'package:ride_relay/controllers/shared_route_controller.dart'
     show PendingInAppRoute;
 import 'package:ride_relay/domain/imported_route.dart'
-    show GeoPoint, ImportedRoute, RouteManeuver, RoutePath, RoutePathKind;
+    show
+        GeoPoint,
+        ImportedRoute,
+        RouteManeuver,
+        RoutePath,
+        RoutePathKind,
+        RoutePreferences;
 import 'package:ride_relay/domain/rider_location.dart';
 import 'package:ride_relay/features/home/home_map_backdrop.dart';
 import 'package:ride_relay/features/map/ride_map_feature.dart';
@@ -24,6 +30,9 @@ import 'package:ride_relay/data/ride_diagnostics_log_store.dart';
 import 'package:ride_relay/services/device_location_source.dart';
 import 'package:ride_relay/services/navigation_guidance.dart';
 import 'package:ride_relay/services/ride_diagnostics_configuration.dart';
+import 'package:ride_relay/services/road_routing.dart';
+import 'package:ride_relay/services/route_rejoin_planner.dart';
+import 'package:ride_relay/services/solo_navigation_reroute.dart';
 import 'package:ride_relay/services/spoken_audio_mode.dart';
 import 'package:ride_relay/services/spoken_guidance.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -811,6 +820,99 @@ void main() {
 
     expect(engine.spoken, ['Turn left onto Station Road']);
   });
+  testWidgets('Where To reroutes a rider who leaves the route (#940)', (
+    tester,
+  ) async {
+    final engine = _RecordingSpokenEngine();
+    final spoken = SpokenGuidanceController.inMemory(
+      enabled: true,
+      engine: () => engine,
+    );
+    addTearDown(spoken.dispose);
+    final platform = _RecordingLocationPlatform(
+      granted: DeviceLocationPermission.always,
+    );
+    addTearDown(platform.closeStreams);
+    final location = ForegroundLocationController(
+      DeviceLocationSource(platform),
+      (_) async {},
+    );
+    addTearDown(location.dispose);
+    final routing = _ForwardLoopRouting();
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: HomeMapBackdrop(
+          mapStyleMode: mapStyleMode,
+          speedLimitDisplay: speedLimitDisplay,
+          spokenGuidance: spoken,
+          distanceUnit: DistanceUnit.kilometres,
+          locationController: location,
+          navigating: true,
+          soloReroute: () => SoloNavigationReroute(
+            planner: RouteRejoinPlanner(
+              routingService: routing,
+              thresholds: RouteRejoinThresholds.solo,
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    RideMapFeature map() =>
+        tester.widget<RideMapFeature>(find.byKey(const Key('home-map')));
+    map().onRouteChanged!(
+      ImportedRoute(
+        id: 'where-to-reroute',
+        name: 'Where To',
+        importedAt: DateTime.utc(2026, 10, 10),
+        sourceFileName: 'where-to.gpx',
+        paths: const [
+          RoutePath(
+            kind: RoutePathKind.route,
+            points: [
+              GeoPoint(latitude: 51, longitude: -1),
+              GeoPoint(latitude: 51, longitude: -0.9),
+            ],
+          ),
+        ],
+        waypoints: const [],
+      ),
+    );
+    await tester.pump();
+    expect(map().rejoinNavigationRoute, isNotNull);
+    expect(map().rejoinNavigationRoute!.value, isNull);
+
+    // On the route heading east, then away from it northwards.
+    for (final (latitude, longitude, heading) in [
+      (51.0, -0.999, 90.0),
+      (51.0, -0.998, 90.0),
+      (51.0014, -0.9978, 0.0),
+      (51.0028, -0.9977, 0.0),
+      (51.0042, -0.9976, 0.0),
+    ]) {
+      platform.emit(
+        LocationSample(
+          position: rider_domain.GeoPoint(
+            latitude: latitude,
+            longitude: longitude,
+          ),
+          recordedAt: DateTime.now().toUtc(),
+          accuracyMeters: 5,
+          speedMetersPerSecond: 15,
+          headingDegrees: heading,
+        ),
+      );
+      await tester.pump();
+      await tester.pump();
+    }
+
+    expect(engine.spoken, ['Off route. Recalculating directions.']);
+    expect(routing.calls, 1);
+    expect(map().rejoinNavigationRoute!.value, isNotNull);
+    expect(map().rejoinNavigationRoute!.value!.maneuvers, isNotEmpty);
+  });
+
   testWidgets('the free-roam map is the rider\'s own, not a follower\'s (#576)', (
     tester,
   ) async {
@@ -1094,6 +1196,38 @@ void main() {
       expect(platform.streamSubscriptions, 0);
     });
   });
+}
+
+/// Answers like a road network would: forwards along the rider's heading,
+/// across, and onto the planned route heading south.
+class _ForwardLoopRouting implements RoadRoutingService {
+  var calls = 0;
+
+  @override
+  Future<RoadRouteResult> routeThrough(
+    List<GeoPoint> waypoints, {
+    RoutePreferences? preferences,
+    double? originBearingDegrees,
+  }) async {
+    calls += 1;
+    final from = waypoints.first;
+    final to = waypoints.last;
+    final turn = GeoPoint(
+      latitude: from.latitude + 0.001,
+      longitude: from.longitude,
+    );
+    final across = GeoPoint(latitude: turn.latitude, longitude: to.longitude);
+    return RoadRouteResult(
+      points: [from, turn, across, to],
+      distanceMeters: 1000,
+      duration: const Duration(minutes: 2),
+      maneuvers: [
+        RoadRouteManeuver(position: turn, type: 'turn', modifier: 'right'),
+        RoadRouteManeuver(position: across, type: 'turn', modifier: 'right'),
+        RoadRouteManeuver(position: to, type: 'arrive'),
+      ],
+    );
+  }
 }
 
 class _RecordingSpokenEngine implements SpokenGuidanceEngine {

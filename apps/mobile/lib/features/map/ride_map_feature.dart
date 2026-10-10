@@ -6711,6 +6711,17 @@ class _RideMapScreenState extends State<RideMapScreen>
           label: 'Route to planned start',
           kind: RiderTrailKind.rejoin,
         ),
+      // A ride shell publishes its rider's rejoin route among the trails it
+      // supplies. A map with no shell above it (Where To, #940) draws its own.
+      if (widget.riderTrails == null && _externalRejoinRoute != null)
+        MapOverlayTrace(
+          id: 'solo-rejoin-route',
+          points: _externalRejoinRoute!.paths
+              .expand((path) => path.points)
+              .toList(growable: false),
+          label: 'Route back to the planned route',
+          kind: RiderTrailKind.rejoin,
+        ),
     ].where((trace) => trace.points.length >= 2).toList(growable: false);
   }
 
@@ -7604,6 +7615,7 @@ class _RideMapScreenState extends State<RideMapScreen>
       context,
       searchService: _destinationRoutePlanner.searchService,
       title: 'Where to?',
+      currentPoint: _effectivePosition,
     );
     if (choice is! PlaceSearchPlace || !mounted) return;
     await _planOnSurface(
