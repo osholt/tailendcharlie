@@ -194,7 +194,7 @@ class _HomeMapBackdropState extends State<HomeMapBackdrop>
         widget.soloReroute?.call() ??
         (widget.enableNativeServices
             ? SoloNavigationReroute.osrm(
-                routingBaseUrl:
+                routingBaseUrl: () =>
                     RoutingConfiguration.fromEnvironment().routingBaseUrl,
                 distanceUnit: widget.distanceUnit,
               )

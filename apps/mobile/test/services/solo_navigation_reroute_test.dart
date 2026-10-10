@@ -1,4 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
 import 'package:ride_relay/domain/distance_unit.dart';
 import 'package:ride_relay/domain/geo_point.dart' as awareness;
 import 'package:ride_relay/domain/imported_route.dart';
@@ -143,10 +145,18 @@ void main() {
     expect(reroute.route.value, isNotNull);
   });
 
-  test('production reroutes with the solo thresholds', () {
+  test('production reroutes with the solo thresholds, asking the routing '
+      'service in force at the time', () async {
+    var base = Uri.parse('https://first.example.test');
+    final hosts = <String>[];
     final production = SoloNavigationReroute.osrm(
-      routingBaseUrl: Uri.parse('https://routing.example.test'),
+      routingBaseUrl: () => base,
       distanceUnit: DistanceUnit.miles,
+      clientFactory: () => MockClient((request) async {
+        hosts.add(request.url.host);
+        return http.Response('{"code":"NoRoute"}', 400);
+      }),
+      clock: () => now,
     );
     addTearDown(production.dispose);
     expect(
@@ -157,6 +167,14 @@ void main() {
       production.planner.thresholds.massivelyOffRouteAfter,
       RouteRejoinThresholds.solo.massivelyOffRouteAfter,
     );
+
+    // The relay advertises another service after the map was built (#917).
+    base = Uri.parse('https://advertised.example.test');
+    reroute.dispose();
+    reroute = production..setRoute(planned);
+    await leaveTheRoute();
+    expect(hosts, isNotEmpty);
+    expect(hosts, everyElement('advertised.example.test'));
   });
 
   test('crossing the planned line is not being back on it (#941)', () async {

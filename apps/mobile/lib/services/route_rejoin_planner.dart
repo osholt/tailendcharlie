@@ -31,7 +31,6 @@ class ManagedRouteRejoinPlanner {
     required Uri routingBaseUrl,
     required DistanceUnit distanceUnit,
     http.Client Function()? clientFactory,
-    RouteRejoinThresholds thresholds = const RouteRejoinThresholds(),
   }) {
     final client = clientFactory?.call() ?? http.Client();
     return ManagedRouteRejoinPlanner._(
@@ -41,7 +40,6 @@ class ManagedRouteRejoinPlanner {
           baseUrl: routingBaseUrl,
         ),
         distanceUnit: distanceUnit,
-        thresholds: thresholds,
       ),
       client: client,
     );

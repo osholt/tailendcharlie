@@ -1,12 +1,14 @@
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
+import 'package:http/http.dart' as http;
 
 import '../domain/distance_unit.dart';
 import '../domain/geo_point.dart' as awareness;
 import '../domain/imported_route.dart';
 import '../domain/rider_location.dart';
 import '../domain/route_alert.dart';
+import 'road_routing.dart';
 import 'route_deviation_detector.dart';
 import 'route_progress.dart';
 import 'route_rejoin_planner.dart';
@@ -51,20 +53,24 @@ class SoloNavigationReroute {
     this._onDispose,
   }) : _clock = clock ?? DateTime.now;
 
-  /// Production: the documented OSRM service, with the planner owning its
-  /// client.
+  /// Production: OSRM at whatever [routingBaseUrl] says when each request is
+  /// made. The home map lives for the whole session, and the relay can
+  /// advertise a different routing service after it was built (#917).
   factory SoloNavigationReroute.osrm({
-    required Uri routingBaseUrl,
+    required Uri Function() routingBaseUrl,
     required DistanceUnit distanceUnit,
+    http.Client Function()? clientFactory,
+    DateTime Function()? clock,
   }) {
-    final managed = ManagedRouteRejoinPlanner.osrm(
-      routingBaseUrl: routingBaseUrl,
-      distanceUnit: distanceUnit,
-      thresholds: RouteRejoinThresholds.solo,
-    );
+    final client = clientFactory?.call() ?? http.Client();
     return SoloNavigationReroute(
-      planner: managed.planner,
-      onDispose: managed.dispose,
+      planner: RouteRejoinPlanner(
+        routingService: _CurrentOsrmRouting(client, routingBaseUrl),
+        distanceUnit: distanceUnit,
+        thresholds: RouteRejoinThresholds.solo,
+      ),
+      clock: clock,
+      onDispose: client.close,
     );
   }
 
@@ -286,6 +292,26 @@ class SoloNavigationReroute {
     route.dispose();
     _onDispose?.call();
   }
+}
+
+/// OSRM at the base URL in force when each request is made.
+class _CurrentOsrmRouting implements RoadRoutingService {
+  _CurrentOsrmRouting(this._client, this._baseUrl);
+
+  final http.Client _client;
+  final Uri Function() _baseUrl;
+
+  @override
+  Future<RoadRouteResult> routeThrough(
+    List<GeoPoint> waypoints, {
+    RoutePreferences? preferences,
+    double? originBearingDegrees,
+  }) =>
+      OsrmRoadRoutingService(client: _client, baseUrl: _baseUrl()).routeThrough(
+        waypoints,
+        preferences: preferences,
+        originBearingDegrees: originBearingDegrees,
+      );
 }
 
 /// What one fix changed.
