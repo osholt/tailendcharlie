@@ -9,6 +9,7 @@ import '../../controllers/map_style_mode_controller.dart';
 import '../../controllers/ride_diagnostics_controller.dart';
 import '../../data/ride_diagnostics_log_store.dart';
 import '../../controllers/shared_route_controller.dart' show PendingInAppRoute;
+import '../../controllers/speed_adaptive_zoom_controller.dart';
 import '../../controllers/speed_limit_display_controller.dart';
 import '../../controllers/spoken_guidance_controller.dart';
 import '../../domain/completed_ride.dart';
@@ -52,6 +53,7 @@ class HomeMapBackdrop extends StatefulWidget {
     super.key,
     required this.mapStyleMode,
     required this.speedLimitDisplay,
+    this.speedAdaptiveZoom,
     required this.distanceUnit,
     this.spokenGuidance,
     this.rideDiagnostics,
@@ -71,6 +73,8 @@ class HomeMapBackdrop extends StatefulWidget {
     this.circularRideRequestToken,
     this.onCircularRideRequestHandled,
     this.editRouteRequestToken,
+    this.fuelStopRequestToken,
+    this.onFuelStopRequestHandled,
     this.onEditRouteRequestHandled,
     this.onRouteChanged,
     this.onPersonalNavigationChanged,
@@ -94,6 +98,7 @@ class HomeMapBackdrop extends StatefulWidget {
 
   final MapStyleModeController mapStyleMode;
   final SpeedLimitDisplayController speedLimitDisplay;
+  final SpeedAdaptiveZoomController? speedAdaptiveZoom;
   final SpokenGuidanceController? spokenGuidance;
   final RideDiagnosticsController? rideDiagnostics;
   final DistanceUnit distanceUnit;
@@ -127,6 +132,10 @@ class HomeMapBackdrop extends StatefulWidget {
 
   /// Asks the map to reopen its route on the plan surface (#847).
   final Object? editRouteRequestToken;
+
+  /// Bumped to find a fuel stop or charger on this map (#951).
+  final Object? fuelStopRequestToken;
+  final VoidCallback? onFuelStopRequestHandled;
   final VoidCallback? onEditRouteRequestHandled;
 
   /// Fires with the route the map is following, or null when there is none —
@@ -721,6 +730,7 @@ class _HomeMapBackdropState extends State<HomeMapBackdrop>
             restrainedLightMapStyle:
                 widget.mapStyleMode.dayStyle == DayMapStyle.restrained,
             speedLimitDisplay: widget.speedLimitDisplay,
+            speedAdaptiveZoom: widget.speedAdaptiveZoom,
             distanceUnit: widget.distanceUnit,
             onMapStyleResolved: widget.onMapStyleResolved,
             hostChrome: chrome,
@@ -737,6 +747,8 @@ class _HomeMapBackdropState extends State<HomeMapBackdrop>
             circularRideRequestToken: widget.circularRideRequestToken,
             onCircularRideRequestHandled: widget.onCircularRideRequestHandled,
             editRouteRequestToken: widget.editRouteRequestToken,
+            fuelStopRequestToken: widget.fuelStopRequestToken,
+            onFuelStopRequestHandled: widget.onFuelStopRequestHandled,
             onEditRouteRequestHandled: widget.onEditRouteRequestHandled,
             onRouteChanged: _onRouteChanged,
             onNavigationGuidanceChanged: _onNavigationGuidanceChanged,

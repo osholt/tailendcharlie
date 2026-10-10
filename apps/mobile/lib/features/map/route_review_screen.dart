@@ -26,6 +26,9 @@ import '../../services/route_reshape_planner.dart';
 import '../../services/route_twistiness.dart';
 import '../../services/route_verification.dart';
 import '../../services/route_waypoint_editor.dart';
+import '../../services/fuel_stop_finder.dart';
+import 'fuel_stop_flow.dart';
+import 'fuel_stop_sheet.dart';
 import 'maneuver_list_screen.dart';
 import 'place_search_sheet.dart';
 import 'resolved_route_map_preview.dart';
@@ -600,6 +603,30 @@ class _RouteReviewScreenState extends State<RouteReviewScreen> {
     if (choice is! PlaceSearchPlace || !mounted) return;
     await _replan(
       plan.addStop(choice.place, currentLocation: _currentLocation),
+    );
+  }
+
+  /// "Navigate to fuel" on the plan (#951): stations for the rider's fuel
+  /// along this route, ahead of the rider if they are on it, and the chosen
+  /// one added on the leg nearest it, like a café added on the map.
+  Future<void> _addFuelStop() async {
+    final query = fuelStopQueryFor(
+      routePath: RouteMarkerPlanAnalyzer.primaryRiddenPath(route),
+      rider: _currentLocation,
+    );
+    if (query == null) return;
+    final finder = await FuelStopFinder.shared();
+    if (!mounted) return;
+    final chosen = await FuelStopSheet.show(
+      context,
+      search: finder.find(query),
+      distanceUnit: distanceUnit,
+      actionLabel: 'Add stop',
+    );
+    if (chosen == null || !mounted) return;
+    await _recalculateEditedRoute(
+      insertRouteWaypoint(route, fuelStopWaypoint(chosen)),
+      failurePrefix: 'Could not route via ${chosen.label}.',
     );
   }
 
@@ -1573,6 +1600,10 @@ class _RouteReviewScreenState extends State<RouteReviewScreen> {
                             ),
                           if (reviewWaypoints.isNotEmpty)
                             MarkerLayer(
+                              key: const Key('route-review-waypoints'),
+                              // Upright however the map is turned; the number
+                              // inside the pin must stay readable (#935).
+                              rotate: true,
                               markers: reviewWaypoints.indexed
                                   .map(
                                     (entry) => Marker(
@@ -1784,6 +1815,16 @@ class _RouteReviewScreenState extends State<RouteReviewScreen> {
                           ),
                         ),
                       ],
+                    ),
+                    // A fuel stop or charger along this route (#951). Below the
+                    // itinerary's own controls so it moves none of them.
+                    Align(
+                      alignment: AlignmentDirectional.centerStart,
+                      child: FuelStopButton(
+                        onPressed: _reshapeQueued || _generatingAlternative
+                            ? null
+                            : () => unawaited(_addFuelStop()),
+                      ),
                     ),
                     const SizedBox(height: 12),
                   ],

@@ -101,6 +101,13 @@ abstract final class RelayProtocolCapabilities {
   /// be done.
   static const rideReopen = 'ride-reopen-v1';
 
+  /// Fuel prices per viewport, from official sources the relay fetches (#951).
+  ///
+  /// Not an event type and not something this client sends, so it is not in
+  /// [current]. The relay advertises it only while a price source is
+  /// configured, which makes it the switch for showing prices at all.
+  static const fuelPrices = 'fuel-prices-v1';
+
   static const current = {
     rideStart,
     membership,

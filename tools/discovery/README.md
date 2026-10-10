@@ -273,3 +273,55 @@ question rather than a reason to publish it as a pass.
 The score cannot drive any of this. The generator creams off the top 1,100 per
 category, so published scores run 81-100 with 1,376 candidates tied at 100 —
 saturated. `scoreComponents` carries the usable signal.
+
+## Fuel stations and chargers (#951)
+
+`generate_fuel_stations.py` builds `apps/mobile/assets/fuel_stations.json`, the
+offline layer behind Navigate to fuel and the map's fuel and charger pins. It is
+OpenStreetMap only (ODbL); live prices come from the relay and are joined on in
+the app. The sources and their terms are in
+[`docs/fuel-and-charging-data-decision.md`](../../docs/fuel-and-charging-data-decision.md).
+
+Input is Overpass JSON with `out center tags`, fetched in tiles restricted to
+the country areas so that France and Belgium inside a bounding box are left out:
+
+```
+[out:json][timeout:600];
+(area["ISO3166-1"="GB"][admin_level=2]; area["ISO3166-1"="IE"][admin_level=2];
+ area["ISO3166-1"="IM"][admin_level=2]; area["ISO3166-1"="JE"][admin_level=2];
+ area["ISO3166-1"="GG"][admin_level=2];)->.r;
+(nwr["amenity"~"^(fuel|charging_station)$"](S,W,N,E)(area.r););
+out center tags qt;
+```
+
+Public Overpass instances time out on dense areas, so south-east England needs
+tiles of about half a degree. Overlapping tiles are fine: elements are
+deduplicated.
+
+```bash
+python3.12 tools/discovery/generate_fuel_stations.py \
+  --overpass tiles/*.json \
+  --output apps/mobile/assets/fuel_stations.json \
+  --extract-date 2026-10-10 \
+  --bounded-region "United Kingdom, Ireland, the Isle of Man and the Channel Islands" \
+  --minimum-fuel 9000 --minimum-charging 5000
+```
+
+What it does with the data:
+
+- Drops sites a motorcycle cannot use: `access=private|no`, `motorcycle=no`,
+  and `motorcar=no` or `motor_vehicle=no` unless `motorcycle=yes` (boat fuel,
+  bicycle-only chargers).
+- Merges a node drawn on a forecourt mapped as an area, within 40 m and with no
+  naming conflict. Two separately mapped stations are never merged, so a pair
+  facing each other across a dual carriageway stays two.
+- Merges charge posts within 25 m with no naming conflict into one site, with
+  the union of their connectors and the highest output.
+- Labels with name, then brand, operator, network, then "Fuel station" or
+  "Charger", skipping any candidate that is an identifier (#860). The count of
+  skipped labels is written into the file, not hidden.
+- Records grades only where tagged: `sells` and `doesNotSell` are separate
+  masks, so untagged is "not recorded", never "not sold".
+
+`tests/test_published_labels.py` scans the committed asset for identifier
+labels, as it does the other bundled catalogues.

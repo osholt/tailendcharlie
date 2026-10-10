@@ -8,6 +8,7 @@ import '../../controllers/distance_unit_controller.dart';
 import '../../controllers/global_ride_heatmap_controller.dart';
 import '../../controllers/map_style_mode_controller.dart';
 import '../../controllers/mini_map_display_controller.dart';
+import '../../controllers/speed_adaptive_zoom_controller.dart';
 import '../../controllers/rider_profile_controller.dart';
 import '../../controllers/route_progress_display_controller.dart';
 import '../../controllers/speed_limit_display_controller.dart';
@@ -15,6 +16,7 @@ import '../../controllers/ride_diagnostics_controller.dart';
 import '../../controllers/spoken_guidance_controller.dart';
 import '../../controllers/test_control_controller.dart';
 import '../map/discovery_layer_toggles.dart';
+import 'fuel_preference_settings.dart';
 import '../../domain/completed_ride_store.dart';
 import '../../domain/distance_unit.dart';
 import '../../domain/map_style_mode.dart';
@@ -41,6 +43,7 @@ class UnitSettingsSheet extends StatelessWidget {
     this.routeProgressDisplay,
     this.miniMapDisplay,
     this.miniMapRole,
+    this.speedAdaptiveZoom,
     this.currentRideActive = false,
     this.lastRelaySync,
     this.buildIdentity,
@@ -64,6 +67,9 @@ class UnitSettingsSheet extends StatelessWidget {
   /// reads as a follower.
   final MiniMapDisplayController? miniMapDisplay;
   final RideRole? miniMapRole;
+
+  /// Whether the follow camera zooms with speed (#936). Null hides the switch.
+  final SpeedAdaptiveZoomController? speedAdaptiveZoom;
   final bool currentRideActive;
 
   /// Whether these settings are the body of a primary destination rather than
@@ -104,6 +110,7 @@ class UnitSettingsSheet extends StatelessWidget {
     RouteProgressDisplayController? routeProgressDisplay,
     MiniMapDisplayController? miniMapDisplay,
     RideRole? miniMapRole,
+    SpeedAdaptiveZoomController? speedAdaptiveZoom,
     bool currentRideActive = false,
     DateTime? lastRelaySync,
     BuildIdentity? buildIdentity,
@@ -126,6 +133,7 @@ class UnitSettingsSheet extends StatelessWidget {
           routeProgressDisplay: routeProgressDisplay,
           miniMapDisplay: miniMapDisplay,
           miniMapRole: miniMapRole,
+          speedAdaptiveZoom: speedAdaptiveZoom,
           currentRideActive: currentRideActive,
           lastRelaySync: lastRelaySync,
           buildIdentity: buildIdentity,
@@ -148,6 +156,7 @@ class UnitSettingsSheet extends StatelessWidget {
       speedLimitDisplay,
       ?routeProgressDisplay,
       ?miniMapDisplay,
+      ?speedAdaptiveZoom,
       ?globalRideHeatmap,
     ]),
     builder: (context, _) {
@@ -269,6 +278,20 @@ class UnitSettingsSheet extends StatelessWidget {
                 'Mapped limits in local road units. Roadside signs always apply.',
               ),
             ),
+            if (speedAdaptiveZoom case final speedZoom?) ...[
+              const SizedBox(height: 8),
+              SwitchListTile.adaptive(
+                key: const Key('speed-adaptive-zoom-toggle'),
+                contentPadding: EdgeInsets.zero,
+                value: speedZoom.enabled,
+                onChanged: speedZoom.setEnabled,
+                title: const Text('Zoom the map with speed'),
+                subtitle: const Text(
+                  'While the map follows you: closer around town, further out '
+                  'on faster roads.',
+                ),
+              ),
+            ],
             if (routeProgressDisplay case final progressDisplay?) ...[
               const SizedBox(height: 8),
               SwitchListTile.adaptive(
@@ -457,6 +480,9 @@ class UnitSettingsSheet extends StatelessWidget {
                 unawaited(DiscoveryLayersScreen.show(appContext));
               },
             ),
+            // What the bike takes, for Navigate to fuel and the prices on the
+            // map (#951).
+            const FuelPreferenceTile(),
             const SizedBox(height: 16),
             Text(
               'MAP DATA',
@@ -483,7 +509,10 @@ class UnitSettingsSheet extends StatelessWidget {
               const SizedBox(height: 8),
               DropdownButtonFormField<HeatmapContributionConsent>(
                 key: const Key('global-heatmap-consent'),
-                initialValue: heatmap.consent,
+                // Empty until the rider has chosen (#957), rather than showing
+                // Never as though they had. Nothing is shared meanwhile.
+                initialValue: heatmap.consentAnswered ? heatmap.consent : null,
+                hint: const Text('Not chosen yet: nothing is shared'),
                 decoration: const InputDecoration(
                   labelText: 'Contribute completed rides',
                 ),
@@ -502,7 +531,10 @@ class UnitSettingsSheet extends StatelessWidget {
                   ),
                 ],
                 onChanged: (value) async {
-                  if (value == null || value == heatmap.consent) return;
+                  if (value == null ||
+                      (value == heatmap.consent && heatmap.consentAnswered)) {
+                    return;
+                  }
                   if (value != HeatmapContributionConsent.never &&
                       !await _confirmHeatmapContribution(context, heatmap)) {
                     return;

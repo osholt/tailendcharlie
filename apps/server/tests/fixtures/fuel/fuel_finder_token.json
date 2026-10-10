@@ -1,0 +1,1 @@
+{"success": true, "data": {"access_token": "synthetic-access-token", "token_type": "Bearer", "expires_in": 3600, "refresh_token": "synthetic-refresh-token"}, "message": "Access token generated"}

@@ -112,7 +112,7 @@ safe direction; under-declaring risks a policy strike.
 | Play data type | Collected | Shared | Required or optional | Purpose | What it is |
 | --- | --- | --- | --- | --- | --- |
 | Location: precise | Yes | Yes | Optional (needed only to share with a group) | App functionality | Live position to the relay and to the other riders in the ride; route points to routing and speed-limit services. |
-| Location: approximate | Yes | Yes | Optional (can be turned off) | App functionality | Heatmap coverage cells (about 170 to 210 m), sent under a separate random credential and published only as a thresholded public aggregate. **Contribution is on by default**: confirm that is still the shipped default at launch and that the first-run screen says so, or change the answer to match. |
+| Location: approximate | Yes | Yes | Optional (can be turned off) | App functionality | Heatmap coverage cells (about 170 to 210 m), sent under a separate random credential and published only as a thresholded public aggregate. **Contribution is opt-in and asked at setup** (#957, operator decision of 10 October 2026): first-run setup offers always / ask after each ride / never with nothing pre-selected, skipping means never, and an install that never stored a choice is asked once on the home map and shares nothing until it answers. Confirm the build you ship still does this. |
 | Personal info: name | Yes | Yes | Required to join a ride | App functionality | The display name a rider chooses, shown to the group. It need not be a real name. |
 | Personal info: phone number | Yes | Yes | Optional | App functionality | Emergency-contact number, only if the rider shares it with the group or leader (it stays on the phone otherwise); relay copy kept 2 hours. |
 | Health and fitness: health info | Yes | Yes | Optional | App functionality | Medical notes on the emergency contact, same conditions as above. |
@@ -257,8 +257,9 @@ repository variable.
 6. **GitHub settings:** set `RIDE_RELAY_TESTFLIGHT_INVITE_URL` (D8).
 7. **Decide** the Apple age-rating tier and the Play target audience, which both
    have to express a minimum age of 17 in scales that have no 17.
-8. **Confirm** the heatmap contribution default shipped in build `<N>` matches the
-   Data safety answer, and that `testing@` reaches you.
+8. **Confirm** build `<N>` asks about heatmap contribution at setup with nothing
+   pre-selected and contributes nothing until a rider chooses (#957), as the
+   Data safety answer says, and that `testing@` reaches you.
 9. **Post** the links to the first groups, and say "go" before each dispatch.
 10. **Test as a stranger** on a real phone from each opt-in page (D3, D9).
 
