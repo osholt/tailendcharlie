@@ -295,7 +295,9 @@ class _HomeScreenState extends State<HomeScreen> {
           consentAnswered: heatmap.consentAnswered,
           hasActiveRide: widget.controller.hasActiveRide,
           restoring: widget.onRetryRestoration != null,
-          navigating: _routeOnMap != null,
+          // A route on the map, or one on its way there from a group ride the
+          // rider has just left, is navigation.
+          navigating: _routeOnMap != null || _freeRoamRoute != null,
           arrangingRide:
               widget.controller.busy || _planningDestination || _searching,
         );

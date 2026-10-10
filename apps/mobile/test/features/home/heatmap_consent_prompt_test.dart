@@ -17,6 +17,7 @@ import 'package:ride_relay/controllers/spoken_guidance_controller.dart';
 import 'package:ride_relay/data/in_memory_event_store.dart';
 import 'package:ride_relay/data/in_memory_session_store.dart';
 import 'package:ride_relay/domain/completed_ride_store.dart';
+import 'package:ride_relay/domain/imported_route.dart';
 import 'package:ride_relay/domain/recorded_route_store.dart';
 import 'package:ride_relay/domain/ride_session.dart';
 import 'package:ride_relay/features/home/home_screen.dart';
@@ -138,6 +139,7 @@ void main() {
       WidgetTester tester,
       GlobalRideHeatmapController heatmap, {
       VoidCallback? onRetryRestoration,
+      bool openJoinGroup = false,
     }) async {
       await tester.pumpWidget(
         MaterialApp(
@@ -155,6 +157,8 @@ void main() {
             completedRides: completedRides,
             globalRideHeatmap: heatmap,
             onRetryRestoration: onRetryRestoration,
+            openJoinGroup: openJoinGroup,
+            onJoinGroupOpened: () {},
             enableNativeServices: false,
           ),
         ),
@@ -241,6 +245,34 @@ void main() {
       expect(dialog, findsNothing);
     });
 
+    testWidgets('does not stack on top of a sheet the rider asked for', (
+      tester,
+    ) async {
+      final heatmap = await loadHeatmap();
+
+      // A ride invitation opens the join sheet as the screen appears.
+      await pumpHome(tester, heatmap, openJoinGroup: true);
+      await tester.pump();
+
+      expect(find.text('Join your group'), findsOneWidget);
+      expect(dialog, findsNothing);
+      expect(heatmap.consentAnswered, isFalse);
+    });
+
+    testWidgets('does not ask while a route is being handed over to navigate', (
+      tester,
+    ) async {
+      final heatmap = await loadHeatmap();
+      // A group ride the rider has just left, carrying on alone: they are
+      // probably moving, and this is navigation.
+      sharedRoutes.stageFreeRoamRoute(_route());
+
+      await pumpHome(tester, heatmap);
+
+      expect(dialog, findsNothing);
+      expect(heatmap.consentAnswered, isFalse);
+    });
+
     testWidgets('pressing back is an answer too, and the answer is no', (
       tester,
     ) async {
@@ -314,6 +346,23 @@ void main() {
     });
   });
 }
+
+ImportedRoute _route() => ImportedRoute(
+  id: 'route',
+  name: 'Test route',
+  importedAt: DateTime.utc(2026, 10, 10, 9),
+  sourceFileName: 'route.gpx',
+  paths: const [
+    RoutePath(
+      kind: RoutePathKind.route,
+      points: [
+        GeoPoint(latitude: 51.44, longitude: -2.58),
+        GeoPoint(latitude: 51.38, longitude: -2.36),
+      ],
+    ),
+  ],
+  waypoints: const [],
+);
 
 class _FakeNearbyBridge extends NearbyBridge {
   const _FakeNearbyBridge();
