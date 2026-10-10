@@ -15,6 +15,7 @@ import 'package:ride_relay/services/offline_tile_cache.dart';
 import 'package:ride_relay/services/ride_plan_router.dart';
 import 'package:ride_relay/services/road_routing.dart';
 import 'package:ride_relay/services/route_importer.dart';
+import 'package:ride_relay/services/route_preferences_memory.dart';
 import 'package:ride_relay/services/route_waypoint_editor.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -26,6 +27,8 @@ const _town = GeoPoint(latitude: 52.30, longitude: -1.00);
 
 /// Confirming a route is not final (#847).
 void main() {
+  setUp(() => SharedPreferences.setMockInitialValues({}));
+
   Future<ImportedRoute> confirmedRoute() async =>
       (await RidePlanRouter(
             routingService: _StraightRouting(),
@@ -46,7 +49,6 @@ void main() {
     bool rideStarted = false,
     ValueListenable<GeoPoint?>? currentPosition,
   }) async {
-    SharedPreferences.setMockInitialValues({});
     final directory = Directory.systemTemp.createTempSync('edit-route');
     addTearDown(() => directory.deleteSync(recursive: true));
     final cache = OfflineTileCache(
@@ -189,6 +191,35 @@ void main() {
       'Town',
     ]);
     expect(saved?.allPoints.first, here);
+  });
+
+  testWidgets('a new destination starts with the last confirmed options', (
+    tester,
+  ) async {
+    const remembered = RoutePreferences(avoidTolls: true);
+    SharedPreferences.setMockInitialValues({});
+    await const RoutePreferencesMemory().remember(remembered);
+    await pumpMap(tester, editRouteRequestToken: Object());
+
+    // No route to edit: Edit route is a new plan, through a place search.
+    await tester.enterText(find.byKey(const Key('place-search-field')), 'pass');
+    await tester.tap(find.byKey(const Key('place-search-submit')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('place-search-result-Pass, Shire')));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('ride-plan-itinerary')), findsOneWidget);
+    await tester.scrollUntilVisible(
+      find.text(remembered.summary),
+      120,
+      scrollable: find
+          .descendant(
+            of: find.byType(ListView),
+            matching: find.byType(Scrollable),
+          )
+          .first,
+    );
+    expect(find.text(remembered.summary), findsOneWidget);
   });
 
   testWidgets('replacing the route offers editing it first', (tester) async {

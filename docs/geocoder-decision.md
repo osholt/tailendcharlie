@@ -3,6 +3,15 @@
 Decision date: 12 August 2026
 Decision: **stay on the public Nominatim instance, search on submit only**
 
+> **Superseded in part, October 2026 (#917).** For the open beta the operator
+> chose to self-host Photon, with Valhalla, on an Oracle Always Free A1 VM; see
+> [`routing-service.md`](routing-service.md). That meets gate condition 2 below.
+> Search stays submit-only until condition 1 (a rider saying the tap is a real
+> problem) is also met. Photon permits as-you-type, so typeahead becomes a
+> product decision rather than a terms-of-use one. Until the relay advertises a
+> Photon URL, the app and planner keep using public Nominatim under the terms
+> below.
+
 The app keeps using `nominatim.openstreetmap.org` for destination search, and
 results appear when the rider submits the field rather than as they type. No
 geocoder is self-hosted and no commercial provider is engaged.
@@ -16,8 +25,8 @@ since destination planning landed:
 
 | Piece | Where |
 | --- | --- |
-| Endpoint | `RoutingConfiguration.geocodingBaseUrl`, defaulting to `https://nominatim.openstreetmap.org`, overridable with `--dart-define=RIDE_RELAY_GEOCODING_URL` |
-| Client | `NominatimDestinationSearchService` — `/search?format=jsonv2&limit=5`, HTTPS enforced, in-memory cache keyed by query, raw `lat,lon` parsed without a network call |
+| Endpoint | `RoutingConfiguration.geocodingBaseUrl`, resolved by `RoutingServices` (#917): a `RIDE_RELAY_GEOCODING_URL` define, else the Photon or Nominatim URL the relay advertises, else `https://nominatim.openstreetmap.org` |
+| Client | `NominatimDestinationSearchService` — `/search?format=jsonv2&limit=5`, HTTPS enforced, in-memory cache keyed by query, raw `lat,lon` parsed without a network call. `PhotonDestinationSearchService` (`/api?limit=5`) behaves the same and is used when the resolved geocoder is Photon |
 | Planning | `DestinationRoutePlanner.planForReview` geocodes origin, stops and destination, then routes through them |
 | Identification | A `User-Agent` naming the app and its repository, as Nominatim requires |
 

@@ -54,15 +54,25 @@ class RideSession {
   final RiderColor riderColor;
   final RideCoordinationMode coordinationMode;
 
-  /// Optional, leader-chosen at creation. Never required: rides are always
-  /// identifiable by their six-digit code even with no name set.
+  /// Optional, leader-chosen at creation and renamable afterwards (#894).
+  /// Never required: rides are always identifiable by their six-digit code
+  /// even with no name set.
+  ///
+  /// A label on this phone: it names the ride here, in My rides and in what
+  /// this rider shares. Joining riders never read it from the journal, which
+  /// is why renaming needs no event.
   final String? rideName;
+
+  /// The longest ride name kept, the same bound a watcher's page uses.
+  static const maximumRideNameLength = 80;
 
   RideSession copyWith({
     RideRole? role,
     String? rideCode,
     int? simulationRiderCount,
     RideCoordinationMode? coordinationMode,
+    String? rideName,
+    bool clearRideName = false,
   }) => RideSession(
     rideId: rideId,
     rideCode: rideCode ?? this.rideCode,
@@ -78,7 +88,7 @@ class RideSession {
     riderSymbol: riderSymbol,
     riderColor: riderColor,
     coordinationMode: coordinationMode ?? this.coordinationMode,
-    rideName: rideName,
+    rideName: clearRideName ? null : rideName ?? this.rideName,
   );
 
   Map<String, Object?> toJson() => {

@@ -1246,16 +1246,28 @@ or background geocoding traffic. Latitude/longitude input bypasses geocoding.
 Generated road geometry is stored as an ordinary GPX-compatible track and stays
 visible offline after planning.
 
-Development-alpha builds use the public OSRM and Nominatim endpoints. Both are
-replaceable without an app update:
+Every routing, map-matching, speed-limit and geocoding endpoint is resolved in
+one place, `RoutingServices` in `lib/services/routing_service_endpoints.dart`
+(#917). For each service the order is:
+
+1. a build-time define;
+2. the `serviceUrls` the relay advertises in `/api/v1/compatibility`, which the
+   app keeps between launches;
+3. the public OSRM, Valhalla and Nominatim instances.
+
+The operator therefore moves the services, or moves them back, without an app
+update. See `routing-service.md`. The defines are for development:
 
 ```text
---dart-define=RIDE_RELAY_ROUTING_URL=https://routing.example.com
---dart-define=RIDE_RELAY_GEOCODING_URL=https://geocoding.example.com
+--dart-define=RIDE_RELAY_ROUTING_URL=https://osrm.example.com
+--dart-define=RIDE_RELAY_VALHALLA_URL=https://routing.example.com/valhalla
+--dart-define=RIDE_RELAY_GEOCODING_URL=https://routing.example.com/photon
+--dart-define=RIDE_RELAY_GEOCODING_API=photon
 ```
 
-Destination results are cached for the app session and requests identify Ride
-Relay with a valid User-Agent. The public Nominatim service forbids client-side
+Destination results are cached for the app session. Every routing and geocoding
+request identifies the app with a valid User-Agent and `X-Client-Id:
+tailendcharlie.app`, which the self-hosted service requires. The public Nominatim service forbids client-side
 autocomplete and limits aggregate use; production must use an approved provider
 or self-hosted proxy before scale testing. OSRM uses the driving profile, so it
 produces road-following routes but does not claim Calimoto-style motorcycle or
@@ -1411,16 +1423,12 @@ so data freshness is explicitly unknown. Current and prefetched readings are
 kept only in memory and cleared when the user turns the feature off; the cache
 is not persisted across app launches.
 
-Alpha builds default to FOSSGIS/OpenStreetMap.de's public Valhalla instance.
-The endpoint is replaceable without an app update:
-
-```text
---dart-define=RIDE_RELAY_SPEED_LIMIT_URL=https://routing.example.com/trace_attributes
-```
-
-The `locate` endpoint is derived from that URL by replacing its final path
-segment, so a self-hosted deployment cannot end up with the two halves of the
-lookup on different hosts. It is deliberately not separately configurable.
+Builds fall back to FOSSGIS/OpenStreetMap.de's public Valhalla instance. The
+lookup uses `trace_attributes` and `locate` on whichever Valhalla deployment is
+in force (#917): a `RIDE_RELAY_VALHALLA_URL` define, else the one the relay
+advertises, else the public instance. Both actions are derived from one base
+URL, the same one routing and map matching use, so a self-hosted deployment
+cannot end up with the two halves of the lookup on different hosts.
 
 Valhalla is MIT-licensed and its OpenStreetMap-derived road data is ODbL with
 attribution required. The app credits `© OpenStreetMap contributors` in the

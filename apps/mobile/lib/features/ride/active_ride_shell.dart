@@ -506,6 +506,58 @@ Set<String> registeredTecRiderIds({
 /// These actions used to sit behind a hamburger on both the map and dashboard.
 /// Keeping them on the page means there is no second navigation system to
 /// discover, while the moving map keeps only its large riding-time controls.
+/// Asks for a ride's new name (#894). Saving an empty name clears it.
+class RenameRideDialog extends StatefulWidget {
+  const RenameRideDialog({super.key, required this.initialName});
+
+  final String initialName;
+
+  @override
+  State<RenameRideDialog> createState() => _RenameRideDialogState();
+}
+
+class _RenameRideDialogState extends State<RenameRideDialog> {
+  late final TextEditingController _name = TextEditingController(
+    text: widget.initialName,
+  );
+
+  @override
+  void dispose() {
+    _name.dispose();
+    super.dispose();
+  }
+
+  void _save() => Navigator.of(context).pop(_name.text.trim());
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+    title: const Text('Ride name'),
+    content: TextField(
+      key: const Key('rename-ride-field'),
+      controller: _name,
+      autofocus: true,
+      maxLength: RideSession.maximumRideNameLength,
+      textCapitalization: TextCapitalization.sentences,
+      textInputAction: TextInputAction.done,
+      decoration: const InputDecoration(
+        hintText: 'Leave empty to use the ride code',
+      ),
+      onSubmitted: (_) => _save(),
+    ),
+    actions: [
+      TextButton(
+        onPressed: () => Navigator.of(context).pop(),
+        child: const Text('Cancel'),
+      ),
+      FilledButton(
+        key: const Key('rename-ride-save'),
+        onPressed: _save,
+        child: const Text('Save'),
+      ),
+    ],
+  );
+}
+
 class _RideActionsPanel extends StatelessWidget {
   const _RideActionsPanel({
     required this.canChangeRoute,
@@ -537,7 +589,15 @@ class _RideActionsPanel extends StatelessWidget {
     this.onRideWithOthers,
     this.onRideOnAlone,
     required this.coordinationMode,
+    required this.rideName,
+    required this.onRenameRide,
   });
+
+  /// The ride's name on this phone, or null when it is known by its code.
+  final String? rideName;
+
+  /// Renames the ride after it was created (#894).
+  final VoidCallback onRenameRide;
 
   final bool canChangeRoute;
 
@@ -670,6 +730,18 @@ class _RideActionsPanel extends StatelessWidget {
               ),
               onTap: onObserverAccess,
             ),
+          ListTile(
+            key: const Key('ride-menu-rename'),
+            leading: const Icon(Icons.drive_file_rename_outline),
+            title: Text(rideName ?? 'Name this ride'),
+            subtitle: Text(
+              rideName == null
+                  ? 'Known by its code until it has a name'
+                  : 'Ride name on this phone and in My rides',
+            ),
+            trailing: const Icon(Icons.edit_outlined),
+            onTap: onRenameRide,
+          ),
           ExpansionTile(
             key: const Key('ride-more-options'),
             leading: const Icon(Icons.more_horiz),
@@ -1409,9 +1481,9 @@ class _ActiveRideShellState extends State<ActiveRideShell>
     final carPlayRouting = RoutingConfiguration.fromEnvironment();
     _carPlayRoutingClient = http.Client();
     _carPlayDestinationPlanner = DestinationRoutePlanner(
-      searchService: NominatimDestinationSearchService(
+      searchService: buildDestinationSearchService(
         client: _carPlayRoutingClient,
-        baseUrl: carPlayRouting.geocodingBaseUrl,
+        configuration: carPlayRouting,
       ),
       routingService: buildPlanningRoutingService(
         client: _carPlayRoutingClient,
@@ -5677,6 +5749,8 @@ class _ActiveRideShellState extends State<ActiveRideShell>
 
   Widget _buildRideActions() => _RideActionsPanel(
     coordinationMode: widget.rideController.coordinationMode,
+    rideName: widget.rideController.session?.rideName,
+    onRenameRide: () => unawaited(_renameRide()),
     canChangeRoute: _isSimulation || widget.rideController.isLocalRideLeader,
     canEditRoute:
         (_isSimulation || widget.rideController.isLocalRideLeader) && _hasRoute,
@@ -5721,6 +5795,22 @@ class _ActiveRideShellState extends State<ActiveRideShell>
         ? null
         : () => unawaited(_rideOnAlone()),
   );
+
+  /// Renames the ride after it was created (#894). The name now defaults to
+  /// the route's, and a route edited along the way can leave it saying
+  /// somewhere the ride no longer goes.
+  Future<void> _renameRide() async {
+    final controller = widget.rideController;
+    final name = await showDialog<String>(
+      context: context,
+      builder: (_) =>
+          RenameRideDialog(initialName: controller.session?.rideName ?? ''),
+    );
+    if (name == null || !mounted) return;
+    await controller.renameRide(name);
+    if (!mounted) return;
+    setState(() {});
+  }
 
   void _openAlertsAndReports() {
     unawaited(
