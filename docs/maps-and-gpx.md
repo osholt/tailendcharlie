@@ -231,6 +231,16 @@ until a following fix corroborates them, so GPS noise and tunnel re-acquisition
 cost one update of latency instead of spinning the map. All comparisons take the
 shortest angular path, so crossing north rotates the short way.
 
+Route pins stay upright as the map turns (#935). A `flutter_map` marker turns with
+the tiles unless its layer counter-rotates, so a start, stop or end pin was upside
+down heading south; the waypoint layers on the ride map and on the route review
+now set `rotate: true`. The pin is still anchored on its centre, as it was. The
+MapLibre map draws the same places as circle layers, which have no heading to
+lose; `circle-pitch-alignment` is stated as `viewport` so a tilted map cannot
+flatten them. Café, discovery and marker-plan icons are not covered by this.
+`test/features/map/route_marker_upright_test.dart` measures the on-screen rotation
+of each pin at several map bearings and reads the MapLibre layer's properties.
+
 ### Overlay placement
 
 The upper-middle of the map is where a rider on a mounted phone reads the road
@@ -1012,6 +1022,18 @@ the completed-route display. It is hidden when there is no maneuver-bearing
 route or the rider is substantially off route. Imported recorded GPX tracks do
 not invent directions from geometry alone. Route review reports how many turn
 instructions a route carries.
+
+"Near" means travelling along the route, not just within 150 m of it (#941). A
+manoeuvre's left, right or straight on is relative to its planned approach. A
+rider who reaches the line on another road at a junction is on a different
+approach, so the planned wording is wrong for them. On the 10 October ride, a
+rider coming in 90° across a roundabout's planned approach was told "take the
+exit straight on", went straight ahead of themselves and was off route for eight
+minutes. A moving rider whose heading is more than 60° from every nearby piece
+of the line is therefore off route (`route_travel_alignment.dart`). Distance
+alone still decides when there is no heading to trust (below 3 m/s, the floor
+the reroute bearing uses) and inside 20 m of the line, where GPS course lag
+through a bend or round a ring must not blank the banner mid-junction.
 
 ### Roundabouts, direction and symbols
 

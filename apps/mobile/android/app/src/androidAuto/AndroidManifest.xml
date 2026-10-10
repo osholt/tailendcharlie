@@ -1,10 +1,14 @@
 <!--
-  Preserved Android Auto declarations for a future, explicitly configured
-  `androidAuto` build variant. The project deliberately defines no such Gradle
-  flavour today, so this manifest is not merged into phone or Play releases.
+  Android Auto declarations, merged into the release build only when it is made
+  with `-PandroidAuto=true` (see `includeAndroidAuto` in app/build.gradle.kts;
+  the `Android internal testing` workflow's android_auto input sets it). Without
+  that switch this manifest is not merged into phone or Play releases, and
+  CI asserts the merged manifest is free of every declaration below.
 
   Keep the implementation and its tests healthy here, but do not move these
   declarations back to src/main until Android Auto distribution is approved.
+  Never publish an Android Auto bundle to open testing: its Android for Cars
+  review is blocking (docs/open-beta-plan.md, G5).
 -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="androidx.car.app.NAVIGATION_TEMPLATES" />

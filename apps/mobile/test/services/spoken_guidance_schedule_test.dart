@@ -458,14 +458,119 @@ void main() {
         },
       );
 
-      test('a stage that is no longer due says nothing at all', () {
+      test('a later stage that is due says nothing at all', () {
         // The rider reached the final prompt's distance while it rendered.
         expect(check(issuedAt: 123, now: 30), isNull);
-        // The junction has gone.
+        // With no re-decision at all, only a distance that is really out of
+        // date drops it. A passed junction never gets here: both callers
+        // return null once the guidance is on another junction.
         expect(
-          check(issuedAt: 123, now: 100, refreshedAnnouncement: false),
+          check(issuedAt: 123, now: 60, refreshedAnnouncement: false),
           isNull,
         );
+      });
+
+      group('a rider who slows while it renders still hears it (#942)', () {
+        // The 10 October ride, from its log. Each stage was due at the speed
+        // of the fix it was decided on, and not at the speed of the next one,
+        // so the re-decision for the same junction came back empty.
+        String? replay({
+          required double decidedAt,
+          required double decidedSpeed,
+          required double heardAt,
+          required double heardSpeed,
+          Set<String> spoken = const {},
+        }) {
+          final issued = announceAt(
+            decidedAt,
+            speed: decidedSpeed,
+            spoken: spoken,
+          );
+          expect(issued, isNotNull, reason: 'due when decided');
+          final refreshed = announceAt(
+            heardAt,
+            speed: heardSpeed,
+            spoken: spoken,
+          );
+          expect(refreshed, isNull, reason: 'not due at the slower speed');
+          return currentGuidancePhrase(
+            issued: issued!,
+            issuedDistanceMeters: decidedAt,
+            refreshed: refreshed,
+            currentDistanceMeters: heardAt,
+          );
+        }
+
+        test('the early heads-up two miles out', () {
+          // "In 2.0 mi" decided at 3271 m; 26.3 m/s two seconds later.
+          final said = replay(
+            decidedAt: 3271,
+            decidedSpeed: 27.4,
+            heardAt: 3218,
+            heardSpeed: 26.3,
+          );
+          expect(said, startsWith('In 2.0 mi'));
+        });
+
+        test('the approach prompt half a mile out', () {
+          // "In 0.4 mi" decided at 709 m, the early stage already said;
+          // 17.2 m/s four seconds later.
+          final said = replay(
+            decidedAt: 709,
+            decidedSpeed: 23.7,
+            heardAt: 633,
+            heardSpeed: 17.2,
+            spoken: const {'j|early'},
+          );
+          expect(said, startsWith('In 0.4 mi'));
+        });
+
+        test('but not once the distance it names is out of date', () {
+          final issued = announceAt(709, speed: 23.7, spoken: {'j|early'})!;
+          expect(
+            currentGuidancePhrase(
+              issued: issued,
+              issuedDistanceMeters: 709,
+              refreshed: null,
+              currentDistanceMeters: 709 * 0.5,
+            ),
+            isNull,
+          );
+        });
+      });
+
+      test('the three system-voice prompts of 10 October stay natural', () {
+        // (decided, heard, speed) from the log: each was heard with the next
+        // tenth of a mile in its words ("0.6" then "0.5" and so on), which the
+        // old exact comparison discarded (#616).
+        const cases = [
+          (899.0, 799.0, 35.1),
+          (577.0, 475.0, 35.1),
+          (436.0, 382.0, 15.0),
+        ];
+        for (final (decided, heard, speed) in cases) {
+          final issued = announceAt(
+            decided,
+            speed: speed,
+            spoken: const {'j|early'},
+          )!;
+          final refreshed = announceAt(
+            heard,
+            speed: speed,
+            spoken: const {'j|early'},
+          )!;
+          expect(refreshed.phrase, isNot(issued.phrase), reason: '$decided m');
+          expect(
+            currentGuidancePhrase(
+              issued: issued,
+              issuedDistanceMeters: decided,
+              refreshed: refreshed,
+              currentDistanceMeters: heard,
+            ),
+            issued.phrase,
+            reason: '$decided m heard at $heard m',
+          );
+        }
       });
 
       test('a prompt with no distance in it never goes out of date', () {

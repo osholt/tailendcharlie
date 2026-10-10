@@ -49,7 +49,11 @@ Now:
   of the same junction is still due with the same words and the rider has covered
   no more than 40% of the distance named, or 400 m, whichever is less; the
   refreshed phrase when the distance is really out of date or the words changed;
-  and nothing when the stage is no longer due.
+  and nothing when a later stage is due. A stage fires at a time to the junction
+  converted through the rider's speed, so slowing while the voice renders can
+  leave the same junction's stage "not due yet". That re-decision is empty, not a
+  later stage, and the issued phrase is kept under the same limit (#942). On the
+  10 October ride three prompts were dropped in silence that way.
 - **A superseded prompt is dropped, not spoken by the system voice.** When the
   rendered phrase is not what the schedule now says, or speech was stopped while
   it rendered, the fail-safe engine throws `SpokenGuidanceSuperseded`. The speaker

@@ -1,0 +1,1 @@
+Early UK open beta. Try a simulated ride, plan a route, then join a ride from a second phone. Experimental: nearby-phone sharing without signal. Not an emergency service. Feedback: testing@tailendcharlie.app
