@@ -13,8 +13,10 @@ on:
         type: string
       promote_to:
         description: >-
-          Closed track to promote to after a successful upload. Testers are on
-          alpha; "none" uploads to internal only and reaches no closed tester.
+          Track to promote to after a successful upload. Testers are on alpha;
+          "none" uploads to internal only and reaches no closed tester. beta is
+          Google Play OPEN testing, which is public: it also needs
+          confirm_open_testing, and its bundle never carries Android Auto.
         required: true
         default: alpha
         type: choice
@@ -22,10 +24,28 @@ on:
           - alpha
           - beta
           - none
+      confirm_open_testing:
+        description: >-
+          Only for promote_to=beta, which publishes to the PUBLIC open-testing
+          track. Type publish-open-testing to confirm. Ignored for every other
+          destination.
+        required: false
+        default: ''
+        type: string
+      android_auto:
+        description: >-
+          Build WITH the Android Auto declarations (alpha or none only; refused
+          for beta). Off is what every Play track ships today, and what open
+          testing must ship: its Android for Cars review is blocking.
+        required: true
+        default: false
+        type: boolean
       notification_mode:
         description: >-
-          auto emails the closed tester group when one is configured; dry-run
-          only renders the mail into the run summary.
+          auto emails the closed tester group when one is configured and the
+          build goes to alpha; dry-run only renders the mail into the run
+          summary. Nothing is emailed for beta: the open-testing audience is not
+          the closed group.
         required: true
         default: auto
         type: choice
@@ -63,6 +83,22 @@ jobs:
         with:
           # Enough history for the tester release summary to list what changed.
           fetch-depth: 50
+      - name: Require confirmation before publishing to open testing
+        # First, before any build or upload. Open testing (beta) is public, and
+        # on 27 July 2026 the app was found generally available on a stale
+        # build nobody meant to publish. It also refuses an Android Auto bundle
+        # for that track.
+        working-directory: ${{ github.workspace }}
+        env:
+          PROMOTE_TO: ${{ inputs.promote_to }}
+          CONFIRM_OPEN_TESTING: ${{ inputs.confirm_open_testing }}
+          ANDROID_AUTO: ${{ inputs.android_auto }}
+        run: |
+          set -euo pipefail
+          python3 -m tools.release.play_release_gate gate \
+            --promote-to "$PROMOTE_TO" \
+            --confirm "$CONFIRM_OPEN_TESTING" \
+            --android-auto "$ANDROID_AUTO"
       - name: Check the build number against Google Play
         # First, before any build or signing work: a reused version code is
         # otherwise refused by Play only after the build and upload (#630). The
@@ -142,6 +178,9 @@ jobs:
       - name: Build App Bundle
         env:
           BUILD_NUMBER: ${{ inputs.build_number }}
+          # Read by apps/mobile/android/app/build.gradle.kts. Flutter does not
+          # forward -P flags, so the environment form is the one that reaches it.
+          ORG_GRADLE_PROJECT_androidAuto: ${{ inputs.android_auto }}
           TESTER_NOTES_URL: https://github.com/${{ github.repository }}/blob/${{ github.sha }}/docs/tester-release-notes.md
           RIDE_RELAY_API_BASE_URL: ${{ vars.RIDE_RELAY_API_BASE_URL }}
           RIDE_RELAY_FIREBASE_API_KEY: ${{ vars.RIDE_RELAY_FIREBASE_API_KEY }}
@@ -177,8 +216,14 @@ jobs:
             --dart-define=RIDE_RELAY_FIREBASE_MESSAGING_SENDER_ID="$RIDE_RELAY_FIREBASE_MESSAGING_SENDER_ID" \
             --dart-define=RIDE_RELAY_FIREBASE_ANDROID_APP_ID="$RIDE_RELAY_FIREBASE_ANDROID_APP_ID" \
             --dart-define=RIDE_RELAY_RIDE_DIAGNOSTICS=true
-      - name: Verify Android Auto is absent from the Play manifest
+      - name: Verify the Android Auto declarations match the build
+        # Off (the default, and the only state beta may have): the source and
+        # every merged release manifest must be free of Android Auto. On: the
+        # merged release manifest must declare it, so the switch cannot quietly
+        # do nothing. Either way this runs before anything is uploaded.
         working-directory: ${{ github.workspace }}
+        env:
+          ANDROID_AUTO: ${{ inputs.android_auto }}
         run: |
           set -euo pipefail
           mapfile -t merged_manifests < <(
@@ -189,9 +234,22 @@ jobs:
             echo "::error::No merged release manifest was produced." >&2
             exit 1
           }
-          python3 tools/assert-android-auto-disabled.py \
-            apps/mobile/android/app/src/main/AndroidManifest.xml \
-            "${merged_manifests[@]}"
+          if test "$ANDROID_AUTO" = "true"; then
+            mapfile -t car_manifests < <(
+              find apps/mobile/build/app/intermediates/merged_manifests \
+                -path '*release*' -name AndroidManifest.xml -type f -print
+            )
+            test "${#car_manifests[@]}" -gt 0 || {
+              echo "::error::No merged release manifest to check for Android Auto." >&2
+              exit 1
+            }
+            python3 tools/assert-android-auto-disabled.py --expect enabled \
+              "${car_manifests[@]}"
+          else
+            python3 tools/assert-android-auto-disabled.py \
+              apps/mobile/android/app/src/main/AndroidManifest.xml \
+              "${merged_manifests[@]}"
+          fi
       - name: Validate Play service account secret
         env:
           SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
@@ -238,8 +296,24 @@ jobs:
             --track_promote_release_status completed \
             --deactivate_on_promote false \
             --version_code "$VERSION_CODE"
+      - name: Read the open-testing track back
+        # A committed promotion is not evidence that the track serves anything:
+        # fastlane exits 0 and the API can report a draft beside a live release.
+        # This fails the run unless beta holds this version code, completed. It
+        # cannot see whether the track is paused; only the Console shows that.
+        if: ${{ success() && inputs.promote_to == 'beta' }}
+        working-directory: ${{ github.workspace }}
+        env:
+          VERSION_CODE: ${{ inputs.build_number }}
+        run: |
+          set -euo pipefail
+          "$RUNNER_TEMP/build-number-venv/bin/python" -m tools.release.play_release_gate verify-track \
+            --package "$PACKAGE_NAME" \
+            --track beta \
+            --version-code "$VERSION_CODE" \
+            --service-account-file "$RUNNER_TEMP/play-build-number.json"
       - name: Collect what changed since the previous notified build
-        if: ${{ success() && inputs.promote_to != 'none' }}
+        if: ${{ success() && inputs.promote_to == 'alpha' }}
         env:
           GH_TOKEN: ${{ github.token }}
           WORKFLOW_FILE: android-internal.yml
@@ -269,7 +343,7 @@ jobs:
         # this build, so it must not go out when they cannot. A notification
         # problem must never fail a release, hence continue-on-error as well as
         # the tool's own exit-0 contract.
-        if: ${{ success() && inputs.promote_to != 'none' }}
+        if: ${{ success() && inputs.promote_to == 'alpha' }}
         continue-on-error: true
         env:
           NOTIFICATION_MODE: ${{ inputs.notification_mode }}
@@ -298,6 +372,7 @@ jobs:
         if: always()
         env:
           PROMOTE_TO: ${{ inputs.promote_to }}
+          ANDROID_AUTO: ${{ inputs.android_auto }}
           PROMOTION_OUTCOME: ${{ steps.promote.outcome }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
@@ -312,6 +387,8 @@ jobs:
           # and no closed tester ever saw it (#101, #122).
           if test "$PROMOTE_TO" = "none"; then
             reach='**No closed tester has this build.** It was uploaded to `internal` only - run this workflow with `promote_to`, or `Promote Android testing release`, to reach the closed track.'
+          elif test "$PROMOTION_OUTCOME" = "success" && test "$PROMOTE_TO" = "beta"; then
+            reach="**Google Play open testing (\`beta\`) now holds this build.** It is public: anyone with the opt-in link can install it once the track is unpaused. The track is paused and unpaused only in the Play Console, which this run cannot see - confirm the track state there. No tester email was sent."
           elif test "$PROMOTION_OUTCOME" = "success"; then
             reach="**Closed testers can install this now from the \`$PROMOTE_TO\` track.**"
           else
@@ -323,6 +400,7 @@ jobs:
             printf -- '- Build number (Play version code): `%s`\n' "$app_build"
             printf -- '- Uploaded to: `internal`\n'
             printf -- '- Stamped distribution track: `%s`\n' "$track"
+            printf -- '- Android Auto declarations in this bundle: `%s`\n' "$ANDROID_AUTO"
             printf -- '- Built: `%s`\n' "$built_at"
             printf -- '- Commit: `%s`\n' "$GITHUB_SHA"
             printf -- '- Workflow run: %s\n\n' "$RUN_URL"
