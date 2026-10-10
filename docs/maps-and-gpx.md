@@ -1419,6 +1419,53 @@ Provider references:
 - [Valhalla attribution requirements](https://valhalla.github.io/valhalla/mjolnir/attribution/)
 - [Public demo fair-use and client identification](https://github.com/valhalla/valhalla#demo-server)
 
+## Why downloaded tiles still drew slowly after a fast zoom (#953)
+
+The iOS ride map is `flutter_map` plus `vector_map_tiles`. "Downloaded" means the
+raw vector bytes are on the device; a tile still has to be decoded, clipped
+(above zoom 14 every tile is cut out of its zoom-14 parent), painted and turned
+into an image before it shows. #819 made the byte reads cheap. The cost that was
+left, measured with the real renderer offline in a macOS profile build (median of
+three runs, a dense city area, all tiles on disk):
+
+| Scenario | Before | After |
+| --- | --- | --- |
+| Zoom 14.65 out to 11.5 and back in 0.8 s: map blank when the gesture ends | 99% | 0% |
+| ... time until fully covered / until sharp | 1.3 s / 1.4 s | 3 ms / 3 ms to 0.4 s |
+| ... tile requests / images drawn | 240 / 82 | 20 to 40 / 9 to 33 |
+| ... time spent PNG-encoding tiles for a disk that discards them | 2.4 s | 0 |
+| Sweep 14.65, 11, 16.5, 11, 14.65 in 1.8 s: time until covered | 1.4 s | 3 ms |
+| ... images drawn | 123 | 22 to 28 |
+| Zoom out to a never-seen 10.5: time until sharp | 0.6 s | 0.2 to 0.3 s |
+| Zoom in to a never-seen 17.5: time until sharp | 1.0 s | 0.5 s |
+
+Absolute times on a phone are longer; the ratios are what carry over. Causes, in
+order of weight:
+
+1. **Nothing drawn was kept.** `fileCacheMaximumSizeInBytes: 0` switches off the
+   package's store of rendered tiles (deliberately: it must not keep a second,
+   ungoverned copy of the provider's tiles on disk) but every tile was still
+   PNG-encoded and written, then deleted. `flutter_map` forgets tile images two
+   zoom levels away, so zooming back redrew the whole screen from vector data.
+2. **Levels that were only flown through were drawn in full.** A render that has
+   started cannot be withdrawn: 240 requests, 82 completed.
+3. **The PNG encode was a third of the cost of a tile and held a render slot.**
+4. **The render queue drew the margin before the middle.** The package's queue is
+   last-in first-out and `flutter_map` asks for the middle first.
+
+`RideVectorTileLayer` (`lib/features/map/ride_vector_tile_layer.dart`) replaces the
+package's layer on the ride map, the group mini map and the ride library map. It
+keeps 64 MiB of finished tile images in memory, starts a render only after the zoom
+level has been steady for 90 ms, draws the tiles nearest the centre first, writes
+nothing to disk and uses three decoder isolates on six-core phones (two before).
+The logic is in `lib/services/rendered_tile_scheduler.dart`. It builds the raster
+pipeline from the package's own parts, so `vector_map_tiles` stays pinned to the
+exact version it was written against.
+
+Not changed, and still costly: above zoom 14 each tile re-parses its zoom-14
+parent. A fresh zoom-in to 17.5 spends about three quarters of its decode time on
+that repeat (#954 tracks sharing the parse).
+
 ## CarPlay draws with MapLibre, and shares the phone's tiles
 
 The head unit renders with `MLNMapView`

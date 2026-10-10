@@ -368,6 +368,12 @@ void main() {
     });
 
     test('dispose cancels what is waiting and refuses new requests', () async {
+      final kept = request('kept');
+      await _settle();
+      final stored = _Tile(5);
+      kept.render.complete(stored);
+      await kept.result;
+      expect(scheduler.cache.length, 1);
       final a = request('a');
       final b = request('b');
       final waiting = request('c');
@@ -386,6 +392,17 @@ void main() {
         0,
         reason: 'nothing is kept after dispose',
       );
+    });
+
+    test('dispose releases the images the cache holds', () async {
+      final kept = request('kept');
+      await _settle();
+      kept.render.complete(_Tile(5));
+      await kept.result;
+      final held = scheduler.cache.get('kept')! as _Tile;
+      expect(held.released, isFalse);
+      scheduler.dispose();
+      expect(held.released, isTrue, reason: 'a leaked image is leaked memory');
     });
   });
 }
