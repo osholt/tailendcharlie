@@ -1,0 +1,216 @@
+# Public edge for the self-hosted routing and geocoding service (#917).
+# See docs/routing-service.md.
+#
+# No host details live here; the repository is public. Every value below comes
+# from deploy/routing/.env on the routing host, through compose.yaml.
+#
+# Phones call this service directly, and nothing a phone carries can be kept
+# secret from someone who unpacks the app. The client check identifies the
+# caller; it is not authentication. Abuse is bounded by the per-address and
+# whole-service rate limits, the action allowlist and the request-size cap.
+#
+# Nothing here logs requests. A Valhalla query carries a rider's route, and a
+# Photon query says where somebody is going.
+
+{
+	metrics
+}
+
+{$ROUTING_DOMAIN} {
+	encode zstd gzip
+
+	# The app identifies itself with X-Client-Id. A browser page cannot keep a
+	# header private either, so the web planner is recognised by the Origin
+	# the browser itself sets. A request with neither is refused before it
+	# reaches an engine.
+	#
+	# The production origins are public and fixed. ROUTING_EXTRA_ORIGIN admits
+	# one more, such as a local planner during development; unset, it repeats a
+	# production origin. Repeated header lines for one field are OR'ed.
+	@planner {
+		header Origin https://tailendcharlie.app
+		header Origin https://www.tailendcharlie.app
+		header Origin {$ROUTING_EXTRA_ORIGIN:https://tailendcharlie.app}
+	}
+	@anonymous {
+		not header X-Client-Id {$ROUTING_CLIENT_ID:tailendcharlie.app}
+		not {
+			header Origin https://tailendcharlie.app
+			header Origin https://www.tailendcharlie.app
+			header Origin {$ROUTING_EXTRA_ORIGIN:https://tailendcharlie.app}
+		}
+	}
+	@preflight {
+		method OPTIONS
+		header Origin https://tailendcharlie.app
+		header Origin https://www.tailendcharlie.app
+		header Origin {$ROUTING_EXTRA_ORIGIN:https://tailendcharlie.app}
+	}
+
+	# Only the actions the app and the planner use. Isochrones, expansion and
+	# the rest stay unreachable because they are the expensive ones.
+	@valhalla_routing path /valhalla/route /valhalla/sources_to_targets
+	@valhalla_matching path /valhalla/trace_route /valhalla/trace_attributes /valhalla/locate
+	@valhalla_status path /valhalla/status
+	@photon path /photon/api /photon/reverse /photon/status
+
+	# One route block, so the order below is the order of evaluation rather
+	# than Caddy's directive sort. Health first, then the identity gate, then
+	# the engines.
+	route {
+		# Liveness of the edge itself. Needs no client identity.
+		handle /health {
+			header Content-Type application/json
+			header Cache-Control no-store
+			respond `{"status":"ok"}` 200
+		}
+
+		# Readiness of each engine, for monitors and the smoke test. Public,
+		# tightly limited, and each answer holds only a version and data date.
+		handle /health/valhalla {
+			rate_limit {
+				zone health_valhalla {
+					key {remote_host}
+					events 30
+					window 1m
+				}
+			}
+			rewrite * /status
+			reverse_proxy valhalla:8002 {
+				header_down -Access-Control-Allow-Origin
+			}
+		}
+
+		handle /health/photon {
+			rate_limit {
+				zone health_photon {
+					key {remote_host}
+					events 30
+					window 1m
+				}
+			}
+			rewrite * /status
+			reverse_proxy photon:2322 {
+				header_down -Access-Control-Allow-Origin
+			}
+		}
+
+		# The planner sends only CORS-safelisted headers today and so never
+		# preflights, but a later custom header must not break it.
+		handle @preflight {
+			header Access-Control-Allow-Origin {http.request.header.Origin}
+			header Access-Control-Allow-Methods "GET, POST, OPTIONS"
+			header Access-Control-Allow-Headers "Content-Type, X-Client-Id"
+			header Access-Control-Max-Age 86400
+			header Vary Origin
+			respond 204
+		}
+
+		handle @anonymous {
+			header Content-Type application/json
+			respond `{"error":"client identification required"}` 403
+		}
+
+		# CORS for the planner only. The engines' own wildcard headers are
+		# stripped below, so a browser sees exactly one answer.
+		header @planner Access-Control-Allow-Origin {http.request.header.Origin}
+		header @planner Vary Origin
+
+		request_body {
+			max_size {$ROUTING_MAX_REQUEST_BYTES:1MB}
+		}
+
+		handle @valhalla_routing {
+			rate_limit {
+				zone routing_per_address {
+					key {remote_host}
+					events {$ROUTING_ROUTE_EVENTS_PER_MINUTE:60}
+					window 1m
+					ipv6_prefix 64
+				}
+				zone routing_whole_service {
+					key static
+					events {$ROUTING_ROUTE_EVENTS_PER_MINUTE_TOTAL:1200}
+					window 1m
+				}
+			}
+			uri strip_prefix /valhalla
+			reverse_proxy valhalla:8002 {
+				header_down -Access-Control-Allow-Origin
+				lb_try_duration 10s
+			}
+		}
+
+		handle @valhalla_matching {
+			# The speed-limit sign looks the road up every few seconds while
+			# riding, and riders on one mobile network can share an address.
+			rate_limit {
+				zone matching_per_address {
+					key {remote_host}
+					events {$ROUTING_MATCHING_EVENTS_PER_MINUTE:240}
+					window 1m
+					ipv6_prefix 64
+				}
+				zone matching_whole_service {
+					key static
+					events {$ROUTING_MATCHING_EVENTS_PER_MINUTE_TOTAL:3000}
+					window 1m
+				}
+			}
+			uri strip_prefix /valhalla
+			reverse_proxy valhalla:8002 {
+				header_down -Access-Control-Allow-Origin
+				lb_try_duration 10s
+			}
+		}
+
+		handle @valhalla_status {
+			rate_limit {
+				zone valhalla_status_per_address {
+					key {remote_host}
+					events 30
+					window 1m
+				}
+			}
+			uri strip_prefix /valhalla
+			reverse_proxy valhalla:8002 {
+				header_down -Access-Control-Allow-Origin
+			}
+		}
+
+		# Search-as-you-type sends one request per pause in typing, so the
+		# per-address allowance is generous.
+		handle @photon {
+			rate_limit {
+				zone geocoding_per_address {
+					key {remote_host}
+					events {$ROUTING_GEOCODING_EVENTS_PER_MINUTE:120}
+					window 1m
+					ipv6_prefix 64
+				}
+				zone geocoding_whole_service {
+					key static
+					events {$ROUTING_GEOCODING_EVENTS_PER_MINUTE_TOTAL:3000}
+					window 1m
+				}
+			}
+			uri strip_prefix /photon
+			reverse_proxy photon:2322 {
+				header_down -Access-Control-Allow-Origin
+				lb_try_duration 10s
+			}
+		}
+
+		handle {
+			header Content-Type application/json
+			respond `{"error":"not found"}` 404
+		}
+	}
+}
+
+# Host-only metrics. Compose publishes this port on 127.0.0.1, so it is not
+# reachable from the internet. 2019 is Caddy's own admin port, hence 2020.
+:2020 {
+	metrics /metrics
+	respond 404
+}
