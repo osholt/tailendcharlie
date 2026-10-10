@@ -20,6 +20,7 @@ import '../../services/navigation_guidance.dart';
 import '../../services/ride_plan_router.dart';
 import '../../services/road_routing.dart';
 import '../../services/route_marker_plan.dart';
+import '../../services/route_preferences_memory.dart';
 import '../../services/route_reshape_planner.dart';
 import '../../services/route_twistiness.dart';
 import '../../services/route_verification.dart';
@@ -54,6 +55,7 @@ class RidePlanEditing {
     this.offerCoordinationChoice = false,
     this.confirmLabel = defaultConfirmLabel,
     this.replanOnOpen = false,
+    this.preferencesMemory = const RoutePreferencesMemory(),
   });
 
   final RidePlan plan;
@@ -83,6 +85,10 @@ class RidePlanEditing {
   /// has the same number of places: a plan trimmed to what is left of a ride
   /// starts somewhere else (#893). Its line is shown until the new one comes.
   final bool replanOnOpen;
+
+  /// Where the confirmed route options are remembered for the next new plan
+  /// (#894). Null keeps nothing.
+  final RoutePreferencesMemory? preferencesMemory;
 }
 
 /// A confirmed plan and the route it was routed to.
@@ -247,6 +253,8 @@ class RouteReviewScreen extends StatefulWidget {
     );
     final confirmed = routed;
     if (action != RouteReviewAction.confirm || confirmed == null) return null;
+    // The options a rider confirms are the next new plan's default (#894).
+    await planning.preferencesMemory?.remember(plan.preferences);
     return RidePlanOutcome(
       plan: plan,
       route: confirmed.withMarkerReview(markerReview ?? confirmed.markerReview),

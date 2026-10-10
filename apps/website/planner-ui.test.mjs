@@ -23,6 +23,10 @@ const globalHeatmap = await readFile(
   new URL("./global-heatmap.mjs", import.meta.url),
   "utf8",
 );
+const plannerServices = await readFile(
+  new URL("./planner-services.mjs", import.meta.url),
+  "utf8",
+);
 const headers = await readFile(new URL("./_headers", import.meta.url), "utf8");
 
 test("the enabled app-code action is visually distinct from disabled actions", () => {
@@ -63,6 +67,20 @@ test("planner asset versions match their content so deployed fixes replace cache
       `from "\\./global-heatmap\\.mjs\\?v=${version(globalHeatmap)}"`,
     ),
   );
+  assert.match(
+    plannerJs,
+    new RegExp(
+      `from "\\./planner-services\\.mjs\\?v=${version(plannerServices)}"`,
+    ),
+  );
+});
+
+test("the planner may reach a self-hosted routing service on the project domain", () => {
+  // The relay advertises the routing host (#917); the policy must already
+  // allow it, or the browser silently blocks every route and search.
+  assert.match(headers, /connect-src[^\n]+https:\/\/\*\.tailendcharlie\.app/);
+  // And no planner request is hard-wired to a public demo server any more.
+  assert.doesNotMatch(plannerJs, /router\.project-osrm\.org|valhalla1\.openstreetmap\.de|nominatim\.openstreetmap\.org/);
 });
 
 test("email route is a visible route action rather than a hidden result", () => {
