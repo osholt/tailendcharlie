@@ -713,9 +713,12 @@ void main() {
     );
     final freeRoamStore = InMemoryRouteStore(_bathRoute());
     await pumpHome(tester, freeRoamRouteStore: freeRoamStore);
-    tester
-        .widget<HomeMapBackdrop>(find.byType(HomeMapBackdrop))
-        .onRouteChanged!(_bathRoute());
+    final backdrop = tester.widget<HomeMapBackdrop>(
+      find.byType(HomeMapBackdrop),
+    );
+    backdrop.onRouteChanged!(_bathRoute());
+    // The navigation being recorded, which the group ride carries on from.
+    backdrop.onPersonalNavigationChanged!('free-roam-bath');
     await tester.pumpAndSettle();
 
     await tester.tap(find.byKey(const Key('home-more-actions')));
@@ -729,6 +732,8 @@ void main() {
     expect(rideController.coordinationMode.isGroup, isTrue);
     expect(rideController.rideStarted, isTrue);
     expect(rideController.authoritativeRoute?.id, 'bath');
+    // Filed with the navigation as one ride in My rides (#896).
+    expect(rideController.session?.continuesRideId, 'free-roam-bath');
     expect(find.byKey(const Key('ride-invite-step')), findsOneWidget);
 
     await tester.tap(find.byKey(const Key('ride-invite-continue')));
@@ -741,7 +746,10 @@ void main() {
   testWidgets('a route handed back by a group ride is navigated at once', (
     tester,
   ) async {
-    sharedRoutes.stageFreeRoamRoute(_bathRoute());
+    sharedRoutes.stageFreeRoamRoute(
+      _bathRoute(),
+      continuesRideId: 'group-ride',
+    );
     await pumpHome(tester);
 
     final pending = tester
@@ -749,6 +757,7 @@ void main() {
         .pendingInAppRoute;
     expect(pending?.route.id, 'bath');
     expect(pending?.reviewed, isTrue);
+    expect(pending?.continuesRideId, 'group-ride');
     expect(sharedRoutes.pendingFreeRoamRoute, isNull);
   });
 

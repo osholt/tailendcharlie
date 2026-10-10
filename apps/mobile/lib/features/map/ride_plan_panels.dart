@@ -23,10 +23,15 @@ class RidePlanItinerary extends StatelessWidget {
     required this.onAddStop,
     required this.onMoveStop,
     required this.onRemoveStop,
+    this.lineIsOriginal = false,
     this.onSavePlace,
   });
 
   final RidePlan plan;
+
+  /// Whether the route is still exactly as it was imported or recorded, so the
+  /// surface says what an edit will do to it before one is made (#892).
+  final bool lineIsOriginal;
   final bool currentLocationKnown;
 
   /// True while a re-plan is in flight. The rows stay readable; the buttons
@@ -97,62 +102,63 @@ class RidePlanItinerary extends StatelessWidget {
             // Dragged by the handle, as in Google Maps (#891). The list adds
             // "move before / after" to each row's semantics, so a screen
             // reader keeps the reordering the up and down buttons gave it.
-            ReorderableListView.builder(
-              key: const Key('ride-plan-stops'),
-              shrinkWrap: true,
-              physics: const NeverScrollableScrollPhysics(),
-              buildDefaultDragHandles: false,
-              itemCount: plan.stops.length,
-              onReorderItem: (from, to) {
-                if (to != from) onMoveStop(from, to);
-              },
-              itemBuilder: (context, index) {
-                final stop = plan.stops[index];
-                return ListTile(
-                  key: Key('ride-plan-stop-$index'),
-                  leading: CircleAvatar(
-                    radius: 13,
-                    child: Text(
-                      '${index + 1}',
-                      style: const TextStyle(fontSize: 12),
-                    ),
-                  ),
-                  title: Text(stop.label),
-                  subtitle: Text('Stop ${index + 1}', style: muted),
-                  trailing: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      if (onSavePlace != null)
-                        _saveButton(Key('ride-plan-save-stop-$index'), stop),
-                      IconButton(
-                        key: Key('ride-plan-remove-stop-$index'),
-                        tooltip: 'Remove stop',
-                        visualDensity: VisualDensity.compact,
-                        onPressed: busy ? null : () => onRemoveStop(index),
-                        icon: const Icon(Icons.close),
+            if (plan.stops.isNotEmpty)
+              ReorderableListView.builder(
+                key: const Key('ride-plan-stops'),
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                buildDefaultDragHandles: false,
+                itemCount: plan.stops.length,
+                onReorderItem: (from, to) {
+                  if (to != from) onMoveStop(from, to);
+                },
+                itemBuilder: (context, index) {
+                  final stop = plan.stops[index];
+                  return ListTile(
+                    key: Key('ride-plan-stop-$index'),
+                    leading: CircleAvatar(
+                      radius: 13,
+                      child: Text(
+                        '${index + 1}',
+                        style: const TextStyle(fontSize: 12),
                       ),
-                      ReorderableDragStartListener(
-                        key: Key('ride-plan-drag-stop-$index'),
-                        index: index,
-                        enabled: !busy && plan.stops.length > 1,
-                        child: Tooltip(
-                          message: 'Drag to reorder',
-                          child: Padding(
-                            padding: const EdgeInsets.all(8),
-                            child: Icon(
-                              Icons.drag_handle,
-                              color: busy || plan.stops.length < 2
-                                  ? const Color(0xFF5C6673)
-                                  : null,
+                    ),
+                    title: Text(stop.label),
+                    subtitle: Text('Stop ${index + 1}', style: muted),
+                    trailing: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        if (onSavePlace != null)
+                          _saveButton(Key('ride-plan-save-stop-$index'), stop),
+                        IconButton(
+                          key: Key('ride-plan-remove-stop-$index'),
+                          tooltip: 'Remove stop',
+                          visualDensity: VisualDensity.compact,
+                          onPressed: busy ? null : () => onRemoveStop(index),
+                          icon: const Icon(Icons.close),
+                        ),
+                        ReorderableDragStartListener(
+                          key: Key('ride-plan-drag-stop-$index'),
+                          index: index,
+                          enabled: !busy && plan.stops.length > 1,
+                          child: Tooltip(
+                            message: 'Drag to reorder',
+                            child: Padding(
+                              padding: const EdgeInsets.all(8),
+                              child: Icon(
+                                Icons.drag_handle,
+                                color: busy || plan.stops.length < 2
+                                    ? const Color(0xFF5C6673)
+                                    : null,
+                              ),
                             ),
                           ),
                         ),
-                      ),
-                    ],
-                  ),
-                );
-              },
-            ),
+                      ],
+                    ),
+                  );
+                },
+              ),
             ListTile(
               key: const Key('ride-plan-destination'),
               leading: const Icon(Icons.place, color: Color(0xFFFF7A5C)),
@@ -189,7 +195,18 @@ class RidePlanItinerary extends StatelessWidget {
                 ),
               ),
             ),
-            if (plan.derivedFromGeometry)
+            if (lineIsOriginal)
+              const Padding(
+                padding: EdgeInsets.fromLTRB(16, 0, 16, 10),
+                child: Text(
+                  'This is the route as it came, kept exactly. Changing the '
+                  'start, a stop, the destination, the route options or the '
+                  'line re-plans it on roads between the places listed here.',
+                  key: Key('ride-plan-original-line-note'),
+                  style: TextStyle(color: Color(0xFFFFD89A), fontSize: 12),
+                ),
+              )
+            else if (plan.derivedFromGeometry)
               const Padding(
                 padding: EdgeInsets.fromLTRB(16, 0, 16, 10),
                 child: Text(

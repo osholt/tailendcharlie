@@ -29,6 +29,7 @@ class RideWithOthersSheet extends StatefulWidget {
     this.route,
     this.coordinationMode,
     this.startNow = false,
+    this.continuesRideId,
   });
 
   final RideController controller;
@@ -44,6 +45,9 @@ class RideWithOthersSheet extends StatefulWidget {
   /// Starts the ride as it is created, for a rider who is already riding.
   final bool startNow;
 
+  /// The ride this group ride carries on from, filed with it as one (#896).
+  final String? continuesRideId;
+
   static Future<void> show(
     BuildContext context, {
     required RideController controller,
@@ -51,6 +55,7 @@ class RideWithOthersSheet extends StatefulWidget {
     ImportedRoute? route,
     RideCoordinationMode? coordinationMode,
     bool startNow = false,
+    String? continuesRideId,
   }) => showModalBottomSheet<void>(
     context: context,
     isScrollControlled: true,
@@ -62,6 +67,7 @@ class RideWithOthersSheet extends StatefulWidget {
       route: route,
       coordinationMode: coordinationMode,
       startNow: startNow,
+      continuesRideId: continuesRideId,
     ),
   );
 
@@ -118,6 +124,7 @@ class _RideWithOthersSheetState extends State<RideWithOthersSheet> {
       coordinationMode: _mode,
       route: widget.route,
       startNow: widget.startNow,
+      continuesRideId: widget.continuesRideId,
     );
     if (!mounted) return;
     // Failure arrives as a message, not an exception: "it returned" is not "it

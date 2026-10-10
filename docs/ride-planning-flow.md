@@ -185,7 +185,7 @@ never per keystroke, and a test enforces that.
 | Map's Where to? field, Plan a destination, Enter destination (in a ride) | A place search, then the same |
 | Café or discovery pin "add to route" | The current plan with that place inserted as a stop; a new plan to it when there is no route |
 | Circular planner | Unchanged generator, now with a start row; its loop reviews on the same screen |
-| GPX import, Ride Library, previous rides, web-planner code | The existing review (track matching, tidied/raw, reverse), in free roam without first creating a ride; **Edit route** afterwards turns it into a plan |
+| GPX import, Ride Library, previous rides, web-planner code | The existing choices first (Add turn directions?, tidied/raw, reverse), then the Plan surface with the route's line kept exactly until the first edit (#892); the itinerary says that an edit re-plans it on roads between the listed places. In free roam without first creating a ride |
 | Edit route | `RidePlan.fromRoute(current route)` |
 
 ### 2.5 Solo and group
@@ -287,7 +287,7 @@ lists; that is a separate piece of work under #690-#703.
 | E14 | Onboarding Create a ride | **Merged** into Ride with others. | 1 |
 | E15 | Web-planner code prompts | **Merged** into one "Recall a planned route" action feeding review. | 1 |
 | E16 | GPX shaping waypoints | **Fixed** in the plan model (never listed as stops). Routing semantics are #839's. | 1 |
-| — | `DestinationRouteSheet` form | **Removed**; its preferences move to the Plan surface's Route options. "Open route with" stays as "Navigate or export route" after confirming. | 1 |
+| — | `DestinationRouteSheet` form | **Removed**; its preferences move to the Plan surface's Route options. "Open route with" stays as "Navigate or export route" after confirming, and is offered beside the Plan surface's confirm button as **Open with** (#895), which hands over the route on screen and leaves the plan open. | 1 |
 | — | `_RideForm` create mode (Solo/Group, ride name, plan code) | **Removed** once nothing reaches it; its join mode stays. Solo becomes free roam; group becomes Ride with others; plan codes become Recall a planned route. The ride name defaults to the route name. | 1 |
 | — | Solo *rides* (`RideCoordinationMode.solo` sessions) | **Kept** for CarPlay and restored sessions; the phone no longer creates them. | 3 |
 
@@ -316,8 +316,14 @@ Phase 1 adds **no event types and no relay change**.
   uses from Home, and the shell already applies a revision or a start that
   arrives before or after it mounts. The solo part is filed
   as it is today: free-roam navigation in My rides via `FreeRoamRideRecorder`,
-  a solo ride via the archive. The rider's history therefore shows two entries,
-  the solo leg and the group ride.
+  a solo ride via the archive. Since #896 the group ride's session remembers
+  the leg it carried on from (local only, never in the journal), and filing
+  joins the two into one My rides record under the later ride's id: both
+  legs' time, distance and tracks (as separate paths), the earlier record
+  removed once the joined one is written. Riding on alone does the same in
+  the other direction: free roam's navigation names the group ride it
+  carried on from. Filing is idempotent across checkpoints and replayed
+  journals, so a leg is never filed twice or dropped.
 - **Group → solo** is `riderLeft` (a rider, or a leader leaving it to the
   others) or `rideEnded` (a leader ending it). Riding on alone is free-roam
   navigation, which writes nothing to any journal.

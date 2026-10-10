@@ -27,6 +27,7 @@ class RideSession {
     this.riderColor = riderColorDefault,
     this.coordinationMode = RideCoordinationMode.secondBikeDropOff,
     this.rideName,
+    this.continuesRideId,
   }) : assert(
          !isSimulation ||
              (simulationRiderCount >= minimumSimulationRiderCount &&
@@ -63,6 +64,11 @@ class RideSession {
   /// is why renaming needs no event.
   final String? rideName;
 
+  /// The ride this one carried on from on this phone, when it began as a
+  /// solo ↔ group conversion (#896). Filed with it as one ride in My rides.
+  /// Local only: it is never written to the journal.
+  final String? continuesRideId;
+
   /// The longest ride name kept, the same bound a watcher's page uses.
   static const maximumRideNameLength = 80;
 
@@ -89,6 +95,7 @@ class RideSession {
     riderColor: riderColor,
     coordinationMode: coordinationMode ?? this.coordinationMode,
     rideName: clearRideName ? null : rideName ?? this.rideName,
+    continuesRideId: continuesRideId,
   );
 
   Map<String, Object?> toJson() => {
@@ -107,6 +114,7 @@ class RideSession {
     'riderColor': riderColor.name,
     'coordinationMode': coordinationMode.name,
     if (rideName != null) 'rideName': rideName,
+    if (continuesRideId != null) 'continuesRideId': continuesRideId,
   };
 
   factory RideSession.fromJson(Map<String, Object?> json) => RideSession(
@@ -129,6 +137,7 @@ class RideSession {
       json['coordinationMode'] as String?,
     ),
     rideName: json['rideName'] as String?,
+    continuesRideId: json['continuesRideId'] as String?,
   );
 
   static int _simulationRiderCount(Object? value) {

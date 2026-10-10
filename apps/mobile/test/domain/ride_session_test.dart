@@ -17,6 +17,28 @@ void main() {
     isSimulation: true,
   );
 
+  test('a renamed ride and the ride it continued survive persistence', () {
+    final continued = RideSession(
+      rideId: 'group',
+      rideCode: '123456',
+      inviteSecret: 'secret',
+      joinToken: 'aTokenWithPlentyOfEntropy',
+      localRiderId: 'lead',
+      displayName: 'Oliver',
+      role: RideRole.lead,
+      joinedAt: DateTime.utc(2026, 10, 4),
+      rideName: 'To Town',
+      continuesRideId: 'free-roam-solo',
+    ).copyWith(rideName: 'Coast loop');
+
+    final read = RideSession.fromJson(continued.toJson());
+
+    expect(read.rideName, 'Coast loop');
+    expect(read.continuesRideId, 'free-roam-solo');
+    expect(read.copyWith(clearRideName: true).rideName, isNull);
+    expect(RideSession.fromJson(session.toJson()).continuesRideId, isNull);
+  });
+
   test('simulation marker survives session persistence', () {
     expect(RideSession.fromJson(session.toJson()).isSimulation, isTrue);
   });
