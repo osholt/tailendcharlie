@@ -38,7 +38,7 @@ dependencies:
   audioplayers: ^6.8.1
   crypto: ^3.0.7
   file_selector: ^1.1.0
-  flutter_map: ^8.3.1
+  flutter_map: ^8.3.2
   flutter_secure_storage: ^10.3.1
   geolocator: ^14.0.3
   http: ^1.6.0
