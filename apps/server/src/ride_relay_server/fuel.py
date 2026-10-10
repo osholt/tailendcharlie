@@ -774,7 +774,15 @@ class FuelPriceService:
         while True:
             succeeded = True
             for source in self._configured_sources:
-                succeeded = await self.refresh_once(source) and succeeded
+                try:
+                    refreshed = await self.refresh_once(source)
+                except Exception:
+                    # Anything a source did not anticipate is logged and retried,
+                    # never allowed to end the loop: a dead refresh task would
+                    # leave every price ageing with nothing said on the relay.
+                    logger.exception("Fuel price source %s failed", source.source_id)
+                    refreshed = False
+                succeeded = refreshed and succeeded
             await self._sleep(self._refresh_seconds if succeeded else self._retry_seconds)
 
     async def close(self) -> None:
