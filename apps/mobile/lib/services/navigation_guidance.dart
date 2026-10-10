@@ -2,6 +2,7 @@ import 'dart:math' as math;
 
 import '../domain/imported_route.dart';
 import 'roundabout_exit_bucket.dart';
+import 'route_travel_alignment.dart';
 
 /// Which way a manoeuvre goes, as a symbol family.
 ///
@@ -376,11 +377,15 @@ class NavigationGuidancePlanner {
     required GeoPoint? position,
     required double progressMeters,
     double? minimumManeuverProgressMeters,
+    double? headingDegrees,
+    double? speedMetersPerSecond,
   }) => assess(
     route: route,
     position: position,
     progressMeters: progressMeters,
     minimumManeuverProgressMeters: minimumManeuverProgressMeters,
+    headingDegrees: headingDegrees,
+    speedMetersPerSecond: speedMetersPerSecond,
   ).guidance;
 
   NavigationGuidanceAssessment assess({
@@ -393,6 +398,16 @@ class NavigationGuidancePlanner {
     /// Manoeuvres at or behind it belonged to the junction the advisory route
     /// just completed and must not become the first instruction afterwards.
     double? minimumManeuverProgressMeters,
+
+    /// The rider's course and speed at [position], when the fix carries them.
+    ///
+    /// Near the line is not enough to be on the route: a rider heading across
+    /// it is on another road, and the next manoeuvre's left, right or straight
+    /// on describes an approach they are not on (#941). See
+    /// `route_travel_alignment.dart`; without a usable heading the decision is
+    /// distance alone, as it always was.
+    double? headingDegrees,
+    double? speedMetersPerSecond,
   }) {
     if (route == null) {
       return const NavigationGuidanceAssessment.noRoute();
@@ -432,7 +447,17 @@ class NavigationGuidancePlanner {
       );
     }
     final riderProjection = _project(position, path);
-    if (riderProjection.distanceMeters > maximumDistanceFromRouteMeters) {
+    if (riderProjection.distanceMeters > maximumDistanceFromRouteMeters ||
+        // Only worth the second pass outside the corridor where heading is
+        // never judged.
+        (riderProjection.distanceMeters > routeTravelCorridorMeters &&
+            routeTravel(
+                  position: position,
+                  path: path,
+                  headingDegrees: headingDegrees,
+                  speedMetersPerSecond: speedMetersPerSecond,
+                ) ==
+                RouteTravel.across)) {
       return const NavigationGuidanceAssessment(
         state: NavigationGuidanceState.offRoute,
         message: 'Off route — finding directions back.',
