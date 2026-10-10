@@ -23,6 +23,12 @@ from pydantic import ValidationError
 from sqlalchemy import text
 from sqlalchemy.orm import Session, sessionmaker
 
+from .client_build_gate import (
+    PLATFORM_ANDROID,
+    PLATFORM_IOS,
+    minimum_builds,
+    unmet_minimum_build,
+)
 from .config import Settings, get_settings
 from .crypto import CursorCodec, DataCipher, base64url, sha256, token_hash
 from .database import (
@@ -197,6 +203,13 @@ def create_app(
         "Internet relay synchronization duration",
         registry=registry,
     )
+    client_updates_required = Counter(
+        "ride_relay_client_update_required_total",
+        "Requests refused with update_required, by platform and reason, so a "
+        "minimum-build or protocol raise can be watched before it is tightened",
+        ("platform", "reason"),
+        registry=registry,
+    )
     join_code_requests = Counter(
         "ride_relay_join_code_requests_total",
         "Six-digit ride-code lookup requests",
@@ -365,6 +378,7 @@ def create_app(
                 "iOS": settings.ios_update_url,
                 "android": settings.android_update_url,
             },
+            minimumClientBuilds=configured_minimum_builds(),
         )
 
     def _heatmap_rate_limit(
@@ -586,6 +600,12 @@ def create_app(
             }
         )
 
+    def configured_minimum_builds() -> dict[str, int]:
+        return minimum_builds(
+            ios=settings.minimum_client_build_ios,
+            android=settings.minimum_client_build_android,
+        )
+
     def client_compatibility_error(request: Request, protocol: int) -> Response | None:
         platform = request.headers.get("x-tailendcharlie-platform", "")
         capabilities = {
@@ -600,7 +620,9 @@ def create_app(
             if platform == "android"
             else settings.update_url
         )
+        metric_platform = platform if platform in (PLATFORM_IOS, PLATFORM_ANDROID) else "other"
         if protocol < settings.minimum_client_protocol:
+            client_updates_required.labels(platform=metric_platform, reason="protocol").inc()
             return JSONResponse(
                 status_code=426,
                 content={
@@ -608,6 +630,22 @@ def create_app(
                     "message": "Update Tail End Charlie before joining or synchronizing.",
                     "updateUrl": update_url,
                     "minimumClientProtocol": settings.minimum_client_protocol,
+                },
+            )
+        if unmet := unmet_minimum_build(
+            platform,
+            request.headers.get("x-tailendcharlie-app-build"),
+            configured_minimum_builds(),
+        ):
+            client_updates_required.labels(platform=metric_platform, reason="build").inc()
+            return JSONResponse(
+                status_code=426,
+                content={
+                    "code": "update_required",
+                    "message": "This version of Tail End Charlie is no longer supported. "
+                    "Update it to join or synchronize rides.",
+                    "updateUrl": update_url,
+                    "minimumClientBuild": unmet,
                 },
             )
         if protocol > settings.protocol_version:
@@ -621,6 +659,7 @@ def create_app(
             )
         missing = sorted(set(settings.required_capabilities) - capabilities)
         if missing:
+            client_updates_required.labels(platform=metric_platform, reason="capability").inc()
             return JSONResponse(
                 status_code=426,
                 content={
