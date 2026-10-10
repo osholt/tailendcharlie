@@ -91,6 +91,8 @@ void main() {
     );
 
     expect(find.byKey(const Key('ride-plan-itinerary')), findsOneWidget);
+    // Another app is offered from the plan, not only after confirming (#895).
+    expect(find.byKey(const Key('ride-plan-open-with')), findsOneWidget);
     expect(find.byKey(const Key('ride-plan-stop-0')), findsOneWidget);
     expect(
       find.descendant(

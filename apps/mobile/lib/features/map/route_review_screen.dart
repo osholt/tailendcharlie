@@ -16,6 +16,7 @@ import '../../services/biker_place_catalogue.dart';
 import '../../services/discovery_layer_preferences.dart';
 import '../../services/motorcycle_discovery.dart';
 import '../../services/measurement_formatter.dart';
+import '../../services/navigation_export.dart';
 import '../../services/navigation_guidance.dart';
 import '../../services/ride_plan_router.dart';
 import '../../services/road_routing.dart';
@@ -28,6 +29,7 @@ import '../../services/route_waypoint_editor.dart';
 import 'maneuver_list_screen.dart';
 import 'place_search_sheet.dart';
 import 'resolved_route_map_preview.dart';
+import 'navigation_export_sheet.dart';
 import 'ride_plan_panels.dart';
 import 'route_preferences_panel.dart';
 import 'sheet_close_button.dart';
@@ -56,6 +58,7 @@ class RidePlanEditing {
     this.confirmLabel = defaultConfirmLabel,
     this.replanOnOpen = false,
     this.preferencesMemory = const RoutePreferencesMemory(),
+    this.exportCoordinator = const NavigationExportCoordinator(),
   });
 
   final RidePlan plan;
@@ -89,6 +92,10 @@ class RidePlanEditing {
   /// Where the confirmed route options are remembered for the next new plan
   /// (#894). Null keeps nothing.
   final RoutePreferencesMemory? preferencesMemory;
+
+  /// Hands the planned route to another navigation app or a GPX file from
+  /// beside the confirm button (#895). Null offers no hand-off.
+  final NavigationExportCoordinator? exportCoordinator;
 }
 
 /// A confirmed plan and the route it was routed to.
@@ -493,6 +500,38 @@ class _RouteReviewScreenState extends State<RouteReviewScreen> {
       if (mounted && generation == _reshapeGeneration) {
         setState(() => _reshaping = false);
       }
+    }
+  }
+
+  bool _exporting = false;
+
+  /// "Open route with": the plan's route, as it is on screen, to another
+  /// navigation app or a GPX file (#895). It used to be reachable only after
+  /// confirming, from the map's "Navigate or export route".
+  Future<void> _openRouteWith() async {
+    final coordinator = widget.planning?.exportCoordinator;
+    if (coordinator == null || _exporting) return;
+    final target = await NavigationExportSheet.show(context);
+    if (target == null || !mounted) return;
+    setState(() => _exporting = true);
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    final renderObject = context.findRenderObject();
+    final origin = renderObject is RenderBox && renderObject.hasSize
+        ? renderObject.localToGlobal(Offset.zero) & renderObject.size
+        : null;
+    try {
+      final result = await coordinator.export(
+        target,
+        route,
+        sharePositionOrigin: origin,
+      );
+      messenger?.showSnackBar(SnackBar(content: Text(result.message)));
+    } on Object catch (error) {
+      messenger?.showSnackBar(
+        SnackBar(content: Text('Could not open the route: $error')),
+      );
+    } finally {
+      if (mounted) setState(() => _exporting = false);
     }
   }
 
@@ -1333,6 +1372,28 @@ class _RouteReviewScreenState extends State<RouteReviewScreen> {
                         : () =>
                               Navigator.of(context).pop(RouteReviewAction.edit),
                     icon: const Icon(Icons.edit_location_alt_outlined),
+                  ),
+                // Another app or a GPX file, straight from the plan (#895).
+                // It hands over the route on screen and leaves the plan open,
+                // so the rider can still confirm it here, or not.
+                if (plan != null && widget.planning!.exportCoordinator != null)
+                  TextButton.icon(
+                    key: const Key('ride-plan-open-with'),
+                    onPressed:
+                        _reshapeQueued ||
+                            _reshaping ||
+                            _generatingAlternative ||
+                            _exporting ||
+                            !_planRouted
+                        ? null
+                        : () => unawaited(_openRouteWith()),
+                    icon: _exporting
+                        ? const SizedBox.square(
+                            dimension: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.ios_share_outlined),
+                    label: const Text('Open with'),
                   ),
                 TextButton.icon(
                   key: const Key('confirm-reviewed-route'),

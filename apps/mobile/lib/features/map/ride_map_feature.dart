@@ -7200,6 +7200,9 @@ class _RideMapScreenState extends State<RideMapScreen>
         confirmLabel: (_) => widget.rideStarted ? 'Update route' : 'Use route',
         replanOnOpen: replanOnOpen,
         preferencesMemory: _preferencesMemory,
+        exportCoordinator:
+            widget.navigationExportCoordinator ??
+            const NavigationExportCoordinator(),
       ),
       route: editing,
       distanceUnit: widget.distanceUnit,

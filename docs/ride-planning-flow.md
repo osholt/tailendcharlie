@@ -247,7 +247,7 @@ change-route sheet), below Edit route.
 | E14 | Onboarding Create a ride | **Merged** into Ride with others. | 1 |
 | E15 | Web-planner code prompts | **Merged** into one "Recall a planned route" action feeding review. | 1 |
 | E16 | GPX shaping waypoints | **Fixed** in the plan model (never listed as stops). Routing semantics are #839's. | 1 |
-| — | `DestinationRouteSheet` form | **Removed**; its preferences move to the Plan surface's Route options. "Open route with" stays as "Navigate or export route" after confirming. | 1 |
+| — | `DestinationRouteSheet` form | **Removed**; its preferences move to the Plan surface's Route options. "Open route with" stays as "Navigate or export route" after confirming, and is offered beside the Plan surface's confirm button as **Open with** (#895), which hands over the route on screen and leaves the plan open. | 1 |
 | — | `_RideForm` create mode (Solo/Group, ride name, plan code) | **Removed** once nothing reaches it; its join mode stays. Solo becomes free roam; group becomes Ride with others; plan codes become Recall a planned route. The ride name defaults to the route name. | 1 |
 | — | Solo *rides* (`RideCoordinationMode.solo` sessions) | **Kept** for CarPlay and restored sessions; the phone no longer creates them. | 3 |
 

@@ -10,6 +10,7 @@ import 'package:ride_relay/services/basemap_configuration.dart';
 import 'package:ride_relay/services/biker_place_catalogue.dart';
 import 'package:ride_relay/services/discovery_layer_preferences.dart';
 import 'package:ride_relay/services/motorcycle_discovery.dart';
+import 'package:ride_relay/services/navigation_export.dart';
 import 'package:ride_relay/services/ride_plan_router.dart';
 import 'package:ride_relay/services/road_routing.dart';
 import 'package:ride_relay/services/route_preferences_memory.dart';
@@ -374,6 +375,53 @@ void main() {
     );
   });
 
+  testWidgets('the plan opens in another app without being confirmed', (
+    tester,
+  ) async {
+    final shares = _RecordingShare();
+    final harness = _Harness(location: _here);
+    await harness.open(
+      tester,
+      RidePlan.toDestination(_townPlace),
+      exportCoordinator: NavigationExportCoordinator(
+        launcher: const _NoLauncher(),
+        shareGateway: shares,
+      ),
+    );
+
+    // Beside the confirm button (#895).
+    await tester.tap(find.byKey(const Key('ride-plan-open-with')));
+    await tester.pumpAndSettle();
+    // The first app offered; with no app to open, its GPX is shared instead.
+    await tester.tap(find.text(NavigationTarget.googleMaps.label));
+    await tester.pumpAndSettle();
+
+    expect(shares.targets, [NavigationTarget.googleMaps]);
+    expect(shares.routes.single.waypoints.map((point) => point.name), [
+      'Start',
+      'Town',
+    ]);
+    // The plan is still open, and still the rider's to confirm or not.
+    expect(find.byKey(const Key('ride-plan-itinerary')), findsOneWidget);
+    expect(harness.outcome, isNull);
+    await harness.confirm(tester);
+    expect(harness.outcome?.route.waypoints.last.name, 'Town');
+  });
+
+  testWidgets('a plan with no route yet has nothing to open elsewhere', (
+    tester,
+  ) async {
+    final harness = _Harness(location: null);
+    await harness.open(tester, RidePlan.toDestination(_townPlace));
+
+    expect(
+      tester
+          .widget<TextButton>(find.byKey(const Key('ride-plan-open-with')))
+          .onPressed,
+      isNull,
+    );
+  });
+
   testWidgets('a confirmed route reopens with its stops and can change', (
     tester,
   ) async {
@@ -516,6 +564,8 @@ class _Harness {
     ImportedRoute? route,
     String? confirmLabel,
     BasemapConfiguration basemapConfiguration = const BasemapConfiguration(),
+    NavigationExportCoordinator exportCoordinator =
+        const NavigationExportCoordinator(),
   }) async {
     final router = RidePlanRouter(routingService: routing);
     await tester.pumpWidget(
@@ -541,6 +591,7 @@ class _Harness {
                       return position.value;
                     },
                     offerCoordinationChoice: offerCoordinationChoice,
+                    exportCoordinator: exportCoordinator,
                     confirmLabel: (plan) =>
                         confirmLabel ??
                         (plan.isGroup ? 'Create group ride' : 'Start'),
@@ -640,4 +691,26 @@ class _FakeSearch implements DestinationSearchService {
     queries.add(query);
     return results[query.toLowerCase()] ?? const [];
   }
+}
+
+class _RecordingShare implements GpxShareGateway {
+  final routes = <ImportedRoute>[];
+  final targets = <NavigationTarget>[];
+
+  @override
+  Future<void> share({
+    required ImportedRoute route,
+    required NavigationTarget target,
+    Rect? sharePositionOrigin,
+  }) async {
+    routes.add(route);
+    targets.add(target);
+  }
+}
+
+class _NoLauncher implements ExternalUriLauncher {
+  const _NoLauncher();
+
+  @override
+  Future<bool> open(Uri uri) async => false;
 }
