@@ -19,12 +19,12 @@ side of the road confirmed by hand:
 
 - **Castle Combe to Tetbury, Cotswolds** (UK, left-hand traffic, 24.5 km). A
   public-road route from a B-road junction near Castle Combe to Tetbury town
-  centre, with ten turns, forks and ends of road to drop a bike at. It begins
-  and ends at public places, not at anyone's home or ride start. Road geometry
-  is from OpenStreetMap (ODbL), routed through the public OSRM server on
-  10 October 2026; that server reports right-hand traffic for UK roads, so the
-  side is stated in the bundled file instead of being read from the response.
-  A UK-configured phone keeps miles.
+  centre, with ten decision points (nine turns and an end of road) to drop a
+  bike at. It begins and ends at public places, not at anyone's home or ride
+  start. Road geometry is from OpenStreetMap (ODbL), routed through the public
+  OSRM server on 10 October 2026; that server reports right-hand traffic for UK
+  roads, so the side is stated in the bundled file instead of being read from
+  the response. A UK-configured phone keeps miles.
 - **Argentat to Saint-Privat, France** (right-hand traffic, 17.9 km). A 466-point
   excerpt of the supplied Day 3 route to Puy Mary along the D 980, ending at
   the right-hand roundabout at Saint-Privat. A UK-configured phone switches its

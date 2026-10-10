@@ -51,7 +51,7 @@ abstract final class DemoRoutes {
     id: 'cotswolds-castle-combe-tetbury',
     title: 'Castle Combe to Tetbury — Cotswolds',
     region: 'United Kingdom · left-hand traffic',
-    summary: '24.5 km of B-roads and market-town streets',
+    summary: '24.5 km of country roads into a market town',
     gpxAsset: 'assets/demo_route_cotswolds.gpx',
     maneuversAsset: 'assets/demo_route_cotswolds_maneuvers.json',
   );
