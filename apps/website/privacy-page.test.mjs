@@ -52,6 +52,24 @@ test("an un-ended ride is kept from the last synchronisation, not from creation"
   assert.doesNotMatch(text, /72 hours from creation/);
 });
 
+test("saved places and search history are described as staying on the phone", () => {
+  assert.match(text, /Places you have chosen in the app's destination search/);
+  assert.match(text, /the last ten, newest first, which you can clear from the search/);
+  assert.match(text, /save as Home , Work or under a name of your own/);
+  assert.match(text, /rename, move or delete from the search/);
+  assert.match(text, /no other rider and no relay sees them/);
+  assert.match(text, /not written to the diagnostics log or included in an exported ride/);
+  assert.match(text, /Typing in the search narrows this list on your phone and sends nothing/);
+  assert.match(text, /a search is sent to the search provider only when you submit it/);
+});
+
+test("using a saved place in a route says its coordinates go to the routing service", () => {
+  assert.match(
+    text,
+    /used like any other place, so its coordinates go to the routing service to calculate the route/,
+  );
+});
+
 test("the age rule is 17 and says so on the page", () => {
   assert.match(text, /Tail End Charlie is for riders aged 17 or over/);
   assert.match(text, /not directed at, or intended for use by, anyone under 17/);
@@ -88,4 +106,10 @@ test("global heatmap contribution is opt-in, asked at setup, and nothing is shar
   assert.match(text, /First setup asks, with no option pre-selected, and skipping it means Never/);
   assert.match(text, /asked once on the home map and shares nothing until you answer/);
   assert.doesNotMatch(text, /Contribution of completed rides is on by default/);
+});
+
+test("fuel prices are requested by coarse map area with no rider identifier (#951)", () => {
+  assert.match(text, /as boxes on a fixed grid of about 55 by 50 kilometres/);
+  assert.match(text, /no rider, ride or device identifier, and the relay does not store it/);
+  assert.match(text, /neither receives anything from your phone/);
 });

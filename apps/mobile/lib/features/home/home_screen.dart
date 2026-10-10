@@ -1082,6 +1082,7 @@ class _HomeScreenState extends State<HomeScreen> {
       context,
       searchService: _destinationPlanner.searchService,
       hasPosition: _position.value != null,
+      currentPoint: _position.value,
       fuelSearchLabel: _fuelSearchPreference.searchLabel,
     );
     if (outcome == null || !mounted) return;
@@ -1151,10 +1152,11 @@ class _HomeScreenState extends State<HomeScreen> {
       context,
       planning: RidePlanEditing(
         plan: RidePlan.toDestination(
-          RidePlanPlace.fromSearchResult(
-            label: choice.label,
-            point: choice.point,
-          ),
+          choice.place ??
+              RidePlanPlace.fromSearchResult(
+                label: choice.label,
+                point: choice.point,
+              ),
           preferences: preferences,
         ),
         route: (plan, location) => _planRouter.route(

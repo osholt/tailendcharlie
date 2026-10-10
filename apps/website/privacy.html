@@ -191,6 +191,21 @@
         <li>Your distance-unit and display preferences.</li>
         <li>Imported or recorded GPX route files you haven't shared.</li>
         <li>
+          Places you have chosen in the app's destination search, so the search
+          can show them again: the last ten, newest first, which you can clear
+          from the search. And any places you save as <strong>Home</strong>,
+          <strong>Work</strong> or under a name of your own, with the address or
+          coordinates they point to, which you can rename, move or delete from
+          the search. They are not part of a ride, so no other rider and no
+          relay sees them, and they are not written to the diagnostics log or
+          included in an exported ride. Typing in the search narrows this list
+          on your phone and sends nothing; a search is sent to the search
+          provider only when you submit it. When you choose one of these places
+          as a start, stop or destination it is used like any other place, so
+          its coordinates go to the routing service to calculate the route, as
+          described under Who we share information with.
+        </li>
+        <li>
           The record of alerts raised during a ride (the one-tap
           <strong>Report</strong> button, or a speed-camera or police report),
           kept with the completed ride in your Ride Library with the time, the
@@ -363,6 +378,19 @@
         does not store the lookup requests. The provider receives your IP
         address and standard connection information. Mapped limits are not live
         and can be incomplete or out of date, so roadside signs always apply.
+      </p>
+
+      <p id="fuel-prices">
+        The mobile app draws fuel stations and chargers from a map layer
+        bundled with the app, and <strong>Navigate to fuel</strong> ranks them
+        on your phone; neither sends anything. Where the Tail End Charlie relay
+        offers fuel prices, the app asks it for the prices inside the part of
+        the map you are viewing, as boxes on a fixed grid of about 55 by 50
+        kilometres. The request carries the app's version and platform but no
+        rider, ride or device identifier, and the relay does not store it. The
+        relay collects prices itself from the UK Government's Fuel Finder
+        scheme and, where enabled, France's prix-carburants open data; neither
+        receives anything from your phone.
       </p>
 
       <h3>Device identifier</h3>

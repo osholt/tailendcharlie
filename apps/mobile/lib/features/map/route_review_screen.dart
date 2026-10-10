@@ -30,6 +30,7 @@ import '../../services/fuel_stop_finder.dart';
 import 'fuel_stop_flow.dart';
 import 'fuel_stop_sheet.dart';
 import 'maneuver_list_screen.dart';
+import 'place_memory_panel.dart';
 import 'place_search_sheet.dart';
 import 'resolved_route_map_preview.dart';
 import 'navigation_export_sheet.dart';
@@ -574,6 +575,7 @@ class _RouteReviewScreenState extends State<RouteReviewScreen> {
       title: 'Start from',
       offerCurrentLocation: true,
       currentLocationKnown: _currentLocation != null,
+      currentPoint: _currentLocation,
     );
     if (choice == null || !mounted) return;
     switch (choice) {
@@ -589,9 +591,21 @@ class _RouteReviewScreenState extends State<RouteReviewScreen> {
       context,
       searchService: widget.planning!.searchService,
       title: 'Where to?',
+      currentPoint: _currentLocation,
     );
     if (choice is! PlaceSearchPlace || !mounted) return;
     await _replan(plan.withDestination(choice.place));
+  }
+
+  /// Saves a place on the plan - a stop, the destination, a start the rider
+  /// chose, or a pin they dropped by dragging - as Home, Work or a name of their
+  /// own (#937). Stays on the phone.
+  Future<void> _savePlace(RidePlanPlace place) async {
+    final saved = await PlaceMemoryActions.saveOnce(context, place);
+    if (saved == null || !mounted) return;
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text('Saved as ${saved.name}')));
   }
 
   Future<void> _addStop(RidePlan plan) async {
@@ -599,6 +613,7 @@ class _RouteReviewScreenState extends State<RouteReviewScreen> {
       context,
       searchService: widget.planning!.searchService,
       title: 'Add a stop',
+      currentPoint: _currentLocation,
     );
     if (choice is! PlaceSearchPlace || !mounted) return;
     await _replan(
@@ -1773,6 +1788,7 @@ class _RouteReviewScreenState extends State<RouteReviewScreen> {
                       onChangeDestination: () =>
                           unawaited(_changeDestination(plan)),
                       onAddStop: () => unawaited(_addStop(plan)),
+                      onSavePlace: (place) => unawaited(_savePlace(place)),
                       onMoveStop: (from, to) => unawaited(
                         _replan(
                           plan.moveStop(

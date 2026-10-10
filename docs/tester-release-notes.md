@@ -38,6 +38,83 @@ permissions by design.
 - ...
 ```
 
+## iOS build 103 / Android build 103 — 1.0.1 — October 2026
+
+This is the build the open beta starts with. It covers the 10 October ride
+diagnostics and the planning screen work started in build 102.
+
+### What to test
+
+1. Ride a Where To route and leave it on purpose. A new line back to the route
+   should appear within seconds.
+2. Listen for the robot voice. It should no longer replace the natural voice
+   when you speed up or slow down near a junction.
+3. Pinch in and out quickly over an area you have already viewed. The map
+   should redraw at once, not tile by tile.
+4. Try **Navigate to fuel** (or **Navigate to charger**) from Where to?, after
+   choosing your fuel in **Settings**.
+5. Save **Home** and **Work** in Where to?, and check that recent searches
+   appear and can be cleared.
+
+### Navigation
+
+- Where To now reroutes you back onto the route when you leave it.
+- Prompts are no longer dropped when you slow down just before a junction, and
+  the natural voice is kept when the distance changes while a prompt is being
+  prepared.
+- A rider crossing the route at a junction no longer gets that route's
+  directions. Directions are for riders travelling along the route.
+- The map zooms in closer around town and further out at speed.
+- Start, stop and end markers stay upright as the map turns.
+
+### Planning and search
+
+- Where to? remembers your last ten destinations and lets you save **Home**,
+  **Work** and places with your own names. These stay on your phone.
+- On the Plan screen, drag stops to reorder them, or drag a stop's pin on the
+  map. Rename a ride after creating it. Your last route options are remembered.
+- Editing a route mid-ride re-plans it from where you are now.
+- **Open with** sits beside the confirm button. Imported GPX tracks open on the
+  Plan screen and keep their line.
+- A solo leg and the group ride it joined are filed as one ride in **My rides**.
+
+### Fuel and charging (new)
+
+- Fuel stations and chargers are drawn on the map, for your fuel only. Choose
+  it in **Settings → Fuel**.
+- **Navigate to fuel** or **Navigate to charger** picks a station nearby or
+  ahead on your route, balancing detour and price.
+- Prices appear on the pins with the time they were reported once the price
+  service is switched on. Until then the pins show no price. Chargers show no
+  tariffs or live availability.
+
+### Group rides
+
+- Leader messages and alerts are sent as notifications to phones with the app
+  in the background, once notifications are enabled for this build.
+- On CarPlay and Android Auto, the leader and Tail End Charlie are drawn as
+  stars.
+
+### Demo and replay
+
+- The demo ride's start screen is now one slim **Start ride** bar.
+- Choose the demo route, UK (Cotswolds) or France, and the app remembers it.
+- A finished ride can be replayed from **My rides**: your own track, in time.
+
+### Heatmap and privacy
+
+- The first setup asks whether to add your finished rides to the global
+  heatmap. Nothing is shared until you choose. The global heatmap is now pink
+  to crimson.
+- The privacy page says what the fuel price requests send: the map area, never
+  who you are.
+
+### Known limitations
+
+- Fuel prices stay off until the price service is registered and switched on.
+- Group replay (other riders' tracks) is not available yet.
+- Android Auto is not in the open beta.
+
 ## iOS build 102 / Android build 102 — 1.0.1 — October 2026
 
 Everything here comes from the 4 October ride to Penelope's Cafe and the tester

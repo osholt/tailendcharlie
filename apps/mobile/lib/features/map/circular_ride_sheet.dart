@@ -147,6 +147,7 @@ class _CircularRideSheetState extends State<CircularRideSheet> {
       title: 'Start and finish at',
       offerCurrentLocation: true,
       currentLocationKnown: widget.start != null,
+      currentPoint: widget.start,
     );
     if (choice == null || !mounted) return;
     setState(() {
