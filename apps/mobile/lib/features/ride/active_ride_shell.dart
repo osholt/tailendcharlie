@@ -20,6 +20,7 @@ import '../../controllers/observer_access_controller.dart';
 import '../../controllers/pre_start_presence_controller.dart';
 import '../../controllers/ride_controller.dart';
 import '../../controllers/ride_location_lifecycle_controller.dart';
+import '../../controllers/demo_route_choice_controller.dart';
 import '../../controllers/mini_map_display_controller.dart';
 import '../../controllers/route_progress_display_controller.dart';
 import '../../controllers/road_rating_controller.dart';
@@ -124,6 +125,7 @@ import '../settings/unit_settings_sheet.dart';
 import 'ice_share_inbox_sheet.dart';
 import 'location_sharing_widgets.dart';
 import '../situational_awareness/situational_awareness_screen.dart';
+import '../simulation/demo_route_picker.dart';
 import '../simulation/ride_simulation_screen.dart';
 import 'end_ride_confirmation.dart';
 import 'ended_ride_screen.dart';
@@ -164,6 +166,35 @@ List<RoadRouteManeuver> simulationMarkerManeuvers(
 ) => maneuvers
     .where((maneuver) => maneuver.requiresSecondBikeDrop)
     .toList(growable: false);
+
+/// The junctions Ride Lab marks on a bundled demo [route], read from that same
+/// route's own decisions (#934), or null when [route] is not one of the bundled
+/// demos or its file is damaged (the caller then falls back to the GPX
+/// waypoints, a less detailed but still valid set).
+///
+/// Each demo reads *its own* decisions: a Cotswolds simulation marking the
+/// junctions of the French route would put every marker hundreds of miles away.
+@visibleForTesting
+Future<List<awareness_geo.GeoPoint>?> bundledDemoJunctions(
+  route_domain.ImportedRoute? route,
+) async {
+  final bundled = DemoRoutes.forSourceFileName(route?.sourceFileName);
+  if (bundled == null) return null;
+  try {
+    return simulationMarkerManeuvers(
+          await BundledDemoRouteLoader(bundled).loadManeuvers(),
+        )
+        .map(
+          (maneuver) => awareness_geo.GeoPoint(
+            latitude: maneuver.position.latitude,
+            longitude: maneuver.position.longitude,
+          ),
+        )
+        .toList(growable: false);
+  } on FormatException {
+    return null;
+  }
+}
 
 /// The only thing an observer link publishes.
 ///
@@ -319,6 +350,7 @@ class ActiveRideShell extends StatefulWidget {
     required this.speedLimitDisplay,
     this.routeProgressDisplay,
     this.miniMapDisplay,
+    this.demoRouteChoice,
     this.completedRideStore,
     this.globalRideHeatmap,
     this.pushTokenSource,
@@ -365,6 +397,10 @@ class ActiveRideShell extends StatefulWidget {
   /// Whether to draw the group mini-map; the rider's own choice, and failing
   /// that their role (#850). Null draws it whenever there is a group to show.
   final MiniMapDisplayController? miniMapDisplay;
+
+  /// Which bundled demo route a Ride Lab simulation rides, and remembers (#934).
+  /// Null where it is not wired, which rides the default route.
+  final DemoRouteChoiceController? demoRouteChoice;
   final CompletedRideStore? completedRideStore;
   final GlobalRideHeatmapController? globalRideHeatmap;
   final PushTokenSource? pushTokenSource;
@@ -1474,6 +1510,10 @@ class _ActiveRideShellState extends State<ActiveRideShell>
 
   bool get _isSimulation => widget.rideController.session?.isSimulation == true;
 
+  /// The bundled route this simulation rides (#934): the rider's last choice.
+  DemoRoute get _demoRoute =>
+      widget.demoRouteChoice?.current ?? DemoRoutes.fallback;
+
   /// The ride this shell was opened for. The app keys each shell by ride.
   String? _rideId;
 
@@ -1659,7 +1699,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
     var publishStoredLeaderRoute = false;
     if (_isSimulation) {
       try {
-        route = await const BundledDemoRouteLoader().load();
+        route = await BundledDemoRouteLoader(_demoRoute).load();
         _simulationRouteStore = InMemoryRouteStore(route);
         _warnings.add(
           'Ride Lab is isolated: device GPS, internet relay and nearby radios '
@@ -2488,34 +2528,17 @@ class _ActiveRideShellState extends State<ActiveRideShell>
 
   Future<List<awareness_geo.GeoPoint>> _simulationJunctions(
     route_domain.ImportedRoute? route,
-  ) async {
-    if (route?.sourceFileName == 'demo_route.gpx') {
-      try {
-        return simulationMarkerManeuvers(
-              await const BundledDemoRouteLoader().loadManeuvers(),
-            )
-            .map(
-              (maneuver) => awareness_geo.GeoPoint(
-                latitude: maneuver.position.latitude,
-                longitude: maneuver.position.longitude,
-              ),
-            )
-            .toList(growable: false);
-      } on FormatException {
-        // Keep the demo usable if a local asset is damaged. GPX waypoints are
-        // a less detailed but still valid fallback for the simulation.
-      }
-    }
-    return route?.waypoints
-            .map(
-              (waypoint) => awareness_geo.GeoPoint(
-                latitude: waypoint.point.latitude,
-                longitude: waypoint.point.longitude,
-              ),
-            )
-            .toList(growable: false) ??
-        const <awareness_geo.GeoPoint>[];
-  }
+  ) async =>
+      await bundledDemoJunctions(route) ??
+      route?.waypoints
+          .map(
+            (waypoint) => awareness_geo.GeoPoint(
+              latitude: waypoint.point.latitude,
+              longitude: waypoint.point.longitude,
+            ),
+          )
+          .toList(growable: false) ??
+      const <awareness_geo.GeoPoint>[];
 
   void _onSimulationVisualChanged() {
     if (!mounted || !_isSimulation) return;
@@ -4750,6 +4773,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
         'ride-map:${_appliedAuthoritativeRouteRevision ?? 'local'}:'
         '${_activeRoute?.id ?? 'none'}',
       ),
+      demoRouteChoice: widget.demoRouteChoice,
       currentPosition: _mapPosition,
       completedRideStore: widget.completedRideStore,
       globalRideHeatmap: widget.globalRideHeatmap,
@@ -6432,6 +6456,10 @@ class _ActiveRideShellState extends State<ActiveRideShell>
       onToggleMarker: _toggleSimulationMarker,
       onRideOff: _rideOffSimulationMarker,
       onRiderCountChanged: _restartSimulationWithRiderCount,
+      demoRouteTitle: _demoRoute.title,
+      onChooseDemoRoute: widget.demoRouteChoice == null
+          ? null
+          : _chooseSimulationRoute,
       markerPassCount: widget.rideController.markerPassCount,
       tecPassedMarker: widget.rideController.tecPassedCurrentMarker,
     );
@@ -6502,6 +6530,19 @@ class _ActiveRideShellState extends State<ActiveRideShell>
   }
 
   Future<void> _restartSimulation() async {
+    _simulationController?.pause();
+    await widget.rideController.restartSimulationRide();
+  }
+
+  /// Offers the bundled routes and, on a different pick, starts a clean
+  /// simulation on it (#934). The shell is rebuilt for the new ride, which is
+  /// what loads the route; nothing here swaps a route under a running one.
+  Future<void> _chooseSimulationRoute() async {
+    final choice = widget.demoRouteChoice;
+    if (choice == null) return;
+    final picked = await showDemoRoutePicker(context, current: choice.current);
+    if (picked == null || picked.id == choice.current.id || !mounted) return;
+    await choice.choose(picked);
     _simulationController?.pause();
     await widget.rideController.restartSimulationRide();
   }

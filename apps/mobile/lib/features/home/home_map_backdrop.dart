@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../../controllers/demo_route_choice_controller.dart';
 import '../../controllers/foreground_location_controller.dart';
 import '../../controllers/global_ride_heatmap_controller.dart';
 import '../../controllers/map_style_mode_controller.dart';
@@ -55,6 +56,7 @@ class HomeMapBackdrop extends StatefulWidget {
     this.spokenGuidance,
     this.rideDiagnostics,
     this.enableNativeServices = true,
+    this.demoRouteChoice,
     this.locationController,
     this.bottomInset = 0,
     this.position,
@@ -146,6 +148,9 @@ class HomeMapBackdrop extends StatefulWidget {
   /// False in widget tests and on any build without the platform plugins, where
   /// the map would be a spinner and the location plugin is not answering.
   final bool enableNativeServices;
+
+  /// Which bundled demo route the map's "Load demo route" offers (#934).
+  final DemoRouteChoiceController? demoRouteChoice;
 
   /// Supplied by tests. Production builds their own over [DeviceLocationSource].
   final ForegroundLocationController? locationController;
@@ -703,6 +708,7 @@ class _HomeMapBackdropState extends State<HomeMapBackdrop>
             distanceUnit: widget.distanceUnit,
             onMapStyleResolved: widget.onMapStyleResolved,
             hostChrome: chrome,
+            demoRouteChoice: widget.demoRouteChoice,
             // No ride, so no group route and no leader to defer to: a route
             // built here is this rider's own. This used to pass
             // `canEditRoute: false`, borrowing the flag that means "not the

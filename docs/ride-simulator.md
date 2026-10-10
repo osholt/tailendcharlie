@@ -6,24 +6,38 @@ without requiring several phones or physical travel.
 ## Start a simulation
 
 1. Leave any active ride.
-2. Select **Try a simulated ride** on the start screen.
+2. Select **Try a simulated ride** on the start screen and choose a demo
+   route. The last choice is remembered and marked next time.
 3. Press **Start ride** in the slim bar above the map. It is the only control
    a simulated ride shows before the start: no ride code, roster or route
    panel (those stay on a real ride's pre-start screen). It is the same height
    in portrait and landscape, so the map keeps over four fifths of the screen.
 4. Use **Map** to watch the ride or **Ride Lab** to control it.
 
-The bundled 17.9 km GPX from Argentat-sur-Dordogne to Saint-Privat is loaded
-automatically. Its 466-point track is an excerpt of the supplied Day 3 route to
-Puy Mary and follows the D 980, including the right-hand roundabout at
-Saint-Privat. The Ride Lab fleet picker supports four to thirty synthetic bikes.
-It always keeps a lead, a second bike, Alex for the off-route scenario, and a
-Tail End Charlie; any extra riders are distributed between them.
+Two routes are bundled, each with its own offline navigation decisions and a
+side of the road confirmed by hand:
 
-Because Ride Lab now runs on a real French track, a UK-configured phone switches
-its automatic ride distances to kilometres. The bundled route decisions are
-country-confirmed as right-hand traffic, so the simulator also covers French
-roundabout guidance without a routing request.
+- **Castle Combe to Tetbury, Cotswolds** (UK, left-hand traffic, 24.5 km). A
+  public-road route from a B-road junction near Castle Combe to Tetbury town
+  centre, with ten turns, forks and ends of road to drop a bike at. It begins
+  and ends at public places, not at anyone's home or ride start. Road geometry
+  is from OpenStreetMap (ODbL), routed through the public OSRM server on
+  10 October 2026; that server reports right-hand traffic for UK roads, so the
+  side is stated in the bundled file instead of being read from the response.
+  A UK-configured phone keeps miles.
+- **Argentat to Saint-Privat, France** (right-hand traffic, 17.9 km). A 466-point
+  excerpt of the supplied Day 3 route to Puy Mary along the D 980, ending at
+  the right-hand roundabout at Saint-Privat. A UK-configured phone switches its
+  automatic ride distances to kilometres on it, and the simulator covers French
+  roundabout guidance without a routing request.
+
+The choice is offered from **Try a simulated ride**, from the **Ride Lab** tab
+(which starts a clean simulation on the new route) and from the map's **Load
+demo route**. Which one a first-time rider gets is the Cotswolds route.
+
+The Ride Lab fleet picker supports four to thirty synthetic bikes. It always
+keeps a lead, a second bike, Alex for the off-route scenario, and a Tail End
+Charlie; any extra riders are distributed between them.
 
 Ride Lab can:
 

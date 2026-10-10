@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import 'package:crypto/crypto.dart';
 import 'package:share_plus/share_plus.dart';
 
+import '../simulation/demo_route_picker.dart';
 import '../../controllers/app_update_gate_controller.dart';
 import '../../controllers/distance_unit_controller.dart';
 import '../../controllers/global_ride_heatmap_controller.dart';
@@ -14,6 +15,7 @@ import '../../controllers/completed_rides_controller.dart';
 import '../../controllers/map_style_mode_controller.dart';
 import '../../controllers/ride_code_preference_controller.dart';
 import '../../controllers/ride_controller.dart';
+import '../../controllers/demo_route_choice_controller.dart';
 import '../../controllers/mini_map_display_controller.dart';
 import '../../controllers/route_progress_display_controller.dart';
 import '../../controllers/rider_profile_controller.dart';
@@ -112,6 +114,7 @@ class HomeScreen extends StatefulWidget {
     required this.speedLimitDisplay,
     this.routeProgressDisplay,
     this.miniMapDisplay,
+    this.demoRouteChoice,
     required this.recordedRoutes,
     required this.completedRides,
     this.globalRideHeatmap,
@@ -139,6 +142,10 @@ class HomeScreen extends StatefulWidget {
   final SpeedLimitDisplayController speedLimitDisplay;
   final RouteProgressDisplayController? routeProgressDisplay;
   final MiniMapDisplayController? miniMapDisplay;
+
+  /// Which bundled demo route a simulated ride and the map's demo action use
+  /// (#934). Null in tests that do not exercise the choice.
+  final DemoRouteChoiceController? demoRouteChoice;
   final RecordedRouteStore recordedRoutes;
   final CompletedRidesController completedRides;
   final GlobalRideHeatmapController? globalRideHeatmap;
@@ -690,6 +697,7 @@ class _HomeScreenState extends State<HomeScreen> {
             recordedRouteStore: widget.recordedRoutes,
             globalRideHeatmap: widget.globalRideHeatmap,
             enableNativeServices: widget.enableNativeServices,
+            demoRouteChoice: widget.demoRouteChoice,
             bottomInset: 0,
             position: _position,
             // The searched destination, reviewed and activated by the map
@@ -774,8 +782,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   onSelected:
                       !widget.controller.busy &&
                           widget.onRetryRestoration == null
-                      ? () =>
-                            unawaited(widget.controller.createSimulationRide())
+                      ? () => unawaited(_startSimulation())
                       : null,
                 ),
               ],
@@ -925,6 +932,22 @@ class _HomeScreenState extends State<HomeScreen> {
         context,
       ).showSnackBar(SnackBar(content: Text(error.message)));
     }
+  }
+
+  /// Asks which demo route to ride, remembers it, then starts the simulation
+  /// (#934). Dismissing the sheet starts nothing.
+  Future<void> _startSimulation() async {
+    final choice = widget.demoRouteChoice;
+    if (choice != null) {
+      final picked = await showDemoRoutePicker(
+        context,
+        current: choice.current,
+      );
+      if (picked == null) return;
+      await choice.choose(picked);
+      if (!mounted) return;
+    }
+    await widget.controller.createSimulationRide();
   }
 
   Future<void> _openSettings() => UnitSettingsSheet.show(

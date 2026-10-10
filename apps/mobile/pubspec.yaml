@@ -90,6 +90,8 @@ flutter:
   assets:
     - assets/demo_route.gpx
     - assets/demo_route_maneuvers.json
+    - assets/demo_route_cotswolds.gpx
+    - assets/demo_route_cotswolds_maneuvers.json
     - assets/biker_places.json
     - assets/discovery_catalogue.geojson
     - assets/fixed_speed_cameras.geojson
