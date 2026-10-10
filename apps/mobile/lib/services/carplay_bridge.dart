@@ -10,6 +10,7 @@ import '../domain/rider_color.dart';
 import '../domain/ride_role.dart';
 import '../domain/ride_session.dart';
 import '../domain/rider_location.dart';
+import '../domain/rider_marker_outline.dart';
 import '../domain/route_alert.dart';
 import '../features/map/motorcycle_icon.dart';
 import 'android_auto_navigation_projection.dart';
@@ -562,6 +563,7 @@ class CarPlayBridge {
     bool canFreeRoam = false,
     bool showTecStatus = true,
     CarPlayLocalRider? localRider,
+    RiderMarkerOutline localMarkerOutline = RiderMarkerOutline.circle,
     BasemapConfiguration? basemap,
     String? mapStyleJson,
     GeoPoint? localPosition,
@@ -727,6 +729,10 @@ class CarPlayBridge {
           'motorcycleStyle':
               localRider?.motorcycleStyle.name ?? session!.motorcycleStyle.name,
           'riderColor': localRider?.riderColor.name ?? session!.riderColor.name,
+          // The shape of this phone's own marker, resolved by the phone with
+          // `localRiderMarkerOutline` because only it knows whether the ride is
+          // solo (#912).
+          'markerOutline': localMarkerOutline.name,
           'latitude': localPosition.latitude,
           'longitude': localPosition.longitude,
           'headingDegrees': localHeadingDegrees,
@@ -737,8 +743,7 @@ class CarPlayBridge {
           {
             'riderId': location.riderId,
             'label': location.displayName,
-            'isLocal':
-                session != null && location.riderId == session.localRiderId,
+            'isLocal': _isLocal(location, session),
             'role': _roleLabel(location, effectiveTecRiderIds),
             // Project the same identity the rider chose on the phone. CarPlay
             // used to replace the local rider with a blue "You" pill and every
@@ -752,6 +757,20 @@ class CarPlayBridge {
             // marker; the head unit now resolves it the same way rather than
             // labelling both of them the back of the group.
             'isTec': effectiveTecRiderIds.contains(location.riderId),
+            // Stars for the leader and the resolved Tail End Charlie, circles
+            // for everyone else, by the phone's own rule (#845, #912). It is
+            // sent as a decision rather than left for Swift and Kotlin to
+            // re-derive from `role` and `isTec`, so there is one rule, and so a
+            // solo ride's leader stays a circle without either of them having
+            // to know what a solo ride is.
+            'markerOutline': _isLocal(location, session)
+                ? localMarkerOutline.name
+                : riderMarkerOutlineFor(
+                    role: location.role,
+                    isEffectiveTec: effectiveTecRiderIds.contains(
+                      location.riderId,
+                    ),
+                  ).name,
             'needsAttention': _needsAttention(location, alertsByRider),
             'latitude': location.sample.position.latitude,
             'longitude': location.sample.position.longitude,
@@ -940,6 +959,9 @@ class CarPlayBridge {
         ? RideRole.tailEndCharlie.label
         : RideRole.rider.label;
   }
+
+  bool _isLocal(RiderLocation location, RideSession? session) =>
+      session != null && location.riderId == session.localRiderId;
 
   bool _needsAttention(
     RiderLocation location,

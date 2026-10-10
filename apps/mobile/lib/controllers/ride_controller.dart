@@ -174,6 +174,7 @@ class RideController extends ChangeNotifier {
   bool _busy = false;
   String? _errorMessage;
   bool _errorIsRetryable = false;
+  bool _errorNeedsUpdate = false;
   RideRole? _roleBeforeMarker;
 
   /// The leader's most recent broadcast, set before it is written so a double tap
@@ -221,6 +222,11 @@ class RideController extends ChangeNotifier {
   /// Surfaced so the join form can offer a retry instead of leaving a rider
   /// staring at a sentence about a relay handshake with nothing to press (#208).
   bool get errorIsRetryable => _errorMessage != null && _errorIsRetryable;
+
+  /// True when the failure behind [errorMessage] is the ride service refusing
+  /// this build as too old (#37). Retrying cannot help; the join form offers the
+  /// update instead.
+  bool get errorNeedsUpdate => _errorMessage != null && _errorNeedsUpdate;
   bool get hasActiveRide => _session != null;
 
   /// The leader persists this in the session and publishes it in `rideCreated`.
@@ -1952,6 +1958,7 @@ class RideController extends ChangeNotifier {
   void clearError() {
     _errorMessage = null;
     _errorIsRetryable = false;
+    _errorNeedsUpdate = false;
     notifyListeners();
   }
 
@@ -2081,6 +2088,7 @@ class RideController extends ChangeNotifier {
     _busy = true;
     _errorMessage = null;
     _errorIsRetryable = false;
+    _errorNeedsUpdate = false;
     notifyListeners();
     try {
       await operation();
@@ -2090,6 +2098,7 @@ class RideController extends ChangeNotifier {
     } on RideCodeDirectoryException catch (error) {
       _errorMessage = error.message;
       _errorIsRetryable = error.retryable;
+      _errorNeedsUpdate = error.updateRequired;
     } on Object catch (error, stackTrace) {
       _errorMessage = 'That action could not be saved. Please try again.';
       _errorIsRetryable = true;

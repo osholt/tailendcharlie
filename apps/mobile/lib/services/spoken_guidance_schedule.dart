@@ -90,6 +90,7 @@ class GuidanceAnnouncement {
     required this.key,
     required this.phrase,
     required this.stage,
+    required this.subject,
   });
 
   /// Identity of the announcement, so the same stage of the same junction is not
@@ -98,6 +99,63 @@ class GuidanceAnnouncement {
   final String key;
   final String phrase;
   final GuidanceStage stage;
+
+  /// What the prompt is about, without the distance in front of it. Two phrases
+  /// for the same stage differ only in how far away the junction is when their
+  /// subjects match (see [currentGuidancePhrase]).
+  final String subject;
+}
+
+/// How much of the distance a prompt names the rider may cover between its
+/// being decided and its being heard before that distance is wrong (#616).
+///
+/// A natural voice takes seconds to render a phrase, and the distance in it is
+/// rounded to ten yards or a tenth of a mile, so the words changed during almost
+/// every render of a close prompt. A distance that has shrunk by a third is
+/// still the junction the rider was told about, said a few seconds late; one
+/// that has shrunk by half is not.
+const guidanceStaleDistanceFraction = 0.4;
+
+/// The most distance a prompt may lag by, however far away it was said to be,
+/// because a fraction of four kilometres is a minute of riding.
+const guidanceStaleDistanceCapMeters = 400.0;
+
+/// What [issued] should say if it is spoken now, or null if it should not be.
+///
+/// [issued] was decided [issuedDistanceMeters] from the junction; [refreshed] is
+/// the same decision made again with the guidance as it is now, at
+/// [currentDistanceMeters]. Speech asks this again after a voice has rendered
+/// the phrase and just before it plays, and compares the answer with what was
+/// rendered: a different answer discards the render.
+///
+/// - **Null** when the stage is no longer due: the junction has been passed or
+///   the rider has moved into a later stage, which the next fix will announce.
+/// - **The issued phrase** when it is still right: the same stage of the same
+///   junction, with the same words, and the rider has covered no more than
+///   [guidanceStaleDistanceFraction] of the distance (and
+///   [guidanceStaleDistanceCapMeters]). Without this the render was thrown away
+///   whenever the rounded distance ticked over during synthesis, and the prompt
+///   was said in the system voice instead, for 8 of 30 prompts on one ride (#616).
+/// - **The refreshed phrase** otherwise, which differs from what was rendered,
+///   so the render is discarded and the stage is announced again from the next
+///   fix with the distance it has now.
+String? currentGuidancePhrase({
+  required GuidanceAnnouncement issued,
+  required double issuedDistanceMeters,
+  required GuidanceAnnouncement? refreshed,
+  required double currentDistanceMeters,
+}) {
+  if (refreshed == null || refreshed.key != issued.key) return null;
+  if (refreshed.phrase == issued.phrase) return issued.phrase;
+  final moved = (issuedDistanceMeters - currentDistanceMeters).abs();
+  final tolerated = issuedDistanceMeters * guidanceStaleDistanceFraction;
+  final allowed = tolerated < guidanceStaleDistanceCapMeters
+      ? tolerated
+      : guidanceStaleDistanceCapMeters;
+  if (refreshed.subject == issued.subject && moved <= allowed) {
+    return issued.phrase;
+  }
+  return refreshed.phrase;
 }
 
 /// Decides the next thing to say about a junction.
@@ -155,6 +213,7 @@ GuidanceAnnouncement? nextGuidanceAnnouncement({
         : 'In ${distanceFormatter(distanceToManeuverMeters)}, '
               '${_midSentence(spokenSubject)}',
     stage: stage,
+    subject: spokenSubject,
   );
 }
 

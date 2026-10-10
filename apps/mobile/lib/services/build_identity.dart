@@ -187,6 +187,15 @@ class BuildIdentity {
     _ => null,
   };
 
+  /// Where an "update required" prompt sends the rider for *this* build (#37).
+  ///
+  /// The build's own track-aware destination wins: it is the only one that knows
+  /// a closed-testing Play build needs the opt-in page and an iOS build needs
+  /// TestFlight. [relayUri] - the page the ride service advertises, which is the
+  /// generic project page unless the operator set a store link - is the fallback
+  /// for a build with no destination of its own, such as a local build.
+  Uri? updateDestination([Uri? relayUri]) => updateUri ?? relayUri;
+
   /// `1.0.1 (build 42)` - the identity to quote in a bug report.
   /// False when this build channel did not stamp its version in, so the app
   /// says so instead of quoting a constant that does not identify the artefact.
