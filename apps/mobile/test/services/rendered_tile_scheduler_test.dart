@@ -399,7 +399,7 @@ void main() {
       await _settle();
       kept.render.complete(_Tile(5));
       await kept.result;
-      final held = scheduler.cache.get('kept')! as _Tile;
+      final held = scheduler.cache.get('kept')!;
       expect(held.released, isFalse);
       scheduler.dispose();
       expect(held.released, isTrue, reason: 'a leaked image is leaked memory');
