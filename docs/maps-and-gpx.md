@@ -697,12 +697,31 @@ not for every ride. The local rider's position source is rewritten when only
 their role changes (`didUpdateWidget`), because it is otherwise only written
 when they move.
 
-**Not covered.** CarPlay and Android Auto do not share this source: their map
-canvases are drawn natively (`CarPlaySceneDelegate.swift`'s `CarPlayRiderAnnotation`
-and `ProjectedMapRenderer.kt`'s `drawRider`) from a snapshot that carries `role`
-and `isTec` per rider, as circles with a ring for the TEC. Stars there are a
-native follow-up and are not claimed. The ride recap draws no rider markers (its
-map has a start and an end), so there is nothing to change.
+**On CarPlay and Android Auto (#912).** Their canvases do not share the phone's
+source: they are drawn natively, `CarPlayRiderAnnotationView` in
+`CarPlaySceneDelegate.swift` and `drawRider` / `drawLocalRider` in
+`ProjectedMapRenderer.kt`, from the snapshot `carplay_bridge.dart` publishes.
+They draw the same stars. The phone sends the decision, `markerOutline` (`star`
+or `circle`) on every entry of `riders` and in the `localRider` block, computed by
+`riderMarkerOutlineFor` and `localRiderMarkerOutline`; neither native side
+re-derives it from `role` and `isTec`, so there is one rule and a solo ride's
+leader stays a circle without either of them knowing what a solo ride is. An
+absent or unknown value is a circle, which is what an older snapshot gets.
+
+The shape is the resting star above in the phone's proportions, sized against
+the circle it replaces: points reach `1.06 / 0.8` and valleys `0.66 / 0.8` times
+the circle's radius, so a 38 pt CarPlay badge has points reaching about 25 pt and
+Android Auto's 11 px marker about 14.6 px. It keeps the rider's own colour and
+the same dark edge. On CarPlay the glyph inside is pulled in to the valleys; on
+Android Auto the ring the Tail End Charlie used to be given is no longer drawn
+around a star, because the shape says it. There is no heading nose on a car star,
+as there was none on the car circle; the local rider's heading arrow on Android
+Auto is unchanged. `CarPlayRiderMarkerShape`, `CarPlayStarGeometry` and
+`CarPlayRiderMarkerStyle` (RunnerTests) and `ProjectedMarkerShape`,
+`ProjectedMarkerOutline` and the renderer's pixels (`ProjectedMapRendererTest`,
+`AndroidAutoCompanionTest`) test the choice and the geometry. Not claimed: any
+head-unit validation, which stays with #698 and #703. The ride recap draws no
+rider markers (its map has a start and an end), so there is nothing to change.
 
 ### The light basemap
 

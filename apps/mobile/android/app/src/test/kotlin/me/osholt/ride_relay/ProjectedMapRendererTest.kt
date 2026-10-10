@@ -234,6 +234,140 @@ class ProjectedMapRendererTest {
         assertFalse(isWhite(stationary, RIDER_X, RIDER_Y - 20))
     }
 
+    @Test
+    fun `the star's points follow the phone's proportions`() {
+        val vertices = ProjectedMarkerShape.starVertices(100f, 200f, 11f)
+        assertEquals(10, vertices.size)
+        // One point straight up, like the phone's resting star.
+        assertEquals(100f, vertices[0].first, 0.001f)
+        assertEquals(200f - 11f * 1.06f / 0.8f, vertices[0].second, 0.001f)
+        // Points and valleys alternate at the phone's shares of the circle's size.
+        vertices.forEachIndexed { index, (x, y) ->
+            val reach = Math.hypot((x - 100f).toDouble(), (y - 200f).toDouble()).toFloat()
+            val share = if (index % 2 == 0) 1.06f else 0.66f
+            assertEquals("vertex $index", 11f * share / 0.8f, reach, 0.001f)
+        }
+        // Five equal points: the next one is 72 degrees round.
+        val tip = vertices[2]
+        assertEquals(
+            Math.toRadians(-90.0 + 72.0),
+            Math.atan2((tip.second - 200f).toDouble(), (tip.first - 100f).toDouble()),
+            1e-4,
+        )
+        // The points reach past the circle they replace, and the valleys stay
+        // inside it: a star no bigger than the circle would be the less
+        // conspicuous marker.
+        assertTrue(11f * 1.06f / 0.8f > 11f)
+        assertTrue(11f * 0.66f / 0.8f < 11f)
+    }
+
+    @Test
+    fun `a leader and a Tail End Charlie are stars in their own colour`() {
+        val circle = renderRiders("circle", "circle")
+        val star = renderRiders("star", "star")
+        write(star.bitmap, "05-stars-day-800x480")
+        write(circle.bitmap, "05-circles-day-800x480")
+
+        for ((index, rider) in star.riders.withIndex()) {
+            val (cx, cy) = rider
+            val (ccx, ccy) = circle.riders[index]
+            // Inside the body, in the rider's own colour, whatever the shape.
+            assertEquals("star $index fill", AMBER, star.bitmap.getPixel(cx, cy))
+            assertEquals("circle $index fill", AMBER, circle.bitmap.getPixel(ccx, ccy))
+            // Straight down is a valley, not a point: a star's lowest vertices
+            // are the two points either side of it. At the circle's ring radius
+            // the circle has its dark ring and the star has not reached yet
+            // (what is there is the map, which may be a route line).
+            assertEquals("circle $index ring", DARK, circle.bitmap.getPixel(ccx, ccy + 13))
+            assertNotEquals("star $index valley", DARK, star.bitmap.getPixel(cx, cy + 13))
+            assertNotEquals("star $index valley", AMBER, star.bitmap.getPixel(cx, cy + 13))
+        }
+    }
+
+    @Test
+    fun `this phone leads a group and is a star, in a solo ride a circle`() {
+        val star = renderLocal(ProjectedMarkerOutline.STAR)
+        val circle = renderLocal(ProjectedMarkerOutline.CIRCLE)
+        write(star, "06-local-star-800x480")
+
+        // Straight up, past the circle's white edge (radius 17): the star's
+        // edge reaches 22 there and the circle has nothing.
+        assertTrue("no star point", isWhite(star, RIDER_X, RIDER_Y - 20))
+        assertFalse("a point on a circle", isWhite(circle, RIDER_X, RIDER_Y - 20))
+        // Towards a valley, inside the circle's edge, the star has not reached
+        // yet: its valley is at 14 and the circle's edge at 17.
+        val (vx, vy) = valleyOffset(15.5)
+        assertTrue("no circle edge", isWhite(circle, RIDER_X + vx, RIDER_Y + vy))
+        assertFalse("a circle edge on a star", isWhite(star, RIDER_X + vx, RIDER_Y + vy))
+        // Both are this phone's own blue in the middle.
+        assertEquals(LOCAL_BLUE, star.getPixel(RIDER_X, RIDER_Y))
+        assertEquals(LOCAL_BLUE, circle.getPixel(RIDER_X, RIDER_Y))
+    }
+
+    /** Offset at [distance] towards the valley 36 degrees clockwise of straight up. */
+    private fun valleyOffset(distance: Double): Pair<Int, Int> {
+        val angle = Math.toRadians(-90.0 + 36.0)
+        return Pair((distance * Math.cos(angle)).roundToInt(), (distance * Math.sin(angle)).roundToInt())
+    }
+
+    private class Rendered(val bitmap: Bitmap, val riders: List<Pair<Int, Int>>)
+
+    /**
+     * Two amber riders on an 800x480 day surface, drawn with the given outlines,
+     * and where each landed. Day, because at night the ring and the ground are the
+     * same near-black and a ring cannot be told from nothing.
+     */
+    private fun renderRiders(first: String, second: String): Rendered {
+        val bitmap = Bitmap.createBitmap(800, 480, Bitmap.Config.ARGB_8888)
+        val snapshot = ProjectedRideSnapshot.from(
+            mapOf(
+                "followRider" to false,
+                "routePoints" to bristolToBath(),
+                "basemap" to mapOf("dark" to false),
+                "riders" to listOf(
+                    mapOf(
+                        "label" to "Lead", "role" to "Lead", "riderColor" to "amber",
+                        "markerOutline" to first, "latitude" to 51.4210, "longitude" to -2.4790,
+                    ),
+                    mapOf(
+                        "label" to "Charlie", "role" to "Tail End Charlie", "riderColor" to "amber",
+                        "isTec" to true, "markerOutline" to second,
+                        "latitude" to 51.4460, "longitude" to -2.5660,
+                    ),
+                ),
+            ),
+        )
+        assertTrue(renderer.draw(Canvas(bitmap), snapshot, 800f, 480f, hostDarkMode = false))
+        val camera = renderer.camera(snapshot, ProjectedMapBounds.resolve(800f, 480f, null, null))!!
+        val at = snapshot.riders.map { rider ->
+            val point = rider.point!!
+            Pair(camera.x(point).roundToInt(), camera.y(point).roundToInt())
+        }
+        return Rendered(bitmap, at)
+    }
+
+    private fun renderLocal(outline: ProjectedMarkerOutline): Bitmap {
+        val bitmap = Bitmap.createBitmap(800, 480, Bitmap.Config.ARGB_8888)
+        renderer.draw(
+            canvas = Canvas(bitmap),
+            snapshot = ProjectedRideSnapshot.from(
+                mapOf(
+                    "followRider" to true,
+                    "routePoints" to bristolToBath(),
+                    "localPosition" to mapOf("latitude" to 51.4295, "longitude" to -2.5079),
+                    "localRider" to mapOf(
+                        "markerOutline" to if (outline == ProjectedMarkerOutline.STAR) "star" else "circle",
+                    ),
+                    "basemap" to mapOf("dark" to true),
+                ),
+            ),
+            widthPx = 800f,
+            heightPx = 480f,
+            hostDarkMode = true,
+        )
+        return bitmap
+    }
+
     private fun isWhite(bitmap: Bitmap, x: Int, y: Int): Boolean =
         bitmap.getPixel(x, y) == -1
 
@@ -373,5 +507,10 @@ class ProjectedMapRendererTest {
         /** Where `following` puts the rider on an 800x480 surface. */
         const val RIDER_X = 400
         const val RIDER_Y = 374
+
+        /** `riderColour("amber")` and the day palette's rider outline. */
+        const val AMBER = 0xFFF2A93B.toInt()
+        const val DARK = 0xFF10151C.toInt()
+        const val LOCAL_BLUE = 0xFF2F80ED.toInt()
     }
 }
