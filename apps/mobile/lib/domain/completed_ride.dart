@@ -63,6 +63,8 @@ class CompletedRide {
     this.organisation = const RideLibraryOrganisation(),
     this.alerts = const [],
     this.broadcasts = const [],
+    this.continuesRideId,
+    this.previousLeg,
   });
 
   static const schemaVersion = 2;
@@ -110,6 +112,22 @@ class CompletedRide {
   /// over", "Regroup at next stop". Optional in the same way as [alerts], so a
   /// record from before it exists reads as having none.
   final List<RideBroadcastRecord> broadcasts;
+
+  /// The ride this one carried on from, after a solo ↔ group conversion
+  /// (#896): the solo navigation a rider turned into a group ride, or the
+  /// group ride a rider rode on from alone. Filing joins the two into one
+  /// record, so My rides and every export read them as one ride.
+  ///
+  /// Optional keys, with the schema version unchanged, as [alerts] are.
+  final String? continuesRideId;
+
+  /// The earlier leg as it was filed, kept inside the joined record so that a
+  /// later save of this leg — a checkpoint, a replayed journal — joins it
+  /// again instead of dropping it.
+  final CompletedRide? previousLeg;
+
+  /// Every leg filed in this record, earliest first.
+  List<CompletedRide> get legs => [...?previousLeg?.legs, this];
 
   String get title {
     final renamed = libraryName?.trim();
@@ -161,6 +179,8 @@ class CompletedRide {
     if (alerts.isNotEmpty) 'alerts': [for (final a in alerts) a.toJson()],
     if (broadcasts.isNotEmpty)
       'broadcasts': [for (final b in broadcasts) b.toJson()],
+    if (continuesRideId != null) 'continuesRideId': continuesRideId,
+    if (previousLeg != null) 'previousLeg': previousLeg!.toJson(),
   };
 
   factory CompletedRide.fromJson(Map<String, Object?> json) {
@@ -210,6 +230,70 @@ class CompletedRide {
       },
       alerts: _alerts(json['alerts']),
       broadcasts: _broadcasts(json['broadcasts']),
+      continuesRideId: json['continuesRideId'] as String?,
+      previousLeg: _previousLeg(json['previousLeg']),
+    );
+  }
+
+  /// [later] filed as one ride with [earlier], the leg it carried on from
+  /// (#896).
+  ///
+  /// The joined record keeps [later]'s identity, so the next save of [later]
+  /// replaces it. Time, distance, the travelled track and the group's alerts
+  /// and messages cover both legs; the name, the plan and the library details
+  /// are [later]'s where it has them and [earlier]'s where it does not.
+  static CompletedRide joined(CompletedRide earlier, CompletedRide later) {
+    final earlierTrack = earlier.traveledRoute;
+    final laterTrack = later.traveledRoute;
+    final track = earlierTrack == null || laterTrack == null
+        ? laterTrack ?? earlierTrack
+        : ImportedRoute(
+            id: laterTrack.id,
+            name: laterTrack.name,
+            description: laterTrack.description,
+            importedAt: laterTrack.importedAt,
+            sourceFileName: laterTrack.sourceFileName,
+            // Separate paths, so the gap between the legs is drawn and
+            // exported as a gap rather than an invented straight line (#205).
+            paths: [...earlierTrack.paths, ...laterTrack.paths],
+            waypoints: [...earlierTrack.waypoints, ...laterTrack.waypoints],
+          );
+    return CompletedRide(
+      recordingComplete: earlier.recordingComplete && later.recordingComplete,
+      rideId: later.rideId,
+      rideCode: later.rideCode,
+      rideName: later.rideName ?? earlier.rideName,
+      localDisplayName: later.localDisplayName,
+      localRole: later.localRole,
+      startedAt: earlier.startedAt.isBefore(later.startedAt)
+          ? earlier.startedAt
+          : later.startedAt,
+      endedAt: later.endedAt.isAfter(earlier.endedAt)
+          ? later.endedAt
+          : earlier.endedAt,
+      archivedAt: later.archivedAt,
+      riderCount: later.riderCount > earlier.riderCount
+          ? later.riderCount
+          : earlier.riderCount,
+      eventCount: earlier.eventCount + later.eventCount,
+      totalDistanceMeters:
+          earlier.totalDistanceMeters + later.totalDistanceMeters,
+      markerSessions: [...earlier.markerSessions, ...later.markerSessions],
+      plannedRoute: later.plannedRoute ?? earlier.plannedRoute,
+      traveledRoute: track,
+      sourceRoute: earlier.sourceRoute ?? later.sourceRoute,
+      libraryName: later.libraryName ?? earlier.libraryName,
+      rating: later.rating ?? earlier.rating,
+      notes: later.notes ?? earlier.notes,
+      libraryStatus: later.libraryStatus,
+      deletedAt: later.deletedAt,
+      organisation: _isUnorganised(later.organisation)
+          ? earlier.organisation
+          : later.organisation,
+      alerts: [...earlier.alerts, ...later.alerts],
+      broadcasts: [...earlier.broadcasts, ...later.broadcasts],
+      continuesRideId: earlier.rideId,
+      previousLeg: earlier,
     );
   }
 
@@ -253,7 +337,25 @@ class CompletedRide {
     organisation: organisation ?? this.organisation,
     alerts: alerts ?? this.alerts,
     broadcasts: broadcasts ?? this.broadcasts,
+    continuesRideId: continuesRideId,
+    previousLeg: previousLeg,
   );
+
+  static bool _isUnorganised(RideLibraryOrganisation organisation) =>
+      organisation.tags.isEmpty &&
+      organisation.folder.isEmpty &&
+      organisation.colourArgb == RideLibraryOrganisation.defaultColour;
+
+  static CompletedRide? _previousLeg(Object? value) {
+    if (value is! Map) return null;
+    try {
+      return CompletedRide.fromJson(Map<String, Object?>.from(value));
+    } on Object {
+      // The joined record's own totals already cover the leg; losing its
+      // separate copy must not lose the ride.
+      return null;
+    }
+  }
 
   static RideLibraryStatus _libraryStatus(Object? value) {
     if (value is String) {

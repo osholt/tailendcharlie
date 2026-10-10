@@ -317,6 +317,8 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(controller.session!.rideId, isNot(soloRideId));
+    // Filed with the solo ride as one ride in My rides (#896).
+    expect(controller.session!.continuesRideId, soloRideId);
     expect(controller.coordinationMode.isGroup, isTrue);
     expect(controller.rideStarted, isTrue);
     expect(controller.authoritativeRoute?.id, 'group-route');
@@ -333,6 +335,7 @@ void main() {
     await controller.createRide('Oliver');
     await controller.startRide();
     await controller.publishRoute(_groupRoute());
+    final groupRideId = controller.session!.rideId;
     await tester.pumpWidget(_app(controller));
     await tester.pumpAndSettle();
 
@@ -360,6 +363,8 @@ void main() {
         .pendingInAppRoute;
     expect(pending?.route.id, 'group-route');
     expect(pending?.reviewed, isTrue);
+    // Free roam files its navigation with the group ride (#896).
+    expect(pending?.continuesRideId, groupRideId);
   });
 
   testWidgets('a solo pre-start map can switch straight to joining a group', (
