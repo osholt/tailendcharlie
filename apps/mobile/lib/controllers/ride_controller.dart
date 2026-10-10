@@ -40,7 +40,7 @@ import '../services/situation_event_factory.dart';
 import '../services/tec_role_assignment.dart';
 import '../internet/internet_relay_client.dart';
 import '../domain/recorded_route_store.dart';
-import '../services/completed_ride_plan_link.dart';
+import '../services/completed_ride_filing.dart';
 
 typedef Clock = DateTime Function();
 typedef IdFactory = String Function();
@@ -174,6 +174,7 @@ class RideController extends ChangeNotifier {
   bool _busy = false;
   String? _errorMessage;
   bool _errorIsRetryable = false;
+  bool _errorNeedsUpdate = false;
   RideRole? _roleBeforeMarker;
 
   /// The leader's most recent broadcast, set before it is written so a double tap
@@ -221,6 +222,11 @@ class RideController extends ChangeNotifier {
   /// Surfaced so the join form can offer a retry instead of leaving a rider
   /// staring at a sentence about a relay handshake with nothing to press (#208).
   bool get errorIsRetryable => _errorMessage != null && _errorIsRetryable;
+
+  /// True when the failure behind [errorMessage] is the ride service refusing
+  /// this build as too old (#37). Retrying cannot help; the join form offers the
+  /// update instead.
+  bool get errorNeedsUpdate => _errorMessage != null && _errorNeedsUpdate;
   bool get hasActiveRide => _session != null;
 
   /// The leader persists this in the session and publishes it in `rideCreated`.
@@ -1066,6 +1072,33 @@ class RideController extends ChangeNotifier {
     }
   }
 
+  /// Renames the ride on this phone (#894).
+  ///
+  /// The name was only ever chosen at creation, and now defaults to the
+  /// route's name, so a ride planned to "Town" stays "To Town" after the plan
+  /// changes. The name is this phone's label — the ride tab, My rides, the
+  /// shared summary — and no other rider reads it from the journal, so this
+  /// records no event and needs nothing from the relay. An empty name clears
+  /// it, and the ride is known by its code again.
+  Future<void> renameRide(String name) async {
+    await _run(() async {
+      final activeSession = _requireSession();
+      final trimmed = name.trim();
+      if (trimmed.length > RideSession.maximumRideNameLength) {
+        throw const FormatException(
+          'Keep the ride name to '
+          '${RideSession.maximumRideNameLength} characters.',
+        );
+      }
+      final updated = activeSession.copyWith(
+        rideName: trimmed.isEmpty ? null : trimmed,
+        clearRideName: trimmed.isEmpty,
+      );
+      _session = updated;
+      await _sessionStore.save(updated);
+    });
+  }
+
   Future<void> setRole(RideRole role) async {
     await _run(() async {
       final activeSession = _requireSession();
@@ -1613,12 +1646,14 @@ class RideController extends ChangeNotifier {
     ImportedRoute? route,
     bool startNow = false,
     String? rideName,
+    String? continuesRideId,
   }) async {
     await _run(() async {
       if (!coordinationMode.isGroup) {
         throw const FormatException('Choose how the group will ride.');
       }
       final existing = _session;
+      var continues = continuesRideId;
       if (existing != null && !rideEnded) {
         if (this.coordinationMode.isGroup) {
           throw const FormatException('This is already a group ride.');
@@ -1626,6 +1661,9 @@ class RideController extends ChangeNotifier {
         // Checked before the solo ride is given up, so a refusal below cannot
         // cost the rider the ride they are on.
         _normaliseName(displayName);
+        // A solo ride that was ridden is filed, and the group ride carries on
+        // from it as one ride in My rides (#896).
+        if (rideStarted) continues ??= existing.rideId;
         await _archiveCurrentRideIfComplete(force: true);
         await _removeRideData();
       }
@@ -1636,6 +1674,7 @@ class RideController extends ChangeNotifier {
         riderColor: riderColor,
         coordinationMode: coordinationMode,
         rideName: rideName ?? route?.name,
+        continuesRideId: continues,
       );
       if (route != null) await _recordRoutePublication(route);
       if (startNow) await _recordRideStart();
@@ -1925,6 +1964,7 @@ class RideController extends ChangeNotifier {
   void clearError() {
     _errorMessage = null;
     _errorIsRetryable = false;
+    _errorNeedsUpdate = false;
     notifyListeners();
   }
 
@@ -1977,6 +2017,7 @@ class RideController extends ChangeNotifier {
     RideCoordinationMode coordinationMode =
         RideCoordinationMode.secondBikeDropOff,
     String? rideName,
+    String? continuesRideId,
   }) async {
     // The home screen deliberately remains available while an ended ride is
     // set aside (#207). Creating its replacement must file that completed ride
@@ -2017,6 +2058,7 @@ class RideController extends ChangeNotifier {
       rideName: normalisedRideName == null || normalisedRideName.isEmpty
           ? null
           : normalisedRideName,
+      continuesRideId: continuesRideId,
     );
     _session = session;
     await _sessionStore.save(session);
@@ -2054,6 +2096,7 @@ class RideController extends ChangeNotifier {
     _busy = true;
     _errorMessage = null;
     _errorIsRetryable = false;
+    _errorNeedsUpdate = false;
     notifyListeners();
     try {
       await operation();
@@ -2063,6 +2106,7 @@ class RideController extends ChangeNotifier {
     } on RideCodeDirectoryException catch (error) {
       _errorMessage = error.message;
       _errorIsRetryable = error.retryable;
+      _errorNeedsUpdate = error.updateRequired;
     } on Object catch (error, stackTrace) {
       _errorMessage = 'That action could not be saved. Please try again.';
       _errorIsRetryable = true;
@@ -2197,9 +2241,6 @@ class RideController extends ChangeNotifier {
     try {
       // Ended journals are replayed after restart. Refresh their geometry
       // without erasing edits the rider has already made in the library.
-      final existing = (await store.list())
-          .where((ride) => ride.rideId == snapshot.rideId)
-          .firstOrNull;
       final initialPlan = const RideRouteReducer()
           .fromEvents(
             rideId: activeSession.rideId,
@@ -2209,12 +2250,13 @@ class RideController extends ChangeNotifier {
             ),
           )
           .route;
-      final linked = await completeRidePlanLink(
+      // One ride with any leg it carried on from (#896), keeping library
+      // edits already made to it.
+      await fileCompletedRide(
+        store,
         snapshot.copyWith(plannedRoute: initialPlan),
-        existing: existing,
         library: _recordedRouteStore,
       );
-      await store.save(linked);
       _rideArchiveError = null;
     } on Object catch (error, stackTrace) {
       _rideArchiveError = rideArchiveFailedMessage;

@@ -31,11 +31,44 @@ jobs:
             deploy/install-relay-self-heal.sh \
             deploy/relay-smoke-retry.sh \
             deploy/tests/relay-self-heal-test.sh \
-            deploy/tests/relay-smoke-retry-test.sh
+            deploy/tests/relay-smoke-retry-test.sh \
+            deploy/routing/routing-deploy.sh \
+            deploy/routing/routing-data-refresh.sh \
+            deploy/routing/routing-host-setup.sh \
+            deploy/routing/routing-lib.sh \
+            deploy/routing/tests/routing-lib-test.sh
       - name: Exercise automatic recovery thresholds and cooldown
         run: deploy/tests/relay-self-heal-test.sh
       - name: Exercise the deploy smoke-test retry policy
         run: deploy/tests/relay-smoke-retry-test.sh
+      - name: Exercise routing data promotion and rollback
+        run: deploy/routing/tests/routing-lib-test.sh
+
+  routing:
+    name: Routing stack configuration
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Validate the routing compose file
+        env:
+          ROUTING_DOMAIN: routing.example.com
+          ROUTING_DATA_DIR: /srv/routing
+          ROUTING_UID: '1000'
+          ROUTING_GID: '1000'
+        run: docker compose --file deploy/routing/compose.yaml config --quiet
+      - name: Build the edge with its rate-limit module and validate the Caddyfile
+        env:
+          ROUTING_DOMAIN: routing.example.com
+        run: |
+          docker build --tag tec-routing-caddy:ci deploy/routing/caddy
+          docker run --rm \
+            --env ROUTING_DOMAIN \
+            --volume "$PWD/deploy/routing/Caddyfile:/etc/caddy/Caddyfile:ro" \
+            tec-routing-caddy:ci \
+            caddy validate --config /etc/caddy/Caddyfile
+      - name: Check the routing smoke test parses
+        run: python3 -m py_compile deploy/routing/routing-smoke.py
 
   quality:
     name: Lint and test
@@ -58,11 +91,13 @@ jobs:
         run: uv run pip-audit --skip-editable
       - run: uv run ruff format --check .
       - run: uv run ruff check .
-      - run: uv run ruff format --check ../../tools/discovery ../../tools/tester_notify ../../tools/speed_limit_audit
-      - run: uv run ruff check ../../tools/discovery ../../tools/tester_notify ../../tools/speed_limit_audit
+      - run: uv run ruff format --check ../../tools/discovery ../../tools/tester_notify ../../tools/speed_limit_audit ../../tools/release ../../tools/testflight/beta_distribution.py ../../tools/testflight/test_beta_distribution.py ../../tools/testflight/test_beta_listing.py
+      - run: uv run ruff check ../../tools/discovery ../../tools/tester_notify ../../tools/speed_limit_audit ../../tools/release ../../tools/testflight/beta_distribution.py ../../tools/testflight/test_beta_distribution.py ../../tools/testflight/test_beta_listing.py
       - run: cd ../.. && python3 -m unittest discover -s tools/discovery/tests -v
       - run: cd ../.. && python3 -m unittest discover -s tools/tester_notify/tests -v
       - run: cd ../.. && python3 -m unittest discover -s tools/speed_limit_audit/tests -v
+      - run: cd ../.. && python3 -m unittest discover -s tools/release/tests -v
+      - run: cd ../.. && python3 -m unittest discover -s tools/testflight -v
       - run: uv run pytest --cov=ride_relay_server --cov-report=term-missing --cov-fail-under=80
 
   postgres-migration:

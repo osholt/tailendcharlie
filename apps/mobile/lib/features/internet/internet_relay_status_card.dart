@@ -1,13 +1,28 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../controllers/internet_relay_controller.dart';
 import '../../internet/internet_relay_worker.dart';
+import '../../services/build_identity.dart';
 
 class InternetRelayStatusCard extends StatelessWidget {
-  const InternetRelayStatusCard({super.key, required this.controller});
+  const InternetRelayStatusCard({
+    super.key,
+    required this.controller,
+    this.identity,
+    this.openUri = _launchExternally,
+  });
 
   final InternetRelayController controller;
+
+  /// This build's identity, for the update link. Null reads the real one; tests
+  /// inject a stamped identity.
+  final BuildIdentity? identity;
+
+  /// Opens the update page. Injected so a test does not launch a browser.
+  final Future<bool> Function(Uri uri) openUri;
 
   @override
   Widget build(BuildContext context) => AnimatedBuilder(
@@ -15,6 +30,13 @@ class InternetRelayStatusCard extends StatelessWidget {
     builder: (context, _) {
       final status = controller.status;
       final presentation = _presentation(status.phase);
+      final build = identity ?? BuildIdentity.fromEnvironment();
+      // The build's own track-aware destination first (a closed-testing Play
+      // build needs the opt-in page, an iOS build TestFlight); the link the relay
+      // sent is the fallback (#37).
+      final updateUri = status.actionUrl == null
+          ? null
+          : build.updateDestination(status.actionUrl);
       return Card(
         child: Padding(
           padding: const EdgeInsets.all(18),
@@ -52,14 +74,11 @@ class InternetRelayStatusCard extends StatelessWidget {
                   ],
                 ),
               ),
-              if (status.actionUrl case final actionUrl?)
+              if (updateUri != null)
                 IconButton(
                   key: const Key('open-required-update'),
-                  tooltip: 'Open update page',
-                  onPressed: () => launchUrl(
-                    actionUrl,
-                    mode: LaunchMode.externalApplication,
-                  ),
+                  tooltip: build.updateActionLabel,
+                  onPressed: () => unawaited(openUri(updateUri)),
                   icon: const Icon(Icons.system_update_alt),
                 )
               else if (status.phase == InternetRelayPhase.failed ||
@@ -88,6 +107,13 @@ class InternetRelayStatusCard extends StatelessWidget {
   String _detail(InternetRelayStatus status) {
     if (status.phase == InternetRelayPhase.unconfigured) {
       return 'Set RIDE_RELAY_API_BASE_URL · no server traffic';
+    }
+    if (status.phase == InternetRelayPhase.updateRequired) {
+      // Said here because a rider mid-ride reads this card, and the first
+      // question is whether the app has stopped protecting them. It has not: the
+      // gate only pauses sharing through the ride service (#37).
+      return '${status.message} · SOS, alerts and navigation are not affected; '
+          'sharing through the ride service is paused until you update.';
     }
     final nextAttempt = status.nextAttemptAt;
     if (nextAttempt != null) {
@@ -161,3 +187,6 @@ class _InternetPresentation {
   final IconData icon;
   final Color color;
 }
+
+Future<bool> _launchExternally(Uri uri) =>
+    launchUrl(uri, mode: LaunchMode.externalApplication);

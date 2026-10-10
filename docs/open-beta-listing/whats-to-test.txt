@@ -1,0 +1,11 @@
+Thank you for testing. Please do these while stationary or as a passenger, never while riding.
+
+1. On the home screen, try a simulated ride. It needs no other phone and no riding. Look around the map and the ride menu.
+2. Plan a ride: tap Where to?, choose a destination, and confirm the route. Start guidance and listen to a few spoken prompts.
+3. With a second phone, create a ride on one and join it on the other with the six-digit code. Check each phone sees the other.
+4. Try a hazard report and, in a safe place with your group told first, the emergency-stop alert. Leave the ride from the ride menu.
+5. End the ride and look at the summary. Share it if you like.
+
+Things we know are not proven: sharing between nearby phones by Bluetooth with no signal, and CarPlay on a real in-car unit. Tell us what happens if you try them, but do not rely on them.
+
+Found a problem? Open Settings > About & build, copy the build details, and email them with what happened to testing@tailendcharlie.app. In TestFlight you can also use Send Beta Feedback with a screenshot.

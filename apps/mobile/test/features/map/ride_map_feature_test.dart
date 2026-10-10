@@ -11,6 +11,8 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:maplibre_gl/maplibre_gl.dart' as ml;
+import 'package:ride_relay/controllers/demo_route_choice_controller.dart';
+import 'package:ride_relay/services/demo_route_loader.dart';
 import 'package:ride_relay/controllers/speed_limit_display_controller.dart';
 import 'package:ride_relay/controllers/global_ride_heatmap_controller.dart';
 import 'package:ride_relay/controllers/personal_ride_heatmap_controller.dart';
@@ -45,6 +47,7 @@ import 'package:ride_relay/services/leader_ride_status.dart';
 import 'package:ride_relay/services/map_style_repository.dart';
 import 'package:ride_relay/services/motorcycle_discovery.dart';
 import 'package:ride_relay/services/navigation_camera.dart';
+import 'package:ride_relay/services/navigation_speed_zoom.dart';
 import 'package:ride_relay/services/offline_tile_cache.dart';
 import 'package:ride_relay/services/received_quick_message.dart';
 import 'package:ride_relay/services/route_importer.dart';
@@ -1279,6 +1282,79 @@ void main() {
     expect(find.byKey(const Key('navigation-guidance-banner')), findsOneWidget);
     expect(find.text('Stale Main Road'), findsNothing);
     expect(find.text('Next Main Road'), findsOneWidget);
+  });
+
+  testWidgets('a rider crossing the route near it is not given its turns '
+      '(#941)', (tester) async {
+    final directory = Directory.systemTemp.createTempSync('crossing-rider');
+    addTearDown(() => directory.deleteSync(recursive: true));
+    final route = ImportedRoute(
+      id: 'crossing-route',
+      name: 'Crossing route',
+      importedAt: DateTime.utc(2026, 10, 10),
+      sourceFileName: 'crossing.gpx',
+      paths: const [
+        RoutePath(
+          kind: RoutePathKind.track,
+          points: [
+            GeoPoint(latitude: 51, longitude: -2),
+            GeoPoint(latitude: 51, longitude: -1.96),
+          ],
+        ),
+      ],
+      waypoints: const [],
+      maneuvers: const [
+        RouteManeuver(
+          position: GeoPoint(latitude: 51, longitude: -1.98),
+          type: 'turn',
+          modifier: 'left',
+          name: 'Planned Road',
+        ),
+      ],
+    );
+    // About 45 m north of an eastbound route, on a road crossing it.
+    MapNavigationPosition fix(double heading, int second) =>
+        MapNavigationPosition(
+          point: const GeoPoint(latitude: 51.0004, longitude: -1.985),
+          recordedAt: DateTime.utc(2026, 10, 10, 10, 0, second),
+          speedMetersPerSecond: 12,
+          headingDegrees: heading,
+          accuracyMeters: 5,
+        );
+    final navigation = ValueNotifier<MapNavigationPosition?>(fix(180, 0));
+    addTearDown(navigation.dispose);
+    final cache = OfflineTileCache(
+      rootDirectory: directory,
+      configuration: const BasemapConfiguration(),
+      httpClient: MockClient((_) async => http.Response('', 404)),
+    );
+    addTearDown(cache.dispose);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData.dark(useMaterial3: true),
+        home: RideMapScreen(
+          routeStore: InMemoryRouteStore(route),
+          routeImporter: RouteImporter(source: const _NoFileSource()),
+          offlineTileCache: cache,
+          navigationPosition: navigation,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(const Key('navigation-guidance-status-banner')),
+      findsOneWidget,
+    );
+    expect(find.textContaining('Off route'), findsWidgets);
+    expect(find.text('Planned Road'), findsNothing);
+
+    // The same place, heading the route's way: a parallel road or the far
+    // carriageway, which keeps its directions.
+    navigation.value = fix(90, 1);
+    await tester.pump();
+    expect(find.text('Planned Road'), findsOneWidget);
   });
 
   testWidgets('pre-start map keeps riding controls and guidance hidden', (
@@ -3823,6 +3899,9 @@ void main() {
 
     final routeStore = _RecordingRouteStore();
     final publishedRoutes = <ImportedRoute?>[];
+    // Starts on France, so the picked UK route below is the rider's own choice
+    // and not the default (#934).
+    final demoChoice = DemoRouteChoiceController.inMemory(DemoRoutes.france);
     await tester.pumpWidget(
       MaterialApp(
         theme: ThemeData.dark(useMaterial3: true),
@@ -3835,6 +3914,7 @@ void main() {
           distanceUnit: DistanceUnit.miles,
           onRouteChanged: publishedRoutes.add,
           rideStarted: false,
+          demoRouteChoice: demoChoice,
         ),
       ),
     );
@@ -3857,8 +3937,18 @@ void main() {
       await tester.pump(const Duration(milliseconds: 100));
     }
 
+    // The demo is a choice, not a fixed route (#934): offered, with the last
+    // choice marked, and the one picked is what gets reviewed and remembered.
+    expect(find.text('Choose a demo route'), findsOneWidget);
+    expect(find.text(DemoRoutes.france.title), findsOneWidget);
+    await tester.tap(find.byKey(Key('demo-route-${DemoRoutes.cotswolds.id}')));
+    for (var i = 0; i < 5; i += 1) {
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+
     expect(find.byKey(const Key('route-review-title')), findsOneWidget);
-    expect(find.text('Argentat to Saint-Privat — France'), findsOneWidget);
+    expect(find.text(DemoRoutes.cotswolds.title), findsOneWidget);
+    expect(demoChoice.current, same(DemoRoutes.cotswolds));
     await tester.scrollUntilVisible(
       find.byKey(const Key('confirm-reviewed-route')),
       250,
@@ -5947,12 +6037,15 @@ void main() {
     // 0.38 before the ETA strip joined the band (#848), 0.442 with it.
     expect(bottomChromeFraction, lessThan(0.46));
 
+    // The camera zooms with speed, and the map was mounted at 13 m/s (#936).
+    final townZoom = NavigationSpeedZoom.offsetFor(13);
     final plan = NavigationCameraPlanner.plan(
       speedMetersPerSecond: 13,
       landscape: false,
       viewportHeightPixels: size.height,
       latitudeDegrees: 53,
       bottomChromeFraction: bottomChromeFraction,
+      speedZoomOffset: townZoom,
     );
     // Positive bias means the camera is aimed up the road rather than behind the
     // rider, and the marker sits below the centre of the frame where #105 wants
@@ -6000,6 +6093,7 @@ void main() {
         viewportHeightPixels: size.height,
         latitudeDegrees: 53,
         bottomChromeFraction: previousBand / size.height,
+        speedZoomOffset: townZoom,
       );
       expect(
         plan.riderViewportFraction,

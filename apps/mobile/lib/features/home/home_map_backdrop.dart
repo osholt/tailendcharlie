@@ -2,17 +2,19 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../../controllers/demo_route_choice_controller.dart';
 import '../../controllers/foreground_location_controller.dart';
 import '../../controllers/global_ride_heatmap_controller.dart';
 import '../../controllers/map_style_mode_controller.dart';
 import '../../controllers/ride_diagnostics_controller.dart';
 import '../../data/ride_diagnostics_log_store.dart';
 import '../../controllers/shared_route_controller.dart' show PendingInAppRoute;
+import '../../controllers/speed_adaptive_zoom_controller.dart';
 import '../../controllers/speed_limit_display_controller.dart';
 import '../../controllers/spoken_guidance_controller.dart';
 import '../../domain/completed_ride.dart';
 import '../../domain/recorded_route_store.dart';
-import '../../services/completed_ride_plan_link.dart';
+import '../../services/completed_ride_filing.dart';
 import '../../domain/distance_unit.dart';
 import '../../domain/completed_ride_store.dart';
 import '../../domain/geo_point.dart' as awareness_geo;
@@ -26,8 +28,10 @@ import '../../services/free_roam_ride_recorder.dart';
 import '../../services/geo_calculations.dart';
 import '../../services/measurement_formatter.dart';
 import '../../services/navigation_guidance.dart';
+import '../../services/road_routing.dart' show RoutingConfiguration;
 import '../../services/ride_diagnostics_log_writer.dart';
 import '../../services/ride_diagnostics_recorder.dart';
+import '../../services/solo_navigation_reroute.dart';
 import '../../services/spoken_audio_mode.dart';
 import '../../services/spoken_guidance.dart';
 import '../../services/spoken_guidance_schedule.dart';
@@ -51,10 +55,12 @@ class HomeMapBackdrop extends StatefulWidget {
     super.key,
     required this.mapStyleMode,
     required this.speedLimitDisplay,
+    this.speedAdaptiveZoom,
     required this.distanceUnit,
     this.spokenGuidance,
     this.rideDiagnostics,
     this.enableNativeServices = true,
+    this.demoRouteChoice,
     this.locationController,
     this.bottomInset = 0,
     this.position,
@@ -69,11 +75,15 @@ class HomeMapBackdrop extends StatefulWidget {
     this.circularRideRequestToken,
     this.onCircularRideRequestHandled,
     this.editRouteRequestToken,
+    this.fuelStopRequestToken,
+    this.onFuelStopRequestHandled,
     this.onEditRouteRequestHandled,
     this.onRouteChanged,
+    this.onPersonalNavigationChanged,
     this.localDisplayName = 'Rider',
     this.onNavigationArchived,
     this.navigating = false,
+    this.soloReroute,
   });
 
   /// Height kept clear at the bottom for whatever stands on the map.
@@ -91,6 +101,7 @@ class HomeMapBackdrop extends StatefulWidget {
 
   final MapStyleModeController mapStyleMode;
   final SpeedLimitDisplayController speedLimitDisplay;
+  final SpeedAdaptiveZoomController? speedAdaptiveZoom;
   final SpokenGuidanceController? spokenGuidance;
   final RideDiagnosticsController? rideDiagnostics;
   final DistanceUnit distanceUnit;
@@ -124,6 +135,10 @@ class HomeMapBackdrop extends StatefulWidget {
 
   /// Asks the map to reopen its route on the plan surface (#847).
   final Object? editRouteRequestToken;
+
+  /// Bumped to find a fuel stop or charger on this map (#951).
+  final Object? fuelStopRequestToken;
+  final VoidCallback? onFuelStopRequestHandled;
   final VoidCallback? onEditRouteRequestHandled;
 
   /// Fires with the route the map is following, or null when there is none —
@@ -136,6 +151,10 @@ class HomeMapBackdrop extends StatefulWidget {
   /// Fires after a Where To session has been saved into My rides.
   final ValueChanged<CompletedRide>? onNavigationArchived;
 
+  /// Fires with the id of the navigation being recorded, or null when it
+  /// ends, so a conversion to a group ride can carry on from it (#896).
+  final ValueChanged<String?>? onPersonalNavigationChanged;
+
   /// Whether this map is following a route.
   ///
   /// Free roam has no ride to start, so the guidance chrome cannot key off one
@@ -146,6 +165,14 @@ class HomeMapBackdrop extends StatefulWidget {
   /// False in widget tests and on any build without the platform plugins, where
   /// the map would be a spinner and the location plugin is not answering.
   final bool enableNativeServices;
+
+  /// Which bundled demo route the map's "Load demo route" offers (#934).
+  final DemoRouteChoiceController? demoRouteChoice;
+
+  /// Off-route rerouting for this rider's own navigation (#940). Supplied by
+  /// tests with a fake routing service; production builds one over the
+  /// documented OSRM service, and a build without native services has none.
+  final SoloNavigationReroute Function()? soloReroute;
 
   /// Supplied by tests. Production builds their own over [DeviceLocationSource].
   final ForegroundLocationController? locationController;
@@ -177,10 +204,20 @@ class _HomeMapBackdropState extends State<HomeMapBackdrop>
   bool _ownsLocationController = false;
   bool _requesting = false;
   bool _checkpointedForBackground = false;
+  SoloNavigationReroute? _reroute;
 
   @override
   void initState() {
     super.initState();
+    _reroute =
+        widget.soloReroute?.call() ??
+        (widget.enableNativeServices
+            ? SoloNavigationReroute.osrm(
+                routingBaseUrl: () =>
+                    RoutingConfiguration.fromEnvironment().routingBaseUrl,
+                distanceUnit: widget.distanceUnit,
+              )
+            : null);
     // Free roam had no lifecycle observer at all, so the recovery that exists
     // inside a ride did not exist outside one (#577).
     WidgetsBinding.instance.addObserver(this);
@@ -267,12 +304,93 @@ class _HomeMapBackdropState extends State<HomeMapBackdrop>
     // must see the matching navigation fix already installed rather than
     // recursively accepting the same native sample.
     _position.value = point;
+    if (widget.navigating) unawaited(_updateReroute(sample));
+  }
+
+  /// Off route, says so once and finds a way back (#940). Where To had none of
+  /// this: the group shell's reroute never reached the home map.
+  Future<void> _updateReroute(LocationSample sample) async {
+    final reroute = _reroute;
+    if (reroute == null) return;
+    final guidance = _currentGuidanceForSpeech;
+    final passed = _passedManeuverPosition;
+    final update = await reroute.update(
+      sample,
+      distanceToCurrentManeuverMeters: guidance?.distanceMeters,
+      metersSincePreviousManeuver: passed == null
+          ? null
+          : GeoCalculations.distanceMeters(
+              sample.position,
+              awareness_geo.GeoPoint(
+                latitude: passed.latitude,
+                longitude: passed.longitude,
+              ),
+            ),
+    );
+    if (!mounted) return;
+    final distance = update.distanceFromRouteMeters;
+    if (update.leftRoute) {
+      _diagnostics?.recordNote(
+        'off the planned route'
+        '${distance == null ? '' : ' by ${distance.round()} m'}: '
+        'recalculating',
+      );
+      _speakRecalculating(update.offRouteSince);
+    }
+    final attempt = update.attempt;
+    if (attempt != null) {
+      _diagnostics?.recordReroute(
+        reason:
+            'rejoin ${attempt.status.name}'
+            '${attempt.distanceMeters == null ? '' : ', ${attempt.distanceMeters!.round()} m back to the route'}',
+        succeeded: attempt.hasBreadcrumb,
+      );
+    }
+    final after = update.backOnRouteAfter;
+    if (after != null) {
+      _diagnostics?.recordNote(
+        'back on the planned route after ${after.inSeconds} s',
+      );
+    }
+  }
+
+  void _speakRecalculating(DateTime? episode) {
+    final speaker = _spokenGuidance;
+    final controller = widget.spokenGuidance;
+    if (speaker == null || controller == null) return;
+    unawaited(
+      speaker.speakAlert(
+        key:
+            'solo-reroute:'
+            '${(episode ?? DateTime.now()).microsecondsSinceEpoch}',
+        phrase: 'Off route. Recalculating directions.',
+        enabled: spokenAudioAllows(
+          controller.mode,
+          SpokenAudioClass.navigation,
+        ),
+        rideActive: widget.navigating,
+      ),
+    );
   }
 
   void _onRouteChanged(route_domain.ImportedRoute? route) {
+    _reroute?.setRoute(route);
     if (route != null) {
       final starting = !_freeRoamRideRecorder.active;
-      _freeRoamRideRecorder.start(route, initialPosition: _position.value);
+      final pending = widget.pendingInAppRoute;
+      _freeRoamRideRecorder.start(
+        route,
+        initialPosition: _position.value,
+        // A route ridden on from a group ride is filed with it (#896).
+        continuesRideId: pending?.route.id == route.id
+            ? pending?.continuesRideId
+            : null,
+      );
+      if (starting) {
+        widget.onPersonalNavigationChanged?.call(
+          _freeRoamRideRecorder.activeRideId,
+        );
+      }
       if (starting) {
         _startDiagnostics(late: false);
       } else {
@@ -287,6 +405,7 @@ class _HomeMapBackdropState extends State<HomeMapBackdrop>
     _diagnosticsWriter = null;
     _diagnosticsRideId = null;
     final completed = _freeRoamRideRecorder.finish();
+    widget.onPersonalNavigationChanged?.call(null);
     widget.onRouteChanged?.call(null);
     if (completed != null) {
       _queueCompletedNavigation(
@@ -335,15 +454,12 @@ class _HomeMapBackdropState extends State<HomeMapBackdrop>
     final store = widget.completedRideStore;
     if (store == null) return;
     try {
-      final existing = (await store.list())
-          .where((ride) => ride.rideId == completed.rideId)
-          .firstOrNull;
-      final linked = await completeRidePlanLink(
+      // One ride with any group ride it carried on from (#896).
+      final linked = await fileCompletedRide(
+        store,
         completed,
-        existing: existing,
         library: widget.recordedRouteStore,
       );
-      await store.save(linked);
       if (announce && mounted) widget.onNavigationArchived?.call(linked);
     } on Object {
       if (!reportFailure || !mounted) return;
@@ -400,13 +516,8 @@ class _HomeMapBackdropState extends State<HomeMapBackdrop>
     _currentGuidanceForSpeech = guidance;
     if (guidance == null || !widget.navigating) return;
     _recordManoeuvreDiagnostics(guidance);
-    final speaker = _spokenGuidance;
-    final controller = widget.spokenGuidance;
-    if (speaker == null || controller == null) return;
-    if (!spokenAudioAllows(controller.mode, SpokenAudioClass.navigation)) {
-      return;
-    }
-
+    // Tracked whether or not anything is spoken: the reroute also needs to know
+    // when the rider is still inside the junction just passed (#940).
     final identity = guidance.instruction.maneuver.identity;
     if (identity != _guidanceManeuverIdentity) {
       if (_guidanceManeuverIdentity != null) {
@@ -415,6 +526,12 @@ class _HomeMapBackdropState extends State<HomeMapBackdrop>
       _guidanceManeuverIdentity = identity;
     }
     _lastGuidanceManeuverPosition = guidance.instruction.maneuver.position;
+    final speaker = _spokenGuidance;
+    final controller = widget.spokenGuidance;
+    if (speaker == null || controller == null) return;
+    if (!spokenAudioAllows(controller.mode, SpokenAudioClass.navigation)) {
+      return;
+    }
 
     final passed = _passedManeuverPosition;
     final rider = _navigationPosition.value?.point;
@@ -481,7 +598,15 @@ class _HomeMapBackdropState extends State<HomeMapBackdrop>
             followingInstructionText:
                 current.followingInstruction?.standaloneText,
           );
-          return refreshed?.key == announcement.key ? refreshed?.phrase : null;
+          // Which of the two to say, and whether to say anything, is decided
+          // by the schedule: the distance in a prompt moves while a natural
+          // voice renders it, and that alone must not discard the render.
+          return currentGuidancePhrase(
+            issued: announcement,
+            issuedDistanceMeters: guidance.distanceMeters,
+            refreshed: refreshed,
+            currentDistanceMeters: current.distanceMeters,
+          );
         },
         enabled: true,
         rideActive: widget.navigating,
@@ -649,6 +774,7 @@ class _HomeMapBackdropState extends State<HomeMapBackdrop>
       );
     }
     if (_ownsLocationController) _location?.dispose();
+    _reroute?.dispose();
     _navigationPosition.dispose();
     // Not ours to dispose when the screen above owns it.
     if (_ownsPosition) _position.dispose();
@@ -692,9 +818,11 @@ class _HomeMapBackdropState extends State<HomeMapBackdrop>
             restrainedLightMapStyle:
                 widget.mapStyleMode.dayStyle == DayMapStyle.restrained,
             speedLimitDisplay: widget.speedLimitDisplay,
+            speedAdaptiveZoom: widget.speedAdaptiveZoom,
             distanceUnit: widget.distanceUnit,
             onMapStyleResolved: widget.onMapStyleResolved,
             hostChrome: chrome,
+            demoRouteChoice: widget.demoRouteChoice,
             // No ride, so no group route and no leader to defer to: a route
             // built here is this rider's own. This used to pass
             // `canEditRoute: false`, borrowing the flag that means "not the
@@ -707,8 +835,11 @@ class _HomeMapBackdropState extends State<HomeMapBackdrop>
             circularRideRequestToken: widget.circularRideRequestToken,
             onCircularRideRequestHandled: widget.onCircularRideRequestHandled,
             editRouteRequestToken: widget.editRouteRequestToken,
+            fuelStopRequestToken: widget.fuelStopRequestToken,
+            onFuelStopRequestHandled: widget.onFuelStopRequestHandled,
             onEditRouteRequestHandled: widget.onEditRouteRequestHandled,
             onRouteChanged: _onRouteChanged,
+            rejoinNavigationRoute: _reroute?.route,
             onNavigationGuidanceChanged: _onNavigationGuidanceChanged,
             navigating: widget.navigating,
             markerFeaturesEnabled: false,

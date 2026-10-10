@@ -8,6 +8,7 @@ import 'package:ride_relay/domain/imported_route.dart';
 import 'package:ride_relay/domain/ride_role.dart';
 import 'package:ride_relay/domain/recorded_route_store.dart';
 import 'package:ride_relay/features/ride/previous_rides_screen.dart';
+import 'package:ride_relay/features/ride/ride_replay_screen.dart';
 import 'package:ride_relay/services/stored_route_library.dart';
 import 'package:ride_relay/services/trail_direction_arrows.dart';
 
@@ -46,6 +47,89 @@ void main() {
     expect(completed.allRides.single.plannedRoute, isNull);
     expect(archivedRideLegend(completed.allRides.single).planned, isTrue);
     await tester.pumpWidget(const SizedBox());
+  });
+
+  group('replaying a ride from its detail screen (#305)', () {
+    ImportedRoute timedTrack() => ImportedRoute(
+      id: 'timed',
+      name: 'Timed',
+      importedAt: DateTime.utc(2026, 10, 4, 12),
+      sourceFileName: 'ride.gpx',
+      paths: [
+        RoutePath(
+          kind: RoutePathKind.track,
+          points: [
+            GeoPoint(
+              latitude: 53,
+              longitude: -1,
+              recordedAt: DateTime.utc(2026, 10, 4, 9),
+            ),
+            GeoPoint(
+              latitude: 53.1,
+              longitude: -1,
+              recordedAt: DateTime.utc(2026, 10, 4, 9, 30),
+            ),
+          ],
+        ),
+      ],
+      waypoints: const [],
+    );
+
+    Future<void> openDetail(WidgetTester tester, CompletedRide ride) async {
+      final store = InMemoryCompletedRideStore();
+      await store.save(ride);
+      final completed = await CompletedRidesController.load(store);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: PreviousRideDetailScreen(
+            ride: ride,
+            completedRides: completed,
+            distanceUnits: DistanceUnitController.forLocale(
+              const Locale('en', 'GB'),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+    }
+
+    testWidgets('a ride with a timed track offers a replay and opens it', (
+      tester,
+    ) async {
+      await openDetail(
+        tester,
+        _ride(plannedRoute: null, traveledRoute: timedTrack()),
+      );
+
+      await tester.scrollUntilVisible(
+        find.byKey(const Key('archived-ride-replay')),
+        300,
+        scrollable: find.byType(Scrollable).first,
+      );
+      await tester.tap(find.byKey(const Key('archived-ride-replay')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 500));
+
+      expect(find.byType(RideReplayScreen), findsOneWidget);
+      expect(find.byKey(const Key('replay-total')), findsOneWidget);
+      await tester.pumpWidget(const SizedBox());
+    });
+
+    testWidgets('a ride with no times on its track offers none', (
+      tester,
+    ) async {
+      // `_line` has fixes with no `recordedAt`: a ride from before times were
+      // kept, which has no pace to replay.
+      await openDetail(
+        tester,
+        _ride(plannedRoute: null, traveledRoute: _line()),
+      );
+
+      expect(find.byKey(const Key('archived-ride-again')), findsOneWidget);
+      expect(find.byKey(const Key('archived-ride-replay')), findsNothing);
+      await tester.pumpWidget(const SizedBox());
+    });
   });
 
   test('archived map bounds include sparse and self-crossing geometry', () {

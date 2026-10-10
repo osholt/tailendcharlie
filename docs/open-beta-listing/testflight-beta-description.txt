@@ -1,0 +1,20 @@
+Tail End Charlie helps a group of motorcyclists ride together without losing anyone at a turn.
+
+One rider starts a ride and shares a six-digit code or a link. Everyone who joins sees the group on one map. Riders take roles: a leader at the front, a Tail End Charlie at the back, and junction markers who hold a turn until the last rider has passed. You can plan a route from a destination, import a GPX file, or send a route to another navigation app.
+
+What is in this beta
+- Group rides with live positions, roles, and rider-submitted hazard, police and speed-camera reports.
+- An emergency-stop alert that reaches the riders in your own group.
+- Route planning, turn-by-turn guidance with spoken prompts, and a mapped speed limit.
+- Ride recording, a personal heatmap kept on your phone, and sharing a finished ride.
+- Optional read-only links that let one trusted person, or a whole-group watcher, follow a ride.
+
+This is an early, UK-first open beta. It is not an emergency service and cannot call for help: the emergency-stop alert reaches only your group. Navigation and speed limits are advisory and can be wrong or out of date. Road signs and the law come first. Never handle your phone while riding; set it up before you move off.
+
+Some features are experimental and not yet proven on the road. Sharing between nearby phones by Bluetooth when there is no signal has not been verified, so do not rely on it. CarPlay is experimental and has not been proven on real in-car units.
+
+Your location is shared with your own ride group while a ride is active. There are no accounts, no advertising and no analytics. Privacy policy: https://tailendcharlie.app/privacy.html
+
+You must be 17 or over to join this beta.
+
+Support and feedback: testing@tailendcharlie.app. In TestFlight, Send Beta Feedback attaches a screenshot. When you email, include the build number from Settings > About & build.

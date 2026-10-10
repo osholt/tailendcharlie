@@ -65,6 +65,84 @@ an emergency cutoff, set the minimum protocol and platform update URLs together;
 the server rejects join-code and sync state before accepting events. Do not
 retire the old hostname until supported clients have received the new endpoint.
 
+### Minimum app build and the "Update required" screen (#37)
+
+The protocol cutoff above only moves when the wire format does, which is the
+wrong tool for retiring one bad or ancient beta build. A second, finer gate
+declares a **minimum app build per platform**, read from the
+`x-tailendcharlie-app-build` header every store build already sends. It is **off
+by default** and fails open.
+
+What exists, end to end:
+
+| Layer | Behaviour |
+| --- | --- |
+| Relay config | `RIDE_RELAY_MINIMUM_CLIENT_BUILD_IOS` and `RIDE_RELAY_MINIMUM_CLIENT_BUILD_ANDROID` (`0` = off). `deploy/compose.yaml` and `compose.preproduction.yaml` pass them through (pre-production names carry the `PREPRODUCTION_` prefix), together with `RIDE_RELAY_MINIMUM_CLIENT_PROTOCOL` and the three `*_UPDATE_URL` values, which were documented but never reached the container. |
+| `GET /api/v1/compatibility` | Adds `minimumClientBuilds`, e.g. `{"iOS": 103}`, listing only the platforms whose gate is on; `{}` when off. Older apps ignore the field. |
+| Join-code register and resolve, sync, presence | A readable build below its platform's minimum is refused before any ride state is read or accepted: HTTP 426, `code: update_required`, `message`, `updateUrl` (the platform's configured URL) and `minimumClientBuild`. Those first three are exactly what every shipped app parses from a 426. Counted in `ride_relay_client_update_required_total{platform,reason}` with reason `build`, `protocol` or `capability`. |
+| App, at launch | `AppUpdateGateController` reads the compatibility document once. If this build is below the minimum, the home map shows an **Update required** banner and opens the **Update required** screen once per launch. |
+| App, join form | A refused join shows an **Update Tail End Charlie** button that opens the same screen, instead of a bare sentence. |
+| App, in a ride | The ride dashboard's relay status card says **App update required**, that SOS, alerts and navigation are not affected, and offers the update link. The full-screen explanation is never opened over a ride. |
+
+The update link is the build's own track-aware destination - the closed-testing
+opt-in page for a Play `alpha`/`beta` build, TestFlight for an iOS build - and
+falls back to the relay's `updateUrl` only for a build with none of its own, so
+a closed-testing tester is not sent to a store listing that will not offer them
+the app.
+
+**What the gate does not touch.** It decides what the home map says and whether
+the ride service takes this build's traffic. It is not consulted by the SOS and
+alert controls, navigation, route or ride recording, the ride journal or the
+Nearby transport, and the screen can always be left ("Continue without
+updating", or back). A refused build keeps recording: events stay in the durable
+journal, are never quarantined for the refusal, and are delivered once the build
+is updated or the minimum is lowered (`client_build_gate_test.dart` proves an
+SOS survives a refused build and is delivered afterwards). What *does* stop is
+sharing through the ride service, including SOS and alerts reaching riders
+through it. The screen says so in those words, and does not claim Nearby covers
+the gap.
+
+**Fail open.** The relay judges only a readable build on a known platform: a
+request with no or an unknown platform (the web watcher, curl, monitors), a
+missing build header, or an `unknown`/non-integer build (an unstamped local
+build) is never refused for being old. The app applies the same rule, so a local
+build is not told to update. An unreachable relay, a timeout, a relay with no
+compatibility document, or an app *newer* than the relay never produces an update
+request, and a later failed check never takes one back.
+
+Skew matrix (all covered by tests):
+
+| App | Relay | Result |
+| --- | --- | --- |
+| current | current, gate off | Syncs. The document carries `minimumClientBuilds: {}`. |
+| current, at or above the minimum | current, gate on | Syncs. |
+| below the minimum | current, gate on | Update screen and banner; join, sync and presence refused with 426 before any state is accepted; local features unaffected; resumes when the build is updated or the minimum lowered. |
+| current | older, no `minimumClientBuilds` | Syncs; nothing is refused. |
+| current | no compatibility document (404) | Legacy protocol-1 mode, five minutes, as before. |
+| builds that predate the gate (up to build 102) | current, gate on | The relay still refuses them with the 426 they already parse: the in-ride card shows **App update required** with the relay's `updateUrl`. The join form shows "Ride code service returned HTTP 426", which cannot be improved without a new binary. Set the platform update URLs to the store or TestFlight link before raising a minimum. |
+
+**Raising a minimum** is an operator decision. In order:
+
+1. Publish the replacement build to the platform's testers and confirm they can
+   install it (store evidence on the release issue).
+2. Exercise it on pre-production first: set
+   `PREPRODUCTION_RIDE_RELAY_MINIMUM_CLIENT_BUILD_<PLATFORM>` above a real old
+   build, recreate the pre-production server, and confirm that build shows the
+   screen with the right link and that a current build is untouched.
+3. Set the platform's update URL to the store or TestFlight page, then raise
+   `RIDE_RELAY_MINIMUM_CLIENT_BUILD_<PLATFORM>` in `deploy/.env` and recreate the
+   server. One platform at a time, and never while a ride is known to be out:
+   the gate stops an in-progress ride's old builds syncing, and the app can only
+   protect what is on the phone.
+4. Watch `ride_relay_client_update_required_total{reason="build"}` and the
+   compatibility document (`curl .../api/v1/compatibility | jq .minimumClientBuilds`).
+   Apps cache the document for `cacheSeconds` (default 300), so the effect is
+   gradual.
+5. To undo it, set the value back to `0` and recreate the server.
+
+Evidence still owed (#37 stays open): the screen and link on a physical old build
+from TestFlight and from Play closed testing, against pre-production.
+
 Nearby and internet acknowledgements remain separate. A server-acknowledged
 event is still eligible for nearby carriage, which lets a connected phone move
 events back into a group without coverage.

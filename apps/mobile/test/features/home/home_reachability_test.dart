@@ -18,6 +18,7 @@ import 'package:ride_relay/data/ride_diagnostics_log_store.dart';
 import 'package:ride_relay/domain/completed_ride.dart';
 import 'package:ride_relay/domain/completed_ride_store.dart';
 import 'package:ride_relay/domain/imported_route.dart';
+import 'package:ride_relay/domain/ride_plan.dart';
 import 'package:ride_relay/domain/rider_color.dart';
 import 'package:ride_relay/domain/recorded_route_store.dart';
 import 'package:ride_relay/domain/route_store.dart';
@@ -29,7 +30,9 @@ import 'package:ride_relay/features/map/motorcycle_icon.dart';
 import 'package:ride_relay/internet/internet_relay_client.dart';
 import 'package:ride_relay/internet/plan_directory.dart';
 import 'package:ride_relay/services/nearby_bridge.dart';
+import 'package:ride_relay/services/place_memory.dart';
 import 'package:ride_relay/services/road_routing.dart';
+import 'package:ride_relay/services/route_preferences_memory.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 /// Every way into the app, by the words a rider can read (#306).
@@ -387,7 +390,19 @@ void main() {
       findsNothing,
       reason: 'the bar belongs to the field while a search is open',
     );
-    // The way in it displaced, offered underneath the field instead.
+    // The way in it displaced, offered underneath the field instead. Saved
+    // places (#937) and the fuel search (#951) sit above it, so the sheet's
+    // lazily built list may need scrolling to reach it.
+    await tester.scrollUntilVisible(
+      find.byKey(const Key('home-search-join-code')),
+      120,
+      scrollable: find
+          .ancestor(
+            of: find.byKey(const Key('home-search-circular-ride')),
+            matching: find.byType(Scrollable),
+          )
+          .first,
+    );
     expect(find.byKey(const Key('home-search-join-code')), findsOneWidget);
     expect(find.text('Join a ride with a code'), findsOneWidget);
   });
@@ -476,6 +491,115 @@ void main() {
       expect(rideController.hasActiveRide, isFalse);
     },
   );
+
+  testWidgets('a new plan starts with the last confirmed route options', (
+    tester,
+  ) async {
+    final routing = _RecordingRoadRoutingService();
+    final planner = DestinationRoutePlanner(
+      searchService: const _BathDestinationSearch(),
+      routingService: routing,
+    );
+    await const RoutePreferencesMemory().remember(
+      const RoutePreferences(avoidMotorways: true),
+    );
+    await pumpHome(tester, destinationPlanner: planner);
+    tester
+        .widget<HomeMapBackdrop>(find.byType(HomeMapBackdrop))
+        .position!
+        .value = const GeoPoint(
+      latitude: 51.45,
+      longitude: -2.59,
+    );
+    await tester.pump();
+
+    await tester.tap(find.byKey(const Key('home-search-bar')));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const Key('home-search-field')), 'bath');
+    await tester.tap(find.byKey(const Key('home-search-submit')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Bath, Somerset'));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('ride-plan-itinerary')), findsOneWidget);
+    // Routed with them from the first request, without opening the options.
+    expect(routing.preferences?.avoidMotorways, isTrue);
+  });
+
+  // #937: a place chosen from the search is there next time, and Home is one
+  // tap from the empty search, going onto the plan under the name Home.
+  testWidgets('a chosen destination is remembered, and Home opens the plan '
+      'named Home', (tester) async {
+    final routing = _RecordingRoadRoutingService();
+    final planner = DestinationRoutePlanner(
+      searchService: const _BathDestinationSearch(),
+      routingService: routing,
+    );
+    final seeded = await PlaceMemory.open();
+    await seeded.setHome(
+      const RidePlanPlace(
+        point: GeoPoint(latitude: 51.40, longitude: -2.50),
+        label: '12 Example Road',
+        description: '12 Example Road, Shire, England',
+      ),
+    );
+    seeded.dispose();
+    await pumpHome(tester, destinationPlanner: planner);
+    tester
+        .widget<HomeMapBackdrop>(find.byType(HomeMapBackdrop))
+        .position!
+        .value = const GeoPoint(
+      latitude: 51.45,
+      longitude: -2.59,
+    );
+    await tester.pump();
+
+    // A search, and a result chosen from it.
+    await tester.tap(find.byKey(const Key('home-search-bar')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('home-search-saved-home')), findsOneWidget);
+    await tester.enterText(find.byKey(const Key('home-search-field')), 'bath');
+    await tester.tap(find.byKey(const Key('home-search-submit')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Bath, Somerset'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('ride-plan-itinerary')), findsOneWidget);
+
+    final afterSearch = await PlaceMemory.open();
+    expect(afterSearch.recents.map((recent) => recent.label), ['Bath']);
+    afterSearch.dispose();
+
+    // Back out of the plan, and Home is one tap from the empty search.
+    tester.state<NavigatorState>(find.byType(Navigator).first).pop();
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('home-search-bar')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('home-search-recent-0')), findsOneWidget);
+    await tester.tap(find.byKey(const Key('home-search-saved-home')));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.descendant(
+        of: find.byKey(const Key('ride-plan-destination')),
+        matching: find.text('Home'),
+      ),
+      findsOneWidget,
+    );
+    expect(routing.waypoints.last.latitude, 51.40);
+    expect(routing.waypoints.first.latitude, 51.45);
+
+    // Confirmed, the route's last place is Home and still says where Home is.
+    await tester.tap(find.byKey(const Key('confirm-reviewed-route')));
+    await tester.pumpAndSettle();
+    final destination = tester
+        .widget<HomeMapBackdrop>(find.byType(HomeMapBackdrop))
+        .pendingInAppRoute!
+        .route
+        .waypoints
+        .last;
+    expect(destination.name, 'Home');
+    expect(destination.description, '12 Example Road, Shire, England');
+  });
 
   testWidgets('a plan made as a group creates the ride with its route', (
     tester,
@@ -601,9 +725,12 @@ void main() {
     );
     final freeRoamStore = InMemoryRouteStore(_bathRoute());
     await pumpHome(tester, freeRoamRouteStore: freeRoamStore);
-    tester
-        .widget<HomeMapBackdrop>(find.byType(HomeMapBackdrop))
-        .onRouteChanged!(_bathRoute());
+    final backdrop = tester.widget<HomeMapBackdrop>(
+      find.byType(HomeMapBackdrop),
+    );
+    backdrop.onRouteChanged!(_bathRoute());
+    // The navigation being recorded, which the group ride carries on from.
+    backdrop.onPersonalNavigationChanged!('free-roam-bath');
     await tester.pumpAndSettle();
 
     await tester.tap(find.byKey(const Key('home-more-actions')));
@@ -617,6 +744,8 @@ void main() {
     expect(rideController.coordinationMode.isGroup, isTrue);
     expect(rideController.rideStarted, isTrue);
     expect(rideController.authoritativeRoute?.id, 'bath');
+    // Filed with the navigation as one ride in My rides (#896).
+    expect(rideController.session?.continuesRideId, 'free-roam-bath');
     expect(find.byKey(const Key('ride-invite-step')), findsOneWidget);
 
     await tester.tap(find.byKey(const Key('ride-invite-continue')));
@@ -629,7 +758,10 @@ void main() {
   testWidgets('a route handed back by a group ride is navigated at once', (
     tester,
   ) async {
-    sharedRoutes.stageFreeRoamRoute(_bathRoute());
+    sharedRoutes.stageFreeRoamRoute(
+      _bathRoute(),
+      continuesRideId: 'group-ride',
+    );
     await pumpHome(tester);
 
     final pending = tester
@@ -637,6 +769,7 @@ void main() {
         .pendingInAppRoute;
     expect(pending?.route.id, 'bath');
     expect(pending?.reviewed, isTrue);
+    expect(pending?.continuesRideId, 'group-ride');
     expect(sharedRoutes.pendingFreeRoamRoute, isNull);
   });
 

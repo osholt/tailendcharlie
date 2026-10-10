@@ -275,7 +275,10 @@ class NeuralSpokenGuidanceEngine
           throw const _NeuralSpeechSuperseded();
         }
         // Never play a distance or junction that became stale during inference.
-        // The fail-safe will deliver the current phrase immediately instead.
+        // The caller decides what stale means (`currentGuidancePhrase`): it
+        // returns the rendered phrase while it is still right, however long the
+        // render took. A different phrase here supersedes this one, and the
+        // fail-safe drops it; it does not hand it to the system voice (#616).
         if (requireCurrentSpokenPhrase(currentPhrase) != phrase) {
           throw const SpokenGuidanceSuperseded();
         }
@@ -502,8 +505,19 @@ class FailSafeNeuralSpokenGuidanceEngine
           _warming != null ? warmedStartDeadline : startDeadline,
         );
       }
-    } on Object {
+    } on Object catch (error) {
       await neural.cancelCurrentAttempt();
+      // A superseded prompt is not a failure of the natural voice and is not
+      // spoken by another one (#616). Either the phrase it rendered is no longer
+      // what the ride would say (a turn passed, a later stage is due, the
+      // distance moved on) or something stopped speech while it rendered. The
+      // caller has not consumed the stage, so the next fix announces what is
+      // true now, in the natural voice, instead of this prompt arriving late in
+      // the system one.
+      if (error is SpokenGuidanceSuperseded ||
+          error is _NeuralSpeechSuperseded) {
+        throw const SpokenGuidanceSuperseded();
+      }
       // This prompt must not be late, but one slow generation must not disable
       // the installed natural voice for the rest of the ride. The model remains
       // warm and the next independently serialized prompt gets a fresh chance.

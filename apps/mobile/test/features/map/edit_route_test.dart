@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
@@ -14,6 +15,7 @@ import 'package:ride_relay/services/offline_tile_cache.dart';
 import 'package:ride_relay/services/ride_plan_router.dart';
 import 'package:ride_relay/services/road_routing.dart';
 import 'package:ride_relay/services/route_importer.dart';
+import 'package:ride_relay/services/route_preferences_memory.dart';
 import 'package:ride_relay/services/route_waypoint_editor.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -25,6 +27,8 @@ const _town = GeoPoint(latitude: 52.30, longitude: -1.00);
 
 /// Confirming a route is not final (#847).
 void main() {
+  setUp(() => SharedPreferences.setMockInitialValues({}));
+
   Future<ImportedRoute> confirmedRoute() async =>
       (await RidePlanRouter(
             routingService: _StraightRouting(),
@@ -42,8 +46,9 @@ void main() {
     ImportedRoute? route,
     Object? editRouteRequestToken,
     Object? changeRouteRequestToken,
+    bool rideStarted = false,
+    ValueListenable<GeoPoint?>? currentPosition,
   }) async {
-    SharedPreferences.setMockInitialValues({});
     final directory = Directory.systemTemp.createTempSync('edit-route');
     addTearDown(() => directory.deleteSync(recursive: true));
     final cache = OfflineTileCache(
@@ -59,7 +64,8 @@ void main() {
           routeStore: store,
           routeImporter: RouteImporter(source: const _NoFileSource()),
           offlineTileCache: cache,
-          rideStarted: false,
+          rideStarted: rideStarted,
+          currentPosition: currentPosition,
           acquireCurrentPosition: () async => _start,
           destinationRoutePlanner: DestinationRoutePlanner(
             searchService: const _PassSearch(),
@@ -85,6 +91,8 @@ void main() {
     );
 
     expect(find.byKey(const Key('ride-plan-itinerary')), findsOneWidget);
+    // Another app is offered from the plan, not only after confirming (#895).
+    expect(find.byKey(const Key('ride-plan-open-with')), findsOneWidget);
     expect(find.byKey(const Key('ride-plan-stop-0')), findsOneWidget);
     expect(
       find.descendant(
@@ -114,6 +122,145 @@ void main() {
       'Pass',
       'Town',
     ]);
+  });
+
+  testWidgets(
+    'an edit under way re-plans from here and drops the ridden part',
+    (tester) async {
+      final route = await confirmedRoute();
+      // Past the cafe, on the line to town.
+      const here = GeoPoint(latitude: 52.15, longitude: -1.00);
+      final position = ValueNotifier<GeoPoint?>(here);
+      addTearDown(position.dispose);
+      final store = await pumpMap(
+        tester,
+        route: route,
+        rideStarted: true,
+        currentPosition: position,
+        editRouteRequestToken: Object(),
+      );
+
+      expect(find.byKey(const Key('ride-plan-itinerary')), findsOneWidget);
+      expect(
+        find.descendant(
+          of: find.byKey(const Key('ride-plan-start')),
+          matching: find.text('Your location'),
+        ),
+        findsOneWidget,
+      );
+      // The cafe is behind the rider.
+      expect(find.byKey(const Key('ride-plan-stop-0')), findsNothing);
+
+      await tester.tap(find.byKey(const Key('confirm-reviewed-route')));
+      await tester.pumpAndSettle();
+
+      final saved = await store.loadActiveRoute();
+      expect(saved?.id, route.id, reason: 'a revision of the same route');
+      expect(saved?.waypoints.map((waypoint) => waypoint.name), [
+        'Start',
+        'Town',
+      ]);
+      expect(saved?.waypoints.first.point, here);
+      expect(saved?.allPoints.first, here);
+    },
+  );
+
+  testWidgets('before the first stop, an edit under way still starts here', (
+    tester,
+  ) async {
+    final route = await confirmedRoute();
+    // Ridden part of the way to the cafe: every stop is still ahead, so the
+    // plan has as many places as the route, and is re-planned all the same.
+    const here = GeoPoint(latitude: 52.05, longitude: -1.00);
+    final position = ValueNotifier<GeoPoint?>(here);
+    addTearDown(position.dispose);
+    final store = await pumpMap(
+      tester,
+      route: route,
+      rideStarted: true,
+      currentPosition: position,
+      editRouteRequestToken: Object(),
+    );
+
+    expect(find.byKey(const Key('ride-plan-stop-0')), findsOneWidget);
+    await tester.tap(find.byKey(const Key('confirm-reviewed-route')));
+    await tester.pumpAndSettle();
+
+    final saved = await store.loadActiveRoute();
+    expect(saved?.waypoints.map((waypoint) => waypoint.name), [
+      'Start',
+      'Cafe',
+      'Town',
+    ]);
+    expect(saved?.allPoints.first, here);
+  });
+
+  testWidgets('a new destination starts with the last confirmed options', (
+    tester,
+  ) async {
+    const remembered = RoutePreferences(avoidTolls: true);
+    SharedPreferences.setMockInitialValues({});
+    await const RoutePreferencesMemory().remember(remembered);
+    await pumpMap(tester, editRouteRequestToken: Object());
+
+    // No route to edit: Edit route is a new plan, through a place search.
+    await tester.enterText(find.byKey(const Key('place-search-field')), 'pass');
+    await tester.tap(find.byKey(const Key('place-search-submit')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('place-search-result-Pass, Shire')));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('ride-plan-itinerary')), findsOneWidget);
+    await tester.scrollUntilVisible(
+      find.text(remembered.summary),
+      120,
+      scrollable: find
+          .descendant(
+            of: find.byType(ListView),
+            matching: find.byType(Scrollable),
+          )
+          .first,
+    );
+    expect(find.text(remembered.summary), findsOneWidget);
+  });
+
+  testWidgets('editing an imported track keeps its line until a change', (
+    tester,
+  ) async {
+    final track = ImportedRoute(
+      id: 'imported-track',
+      name: 'Scouted loop',
+      importedAt: DateTime.utc(2026, 10, 4),
+      sourceFileName: 'scouted.gpx',
+      paths: const [
+        RoutePath(
+          kind: RoutePathKind.track,
+          points: [
+            _start,
+            GeoPoint(latitude: 52.07, longitude: -1.04),
+            GeoPoint(latitude: 52.18, longitude: -0.97),
+            _town,
+          ],
+        ),
+      ],
+      waypoints: const [],
+    );
+    final store = await pumpMap(
+      tester,
+      route: track,
+      editRouteRequestToken: Object(),
+    );
+
+    expect(find.byKey(const Key('ride-plan-itinerary')), findsOneWidget);
+    expect(
+      find.byKey(const Key('ride-plan-original-line-note')),
+      findsOneWidget,
+    );
+    await tester.tap(find.byKey(const Key('confirm-reviewed-route')));
+    await tester.pumpAndSettle();
+
+    final saved = await store.loadActiveRoute();
+    expect(saved?.paths.single.points, track.paths.single.points);
   });
 
   testWidgets('replacing the route offers editing it first', (tester) async {

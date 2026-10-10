@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
+import '../controllers/app_update_gate_controller.dart';
 import '../controllers/distance_unit_controller.dart';
 import '../controllers/global_ride_heatmap_controller.dart';
 import '../controllers/completed_rides_controller.dart';
@@ -10,7 +11,9 @@ import '../controllers/map_style_mode_controller.dart';
 import '../controllers/ride_code_preference_controller.dart';
 import '../controllers/ride_controller.dart';
 import '../controllers/ride_invitation_link_controller.dart';
+import '../controllers/demo_route_choice_controller.dart';
 import '../controllers/mini_map_display_controller.dart';
+import '../controllers/speed_adaptive_zoom_controller.dart';
 import '../controllers/route_progress_display_controller.dart';
 import '../controllers/rider_profile_controller.dart';
 import '../controllers/road_rating_controller.dart';
@@ -40,6 +43,8 @@ class RideRelayApp extends StatelessWidget {
     required this.speedLimitDisplay,
     this.routeProgressDisplay,
     this.miniMapDisplay,
+    this.demoRouteChoice,
+    this.speedAdaptiveZoom,
     required this.recordedRoutes,
     required this.completedRides,
     this.globalRideHeatmap,
@@ -50,6 +55,7 @@ class RideRelayApp extends StatelessWidget {
     this.testControlRegistry,
     this.spokenGuidance,
     this.rideDiagnostics,
+    this.updateGate,
     this.screenWakeLock = const WakelockPlusScreenWakeLock(),
     this.screenWakeReassertInterval = const Duration(seconds: 15),
     this.enableNativeServices = true,
@@ -66,6 +72,10 @@ class RideRelayApp extends StatelessWidget {
   final SpeedLimitDisplayController speedLimitDisplay;
   final RouteProgressDisplayController? routeProgressDisplay;
   final MiniMapDisplayController? miniMapDisplay;
+
+  /// Which bundled demo route a demo ride and the map's demo action use (#934).
+  final DemoRouteChoiceController? demoRouteChoice;
+  final SpeedAdaptiveZoomController? speedAdaptiveZoom;
   final RecordedRouteStore recordedRoutes;
   final CompletedRidesController completedRides;
   final GlobalRideHeatmapController? globalRideHeatmap;
@@ -86,6 +96,10 @@ class RideRelayApp extends StatelessWidget {
   /// Records what the app said beside what the bike did, when an instrumented
   /// build has it switched on (#419). Null in an ordinary build.
   final RideDiagnosticsController? rideDiagnostics;
+
+  /// Asks the ride service whether this build is still supported (#37). Null in
+  /// tests that do not exercise it; null never means "supported".
+  final AppUpdateGateController? updateGate;
 
   final bool enableNativeServices;
 
@@ -148,6 +162,7 @@ class RideRelayApp extends StatelessWidget {
         speedLimitDisplay,
         ?routeProgressDisplay,
         ?miniMapDisplay,
+        ?speedAdaptiveZoom,
       ]),
       builder: (context, _) {
         if (!restorationComplete && !showRestorationFallback) {
@@ -164,6 +179,8 @@ class RideRelayApp extends StatelessWidget {
             speedLimitDisplay: speedLimitDisplay,
             routeProgressDisplay: routeProgressDisplay,
             miniMapDisplay: miniMapDisplay,
+            demoRouteChoice: demoRouteChoice,
+            speedAdaptiveZoom: speedAdaptiveZoom,
             recordedRoutes: recordedRoutes,
             completedRides: completedRides,
             globalRideHeatmap: globalRideHeatmap,
@@ -171,6 +188,7 @@ class RideRelayApp extends StatelessWidget {
             testControl: testControl,
             spokenGuidance: spokenGuidance,
             rideDiagnostics: rideDiagnostics,
+            updateGate: updateGate,
             restoringRideCode: controller.session?.rideCode,
             restorationError: restorationError,
             onRetryRestoration: retryRestoration,
@@ -207,6 +225,8 @@ class RideRelayApp extends StatelessWidget {
             speedLimitDisplay: speedLimitDisplay,
             routeProgressDisplay: routeProgressDisplay,
             miniMapDisplay: miniMapDisplay,
+            demoRouteChoice: demoRouteChoice,
+            speedAdaptiveZoom: speedAdaptiveZoom,
             completedRideStore: completedRides,
             globalRideHeatmap: globalRideHeatmap,
             roadRatings: roadRatings,
@@ -233,6 +253,8 @@ class RideRelayApp extends StatelessWidget {
           speedLimitDisplay: speedLimitDisplay,
           routeProgressDisplay: routeProgressDisplay,
           miniMapDisplay: miniMapDisplay,
+          demoRouteChoice: demoRouteChoice,
+          speedAdaptiveZoom: speedAdaptiveZoom,
           recordedRoutes: recordedRoutes,
           completedRides: completedRides,
           globalRideHeatmap: globalRideHeatmap,
@@ -240,6 +262,7 @@ class RideRelayApp extends StatelessWidget {
           testControl: testControl,
           spokenGuidance: spokenGuidance,
           rideDiagnostics: rideDiagnostics,
+          updateGate: updateGate,
           openJoinGroup: openJoinGroup,
           onJoinGroupOpened: consumeJoinGroupRequest,
           enableNativeServices: enableNativeServices,

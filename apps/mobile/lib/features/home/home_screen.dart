@@ -7,13 +7,17 @@ import 'package:flutter/services.dart';
 import 'package:crypto/crypto.dart';
 import 'package:share_plus/share_plus.dart';
 
+import '../simulation/demo_route_picker.dart';
+import '../../controllers/app_update_gate_controller.dart';
 import '../../controllers/distance_unit_controller.dart';
 import '../../controllers/global_ride_heatmap_controller.dart';
 import '../../controllers/completed_rides_controller.dart';
 import '../../controllers/map_style_mode_controller.dart';
 import '../../controllers/ride_code_preference_controller.dart';
 import '../../controllers/ride_controller.dart';
+import '../../controllers/demo_route_choice_controller.dart';
 import '../../controllers/mini_map_display_controller.dart';
+import '../../controllers/speed_adaptive_zoom_controller.dart';
 import '../../controllers/route_progress_display_controller.dart';
 import '../../controllers/rider_profile_controller.dart';
 import '../../controllers/shared_route_controller.dart';
@@ -46,6 +50,7 @@ import '../../services/gpx_import_source.dart';
 import '../../services/ride_plan_router.dart';
 import '../../services/route_importer.dart';
 import '../../services/stored_route_library.dart';
+import '../../services/route_preferences_memory.dart';
 import '../map/ride_map_feature.dart'
     show HostMapChrome, HostMapMenuAction, rideMapToolbarHeight;
 import '../map/route_review_screen.dart';
@@ -53,7 +58,10 @@ import '../map/stored_route_picker.dart';
 import '../ride/previous_rides_screen.dart';
 import '../ride/route_recorder_screen.dart';
 import '../settings/unit_settings_sheet.dart';
+import '../../services/fuel_preference.dart';
 import '../settings/about_build_sheet.dart';
+import '../settings/heatmap_consent_prompt.dart';
+import '../update/update_required_screen.dart';
 
 /// Runs the stateful half of a destination-search handoff in the only safe
 /// order: the route belongs to the ride that has just been created.
@@ -109,6 +117,8 @@ class HomeScreen extends StatefulWidget {
     required this.speedLimitDisplay,
     this.routeProgressDisplay,
     this.miniMapDisplay,
+    this.demoRouteChoice,
+    this.speedAdaptiveZoom,
     required this.recordedRoutes,
     required this.completedRides,
     this.globalRideHeatmap,
@@ -116,6 +126,7 @@ class HomeScreen extends StatefulWidget {
     this.testControl,
     this.spokenGuidance,
     this.rideDiagnostics,
+    this.updateGate,
     this.restoringRideCode,
     this.restorationError,
     this.onRetryRestoration,
@@ -135,6 +146,11 @@ class HomeScreen extends StatefulWidget {
   final SpeedLimitDisplayController speedLimitDisplay;
   final RouteProgressDisplayController? routeProgressDisplay;
   final MiniMapDisplayController? miniMapDisplay;
+
+  /// Which bundled demo route a simulated ride and the map's demo action use
+  /// (#934). Null in tests that do not exercise the choice.
+  final DemoRouteChoiceController? demoRouteChoice;
+  final SpeedAdaptiveZoomController? speedAdaptiveZoom;
   final RecordedRouteStore recordedRoutes;
   final CompletedRidesController completedRides;
   final GlobalRideHeatmapController? globalRideHeatmap;
@@ -152,6 +168,11 @@ class HomeScreen extends StatefulWidget {
   /// *here* offers the recorder too — wiring only the ride shell's sheet is
   /// what hid it from a tester who had never started a ride (#419).
   final RideDiagnosticsController? rideDiagnostics;
+
+  /// What the ride service has said about this build (#37). Null in a widget
+  /// test that does not exercise it. It only changes what the map says: the
+  /// banner and one full-screen explanation, never anything a ride depends on.
+  final AppUpdateGateController? updateGate;
 
   final String? restoringRideCode;
   final Object? restorationError;
@@ -188,9 +209,9 @@ class HomeScreen extends StatefulWidget {
     required http.Client client,
     required RoutingConfiguration configuration,
   }) => DestinationRoutePlanner(
-    searchService: NominatimDestinationSearchService(
+    searchService: buildDestinationSearchService(
       client: client,
-      baseUrl: configuration.geocodingBaseUrl,
+      configuration: configuration,
     ),
     routingService: buildPlanningRoutingService(
       client: client,
@@ -205,6 +226,13 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   final _buildIdentity = BuildIdentity.fromEnvironment();
   bool _joinGroupOpenScheduled = false;
+
+  /// Whether the map has read the route it last stored. A route restored from
+  /// the last session *is* navigation (see [_routeOnMap]), and it arrives a
+  /// moment after the first frame, so the question waits for the map to say
+  /// there is none rather than racing it. A build with no platform map never
+  /// says, and has no route to restore.
+  late bool _mapRouteResolved = !widget.enableNativeServices;
 
   /// True while the destination search is open, so the field can grow into it
   /// and the other actions can step aside (#595).
@@ -237,12 +265,17 @@ class _HomeScreenState extends State<HomeScreen> {
     );
     _position.addListener(_publishHomeCarPlayState);
     _position.addListener(_observeAutomaticUnits);
+    unawaited(_readFuelPreference());
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) _publishHomeCarPlayState();
     });
+    widget.updateGate?.addListener(_onUpdateGateChanged);
+    unawaited(widget.updateGate?.check());
+    _onUpdateGateChanged();
     _takeRouteFromGroup();
     if (widget.openJoinGroup) {
       _scheduleJoinGroupSheet();
+      _scheduleHeatmapConsentAsk();
       return;
     }
     final choice = widget.riderProfile.takePendingRideChoice();
@@ -258,15 +291,58 @@ class _HomeScreenState extends State<HomeScreen> {
         }
       });
     }
+    // Registered last, so that anything the rider asked for on the way in opens
+    // first and the question then finds a screen that is no longer current.
+    _scheduleHeatmapConsentAsk();
+  }
+
+  /// Whether the one-time global-heatmap question could be put to the rider
+  /// right now (#957). Navigation and rides are read at the moment of asking,
+  /// not when it was scheduled, so a route that appears in between wins.
+  bool get _mayAskHeatmapConsent {
+    final heatmap = widget.globalRideHeatmap;
+    return heatmap != null &&
+        _mapRouteResolved &&
+        shouldAskHeatmapConsent(
+          consentAnswered: heatmap.consentAnswered,
+          hasActiveRide: widget.controller.hasActiveRide,
+          restoring: widget.onRetryRestoration != null,
+          // A route on the map, or one on its way there from a group ride the
+          // rider has just left, is navigation.
+          navigating: _routeOnMap != null || _freeRoamRoute != null,
+          arrangingRide:
+              widget.controller.busy || _planningDestination || _searching,
+        );
+  }
+
+  /// Asks installs that never stored a choice whether to contribute to the
+  /// global heatmap, once, from the home map and nowhere else (#957). Until the
+  /// rider answers, nothing is contributed.
+  void _scheduleHeatmapConsentAsk() {
+    if (!_mayAskHeatmapConsent) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final heatmap = widget.globalRideHeatmap;
+      if (!mounted ||
+          heatmap == null ||
+          !_mayAskHeatmapConsent ||
+          // Another route is over the map: a sheet, Settings, the update
+          // screen. Wait for the next opportunity rather than stack on it.
+          ModalRoute.of(context)?.isCurrent != true) {
+        return;
+      }
+      unawaited(HeatmapConsentDialog.show(context, heatmap));
+    });
   }
 
   /// A route a rider is riding on with alone, handed back by the group ride
   /// they left (#847). Free roam navigates it as it is: it was confirmed
   /// already, and the rider is probably moving.
   void _takeRouteFromGroup() {
-    final route = widget.sharedRoutes.takeFreeRoamRoute();
-    if (route == null) return;
-    _freeRoamRoute = PendingInAppRoute(route: route, reviewed: true);
+    // With the group ride it carries on from, so the two are one ride in My
+    // rides (#896).
+    final handover = widget.sharedRoutes.takeFreeRoamHandover();
+    if (handover == null) return;
+    _freeRoamRoute = handover;
     _freeRoamRouteToken = Object();
   }
 
@@ -284,6 +360,8 @@ class _HomeScreenState extends State<HomeScreen> {
       riderProfile: widget.riderProfile,
       route: route,
       startNow: route != null,
+      // The navigation under way and the group ride are one ride (#896).
+      continuesRideId: route == null ? null : _personalNavigationRideId,
     );
     if (route == null ||
         !controller.hasActiveRide ||
@@ -311,9 +389,50 @@ class _HomeScreenState extends State<HomeScreen> {
     if (!oldWidget.openJoinGroup && widget.openJoinGroup) {
       _scheduleJoinGroupSheet();
     }
+    if (oldWidget.updateGate != widget.updateGate) {
+      oldWidget.updateGate?.removeListener(_onUpdateGateChanged);
+      widget.updateGate?.addListener(_onUpdateGateChanged);
+      _onUpdateGateChanged();
+    }
     if (widget.sharedRoutes.pendingFreeRoamRoute != null) {
       setState(_takeRouteFromGroup);
     }
+    _scheduleHeatmapConsentAsk();
+  }
+
+  void _onUpdateGateChanged() {
+    if (!mounted) return;
+    // Rebuild for the banner; the full-screen explanation is offered at most
+    // once per launch, and only when nothing else owns the rider's attention.
+    setState(() {});
+    final gate = widget.updateGate;
+    if (gate == null ||
+        !shouldOfferUpdateScreen(
+          gate: gate,
+          hasActiveRide: widget.controller.hasActiveRide,
+          restoring: widget.onRetryRestoration != null,
+        )) {
+      return;
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted ||
+          ModalRoute.of(context)?.isCurrent != true ||
+          !shouldOfferUpdateScreen(
+            gate: gate,
+            hasActiveRide: widget.controller.hasActiveRide,
+            restoring: widget.onRetryRestoration != null,
+          )) {
+        return;
+      }
+      gate.markPresented();
+      unawaited(
+        UpdateRequiredScreen.show(
+          context,
+          identity: _buildIdentity,
+          state: gate.state,
+        ),
+      );
+    });
   }
 
   void _scheduleJoinGroupSheet() {
@@ -348,6 +467,8 @@ class _HomeScreenState extends State<HomeScreen> {
     // with the map and a client it lends to the geocoder.
     _position.removeListener(_publishHomeCarPlayState);
     _position.removeListener(_observeAutomaticUnits);
+    _fuelPreference?.removeListener(_onFuelPreferenceChanged);
+    widget.updateGate?.removeListener(_onUpdateGateChanged);
     unawaited(_carPlayBridge.dispose());
     _position.dispose();
     _routingClient.close();
@@ -380,6 +501,13 @@ class _HomeScreenState extends State<HomeScreen> {
   /// Bumped to reopen the free-roam route on the plan surface (#847). The map
   /// owns the route and the surface, so Home only asks.
   Object? _editRouteRequestToken;
+
+  /// Bumped to find a fuel stop or charger (#951). The map owns the route the
+  /// stop goes on and the plan surface it is confirmed on, so Home only asks.
+  Object? _fuelStopRequestToken;
+
+  /// The free-roam navigation being recorded, if any (#896).
+  String? _personalNavigationRideId;
 
   /// The route the free-roam map is following, if any.
   ///
@@ -630,6 +758,7 @@ class _HomeScreenState extends State<HomeScreen> {
           HomeMapBackdrop(
             mapStyleMode: widget.mapStyleMode,
             speedLimitDisplay: widget.speedLimitDisplay,
+            speedAdaptiveZoom: widget.speedAdaptiveZoom,
             spokenGuidance: widget.spokenGuidance,
             rideDiagnostics: widget.rideDiagnostics,
             distanceUnit: widget.distanceUnits.value,
@@ -637,6 +766,7 @@ class _HomeScreenState extends State<HomeScreen> {
             recordedRouteStore: widget.recordedRoutes,
             globalRideHeatmap: widget.globalRideHeatmap,
             enableNativeServices: widget.enableNativeServices,
+            demoRouteChoice: widget.demoRouteChoice,
             bottomInset: 0,
             position: _position,
             // The searched destination, reviewed and activated by the map
@@ -656,11 +786,23 @@ class _HomeScreenState extends State<HomeScreen> {
             onEditRouteRequestHandled: () => setState(() {
               _editRouteRequestToken = null;
             }),
+            fuelStopRequestToken: _fuelStopRequestToken,
+            onFuelStopRequestHandled: () => setState(() {
+              _fuelStopRequestToken = null;
+            }),
             navigating: _routeOnMap != null,
             localDisplayName: widget.riderProfile.displayName,
             onNavigationArchived: (ride) =>
                 unawaited(_showSavedNavigation(ride)),
-            onRouteChanged: (route) => setState(() => _routeOnMap = route),
+            onRouteChanged: (route) {
+              setState(() {
+                _routeOnMap = route;
+                _mapRouteResolved = true;
+              });
+              _scheduleHeatmapConsentAsk();
+            },
+            onPersonalNavigationChanged: (rideId) =>
+                _personalNavigationRideId = rideId,
             // The search field and these two actions used to be painted on
             // top of the map's own AppBar, in the same corner of the same
             // safe area, from this widget tree rather than the map's. Both
@@ -681,6 +823,18 @@ class _HomeScreenState extends State<HomeScreen> {
                     icon: Icons.edit_road_outlined,
                     onSelected: () =>
                         setState(() => _editRouteRequestToken = Object()),
+                  ),
+                // The search field is off the navigation canvas, so a rider
+                // following a route asks for fuel from here (#951).
+                if (_routeOnMap != null)
+                  HostMapMenuAction(
+                    id: 'home-navigate-to-fuel',
+                    label: _fuelSearchPreference.searchLabel,
+                    icon: _fuelSearchPreference.isElectric
+                        ? Icons.ev_station_outlined
+                        : Icons.local_gas_station_outlined,
+                    onSelected: () =>
+                        setState(() => _fuelStopRequestToken = Object()),
                   ),
                 HostMapMenuAction(
                   id: 'home-create-ride',
@@ -721,8 +875,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   onSelected:
                       !widget.controller.busy &&
                           widget.onRetryRestoration == null
-                      ? () =>
-                            unawaited(widget.controller.createSimulationRide())
+                      ? () => unawaited(_startSimulation())
                       : null,
                 ),
               ],
@@ -823,6 +976,8 @@ class _HomeScreenState extends State<HomeScreen> {
   /// the layout can answer — a notices area that reserved space for nothing would
   /// be a small panel, which is the thing being removed.
   List<Widget> _notices(BuildContext context) => [
+    if (widget.updateGate case final gate? when gate.updateRequired)
+      UpdateRequiredBanner(gate: gate, identity: _buildIdentity),
     TesterUpdateBanner(identity: _buildIdentity),
     if (widget.onRetryRestoration != null)
       _RideRestorationBanner(
@@ -872,6 +1027,22 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  /// Asks which demo route to ride, remembers it, then starts the simulation
+  /// (#934). Dismissing the sheet starts nothing.
+  Future<void> _startSimulation() async {
+    final choice = widget.demoRouteChoice;
+    if (choice != null) {
+      final picked = await showDemoRoutePicker(
+        context,
+        current: choice.current,
+      );
+      if (picked == null) return;
+      await choice.choose(picked);
+      if (!mounted) return;
+    }
+    await widget.controller.createSimulationRide();
+  }
+
   Future<void> _openSettings() => UnitSettingsSheet.show(
     context,
     widget.distanceUnits,
@@ -880,6 +1051,7 @@ class _HomeScreenState extends State<HomeScreen> {
     speedLimitDisplay: widget.speedLimitDisplay,
     routeProgressDisplay: widget.routeProgressDisplay,
     miniMapDisplay: widget.miniMapDisplay,
+    speedAdaptiveZoom: widget.speedAdaptiveZoom,
     testControl: widget.testControl,
     spokenGuidance: widget.spokenGuidance,
     rideDiagnostics: widget.rideDiagnostics,
@@ -910,6 +1082,8 @@ class _HomeScreenState extends State<HomeScreen> {
       context,
       searchService: _destinationPlanner.searchService,
       hasPosition: _position.value != null,
+      currentPoint: _position.value,
+      fuelSearchLabel: _fuelSearchPreference.searchLabel,
     );
     if (outcome == null || !mounted) return;
     switch (outcome) {
@@ -929,7 +1103,32 @@ class _HomeScreenState extends State<HomeScreen> {
             await _openRideLibrary(context);
           case HomeSearchHandoffKind.circularRide:
             setState(() => _circularRideRequestToken = Object());
+          case HomeSearchHandoffKind.fuelStop:
+            setState(() => _fuelStopRequestToken = Object());
         }
+    }
+  }
+
+  /// The rider's saved fuel, which words the search's fuel action (#951).
+  /// Read once in the background; until then, and if it cannot be read, the
+  /// action says "Navigate to fuel".
+  FuelPreferenceController? _fuelPreference;
+
+  void _onFuelPreferenceChanged() {
+    if (mounted) setState(() {});
+  }
+
+  FuelPreference get _fuelSearchPreference =>
+      _fuelPreference?.value ?? FuelPreferenceController.defaultPreference;
+
+  Future<void> _readFuelPreference() async {
+    try {
+      final preference = await FuelPreferenceController.shared();
+      if (!mounted) return;
+      _fuelPreference = preference;
+      preference.addListener(_onFuelPreferenceChanged);
+    } on Object {
+      // The default wording stands.
     }
   }
 
@@ -946,14 +1145,19 @@ class _HomeScreenState extends State<HomeScreen> {
   /// the confirmed route as it is, without a second review (#624). Choosing a
   /// group on the plan creates the ride with the route already in it.
   Future<void> _navigateTo(DestinationChoice choice) async {
+    // A new plan starts with the options the rider last confirmed (#894).
+    final preferences = await const RoutePreferencesMemory().load();
+    if (!mounted) return;
     final outcome = await RouteReviewScreen.showPlan(
       context,
       planning: RidePlanEditing(
         plan: RidePlan.toDestination(
-          RidePlanPlace.fromSearchResult(
-            label: choice.label,
-            point: choice.point,
-          ),
+          choice.place ??
+              RidePlanPlace.fromSearchResult(
+                label: choice.label,
+                point: choice.point,
+              ),
+          preferences: preferences,
         ),
         route: (plan, location) => _planRouter.route(
           plan,
@@ -1674,6 +1878,26 @@ class _JoinFormState extends State<_JoinForm> with WidgetsBindingObserver {
                   message,
                   style: TextStyle(color: Theme.of(context).colorScheme.error),
                 ),
+                // An old build cannot be helped by trying again; the way
+                // through is the update, so it is one tap away (#37).
+                if (widget.controller.errorNeedsUpdate)
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: TextButton.icon(
+                      key: const Key('join-update-required'),
+                      onPressed: () => unawaited(
+                        UpdateRequiredScreen.show(
+                          context,
+                          identity: BuildIdentity.fromEnvironment(),
+                          state: UpdateGateState.updateRequired(
+                            message: message,
+                          ),
+                        ),
+                      ),
+                      icon: const Icon(Icons.system_update_alt),
+                      label: const Text('Update Tail End Charlie'),
+                    ),
+                  ),
                 // A connection or service failure is worth another go, and there
                 // was nothing to press: the rider read a sentence about a relay
                 // handshake and had to guess (#208).

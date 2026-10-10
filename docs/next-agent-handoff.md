@@ -1,6 +1,46 @@
 # Next-agent handoff
 
-Updated: 2026-10-05
+Updated: 2026-10-10
+
+## Build 103 — open beta candidate
+
+#963 tracks the release. Its build is the first one the open beta (#861)
+distributes. See [build 103 validation](build-103-validation.md) and the tester
+notes. The issue PRs merged into `claude/build-103`, and then into `main` as one
+combined PR.
+
+The 10 October decisions are recorded so they are not re-argued:
+
+- There is no Android Auto in the open beta. The Play bundle switch stays off.
+- The open beta is UK only.
+- Age ratings match Waze's: App Store 16+ and Play Everyone. The terms set a
+  minimum age of 17.
+- Beta support goes to `testing@tailendcharlie.app`, which forwards to the
+  operator.
+- Global heatmap contribution is asked at setup and stays off until the rider
+  chooses.
+
+Release order:
+
+1. Merge the combined PR after every protected-main check passes. Server code
+   changed, so the push deploys the relay. Verify `serverBuildCommit`.
+2. Confirm the website shows the opt-in heatmap wording and the fuel-price
+   paragraph.
+3. Submit the Play Data safety form. Its draft is saved at Preview.
+4. Dispatch build 103 only on the operator's "go": the workflows from
+   `docs/open-beta-launch.md`, with an explicit `build_number`.
+
+Operator steps outside the repository:
+
+- Register with Fuel Finder; prices stay off until then.
+- Bring up the routing VM from `docs/routing-service.md`. Then set
+  `RIDE_RELAY_SERVICE_VALHALLA_URL` and `RIDE_RELAY_SERVICE_PHOTON_URL`.
+- Complete App Store Connect: beta information, age rating and the public link
+  with a cap of 100.
+- Resume the Play open-testing track on launch day.
+
+Two Play Console attempts to remove the inactive Android Auto form factor
+failed. Retry the removal in the Console.
 
 ## Build 102 — 4 October ride feedback
 
@@ -29,6 +69,24 @@ Release as for build 101:
 Record the store evidence on #863. Every issue stays ready for validation until
 it is ridden. #268 needs the airplane-mode Bluetooth check from
 `docs/field-test-plan.md`.
+
+## Open beta launch (#861)
+
+Prepared 10 October 2026; nothing has touched a store. Read
+[open-beta-launch.md](open-beta-launch.md) before any store action: the ordered
+launch-day checklist with a verification per step, the Play and Apple age rating,
+Data safety and App Privacy answers, monitoring and rollback, and the operator-only
+steps. [open-beta-plan.md](open-beta-plan.md) has the gate status.
+
+- `promote_to=beta` is **public** Play open testing. It needs
+  `confirm_open_testing=publish-open-testing`, never carries Android Auto, and
+  `Android internal testing` reads the track back. Android Auto has been absent
+  from every Play bundle since build 88; `-PandroidAuto=true` is an off-by-default
+  switch, not a feature. Only the Console can pause or resume open testing.
+- The TestFlight public link is changed only by the `TestFlight public link`
+  workflow (dry run until `apply`; enabling needs `enable-public-link`). A link may
+  already exist: run `verify` first.
+- Support is `testing@tailendcharlie.app`; minimum age is 17.
 
 ## Build 101 — circular routes and discovery
 
@@ -171,10 +229,11 @@ legibility · #398 the pre-production Caddy route · #352 Bouncy Castle · #395.
 
 ### Traps worth knowing before you start
 
-- **The Android version code defaults to the workflow run number and collides**
-  with codes already used. Build 46 failed first time on *"Version code 40 has
-  already been used"*. Pass `build_number` explicitly and higher than every
-  shipped code.
+- **The Android version code used to default to the workflow run number and
+  collided** with codes already used. Build 46 failed first time on *"Version
+  code 40 has already been used"*. `build_number` is now required on both store
+  workflows and is checked against the store before the build (#630); pass a
+  number higher than every shipped code.
 - **`tools/discovery` tests run under `unittest discover`, not pytest.** A
   pytest-style module is collected as zero tests and passes silently.
 - **A mutation run that reports OK may never have applied.** One did in this

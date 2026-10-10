@@ -157,11 +157,16 @@ turns. Plan mode adds four things:
 
 1. **Itinerary**, replacing the read-only "Route points" list: a start row
    ("Your location" by default, **Change** opens a place search with "Your
-   location" at the top), one row per named stop (up, down, remove), a
-   destination row (**Change**), and **Add stop**. Shaping points never appear
-   here; they stay on the map and in the "Route adjustments (not stops)" chips.
+   location" at the top), one row per named stop (a drag handle to reorder,
+   and remove), a destination row (**Change**), and **Add stop**. Shaping
+   points never appear here; they stay on the map and in the "Route
+   adjustments (not stops)" chips. While drawing, the start, a stop or the
+   destination can also be dragged by its pin on the map (#891): the places
+   keep their order, so every shaping point stays on its leg. A nudge of up to
+   150 m keeps the place's name; a longer drag makes it a "Dropped pin".
 2. **Route options**: the preferences that used to live in the destination
-   form, applied immediately by re-routing.
+   form, applied immediately by re-routing. The options a rider last
+   confirmed are a new plan's default (#894); an edited route keeps its own.
 3. **Who's riding**, where the host allows it: Solo or Group, and for a group
    Second-bike drop-off or Keep-together (#261's wording).
 4. **One confirm button named for what it does**: Start (solo), Create group
@@ -180,7 +185,7 @@ never per keystroke, and a test enforces that.
 | Map's Where to? field, Plan a destination, Enter destination (in a ride) | A place search, then the same |
 | Café or discovery pin "add to route" | The current plan with that place inserted as a stop; a new plan to it when there is no route |
 | Circular planner | Unchanged generator, now with a start row; its loop reviews on the same screen |
-| GPX import, Ride Library, previous rides, web-planner code | The existing review (track matching, tidied/raw, reverse), in free roam without first creating a ride; **Edit route** afterwards turns it into a plan |
+| GPX import, Ride Library, previous rides, web-planner code | The existing choices first (Add turn directions?, tidied/raw, reverse), then the Plan surface with the route's line kept exactly until the first edit (#892); the itinerary says that an edit re-plans it on roads between the listed places. In free roam without first creating a ride |
 | Edit route | `RidePlan.fromRoute(current route)` |
 
 ### 2.5 Solo and group
@@ -206,7 +211,7 @@ search field.
 | --- | --- | --- |
 | Solo (free roam) | Map menu, and the ride-menu button on the navigation canvas: **Edit route** | Plan surface; Update route replaces the free-roam route in place. Navigation continues. |
 | Leader, before the start | Pre-start panel **Change**; Ride tab **Edit route** | Plan surface; Use route publishes a new revision. |
-| Leader, during the ride | Ride tab **Edit route** | Plan surface; Update route publishes a new revision. Riders behind a moved start are guided back by the existing off-route rejoin (#102). |
+| Leader, during the ride | Ride tab **Edit route** | Plan surface on what is left of the ride (#893): the start is the leader's position, and the stops and adjustments already behind the leader (measured on the navigation progress tracker's line, so a loop's finish is not its start) are dropped. Update route publishes a new revision without the ridden part. A leader not yet on the route (no progress, more than 250 m from it) keeps the meeting point. Riders behind the leader are guided back by the existing off-route rejoin (#102). Solo navigation edits the same way. |
 | Follower | none | The route belongs to the leader. Ride on alone gives a follower their own copy to edit. |
 
 The other route sources stay available as **Replace route** (the existing
@@ -221,6 +226,46 @@ change-route sheet), below Edit route.
 - Routed through the non-stopping API (`RidePlanRouter`, and the reshape planner
   once #839 lands).
 - Imported GPX shaping points are classified the same way by `RidePlan.fromRoute`.
+
+### 2.8 Saved places and history (#937, build 103)
+
+> I would like for the search box to show a history of where I have searched
+> before, and allow common destinations 'home', 'work' or other custom saved
+> locations to be available too.
+
+Where to? and the plan surface's place picker (start, stop, destination and the
+circular ride's start) share one panel, `PlaceMemoryPanel`:
+
+- **Saved places** at the top of the empty search: Home, Work, then places the
+  rider named (twelve at most). Home and Work are offered as "Add Home" and "Add
+  Work" until set. Each saved place has a menu: change place, rename (a rider's
+  own only; Home and Work keep their names) and delete.
+- **Recent** under them: places chosen from a result, newest first, de-duplicated
+  (the same words, or the same spot within 30 m), ten at most, with **Clear**
+  after a confirmation. A typed search that was never chosen from is not kept,
+  and neither is "Your location", a saved place or a place picked to *be* a saved
+  place.
+- **Setting a place**: from a search result (the bookmark on a result), from a
+  recent place's menu, from "Your location" when a fix is known (the picker that
+  chooses where a saved place points offers it), or from a pin dropped on the
+  plan: each row on the plan has a bookmark that saves that stop, start or
+  destination, a "Dropped pin" included.
+- **Typing** narrows both lists locally and sends nothing (`docs/geocoder-
+  decision.md`). Submitting still searches.
+- A saved or recent place goes onto the plan named as the rider named it ("Home")
+  with its address as the description; a dropped pin or "Your location" keeps no
+  address.
+
+The lists are one JSON document in the phone's `SharedPreferences`
+(`lib/services/place_memory.dart`). They are not a journal event, so no other
+rider and no relay sees them; they are not in diagnostics or a ride library
+backup. `test/services/place_memory_privacy_test.dart` fails if any other module
+starts to mention them. Using a saved place as a start, stop or destination
+sends its coordinates to the routing service like any other place, and the
+privacy page says so.
+
+CarPlay and Android Auto have their own search surfaces and do not show these
+lists; that is a separate piece of work under #690-#703.
 
 ## 3. Disposition of every entry point
 
@@ -242,7 +287,7 @@ change-route sheet), below Edit route.
 | E14 | Onboarding Create a ride | **Merged** into Ride with others. | 1 |
 | E15 | Web-planner code prompts | **Merged** into one "Recall a planned route" action feeding review. | 1 |
 | E16 | GPX shaping waypoints | **Fixed** in the plan model (never listed as stops). Routing semantics are #839's. | 1 |
-| — | `DestinationRouteSheet` form | **Removed**; its preferences move to the Plan surface's Route options. "Open route with" stays as "Navigate or export route" after confirming. | 1 |
+| — | `DestinationRouteSheet` form | **Removed**; its preferences move to the Plan surface's Route options. "Open route with" stays as "Navigate or export route" after confirming, and is offered beside the Plan surface's confirm button as **Open with** (#895), which hands over the route on screen and leaves the plan open. | 1 |
 | — | `_RideForm` create mode (Solo/Group, ride name, plan code) | **Removed** once nothing reaches it; its join mode stays. Solo becomes free roam; group becomes Ride with others; plan codes become Recall a planned route. The ride name defaults to the route name. | 1 |
 | — | Solo *rides* (`RideCoordinationMode.solo` sessions) | **Kept** for CarPlay and restored sessions; the phone no longer creates them. | 3 |
 
@@ -271,8 +316,14 @@ Phase 1 adds **no event types and no relay change**.
   uses from Home, and the shell already applies a revision or a start that
   arrives before or after it mounts. The solo part is filed
   as it is today: free-roam navigation in My rides via `FreeRoamRideRecorder`,
-  a solo ride via the archive. The rider's history therefore shows two entries,
-  the solo leg and the group ride.
+  a solo ride via the archive. Since #896 the group ride's session remembers
+  the leg it carried on from (local only, never in the journal), and filing
+  joins the two into one My rides record under the later ride's id: both
+  legs' time, distance and tracks (as separate paths), the earlier record
+  removed once the joined one is written. Riding on alone does the same in
+  the other direction: free roam's navigation names the group ride it
+  carried on from. Filing is idempotent across checkpoints and replayed
+  journals, so a leg is never filed twice or dropped.
 - **Group → solo** is `riderLeft` (a rider, or a leader leaving it to the
   others) or `rideEnded` (a leader ending it). Riding on alone is free-roam
   navigation, which writes nothing to any journal.
@@ -317,6 +368,8 @@ What phase 1 deliberately leaves alone: the active-ride map chrome (#533, #125,
 - Mid-ride Edit route trims the ridden part for the group, rather than
   re-planning from the original start.
 - A ride rename on the Ride tab (the ride name now defaults to the route name).
+  Shipped in #894 as a label on this phone: no rider reads the leader's name
+  from the journal, so renaming records no event.
 - Remember the rider's last route options as the default for the next plan.
 - One exit vocabulary across states: Leave (me), End (ride), Stop (navigating)
   (#626 item 6).

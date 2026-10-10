@@ -1,0 +1,9 @@
+No account or sign-in is needed. To see the app working with one device:
+
+1. Open the app and accept the location prompt (While Using or Always; the app uses location only during an active ride).
+2. On the home screen choose "Try a simulated ride". It runs a virtual group on a bundled demo route and needs no other phone and no riding.
+3. Look at the map, the ride menu and the Ride Lab tab.
+
+To create and join a real ride with two devices: choose Ride with others on one, read out or scan the six-digit code, and enter it on the other.
+
+The app is a coordination aid for motorcyclists and states it is not an emergency service. It is for people aged 17 or over. CarPlay is declared and experimental; the review team does not need a CarPlay unit to test the rest. Support: testing@tailendcharlie.app

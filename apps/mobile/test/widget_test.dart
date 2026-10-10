@@ -317,6 +317,8 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(controller.session!.rideId, isNot(soloRideId));
+    // Filed with the solo ride as one ride in My rides (#896).
+    expect(controller.session!.continuesRideId, soloRideId);
     expect(controller.coordinationMode.isGroup, isTrue);
     expect(controller.rideStarted, isTrue);
     expect(controller.authoritativeRoute?.id, 'group-route');
@@ -333,6 +335,7 @@ void main() {
     await controller.createRide('Oliver');
     await controller.startRide();
     await controller.publishRoute(_groupRoute());
+    final groupRideId = controller.session!.rideId;
     await tester.pumpWidget(_app(controller));
     await tester.pumpAndSettle();
 
@@ -360,6 +363,8 @@ void main() {
         .pendingInAppRoute;
     expect(pending?.route.id, 'group-route');
     expect(pending?.reviewed, isTrue);
+    // Free roam files its navigation with the group ride (#896).
+    expect(pending?.continuesRideId, groupRideId);
   });
 
   testWidgets('a solo pre-start map can switch straight to joining a group', (
@@ -743,6 +748,39 @@ void main() {
     await tester.pumpAndSettle();
     // Back on the map, which owns the route and opens the plan surface.
     expect(find.text('Navigation map'), findsOneWidget);
+  });
+
+  testWidgets('a ride is renamed from the Ride tab (#894)', (tester) async {
+    final controller = await _controller();
+    addTearDown(controller.dispose);
+    await controller.createRide('Oliver', rideName: 'To Town');
+    await tester.pumpWidget(_app(controller));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byIcon(Icons.two_wheeler_outlined));
+    await tester.pumpAndSettle();
+    final rename = find.byKey(const Key('ride-menu-rename'));
+    await tester.ensureVisible(rename);
+    await tester.pumpAndSettle();
+    expect(
+      find.descendant(of: rename, matching: find.text('To Town')),
+      findsOneWidget,
+    );
+
+    await tester.tap(rename);
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const Key('rename-ride-field')),
+      'Coast loop',
+    );
+    await tester.tap(find.byKey(const Key('rename-ride-save')));
+    await tester.pumpAndSettle();
+
+    expect(controller.session?.rideName, 'Coast loop');
+    expect(
+      find.descendant(of: rename, matching: find.text('Coast loop')),
+      findsOneWidget,
+    );
   });
 
   testWidgets('alerts are a Ride action rather than a primary destination', (

@@ -4,13 +4,16 @@ import 'package:ride_relay/domain/distance_unit.dart';
 import 'package:ride_relay/domain/imported_route.dart';
 import 'package:ride_relay/domain/ride_coordination_mode.dart';
 import 'package:ride_relay/domain/ride_plan.dart';
+import 'package:ride_relay/features/map/resolved_route_map_preview.dart';
 import 'package:ride_relay/features/map/route_review_screen.dart';
 import 'package:ride_relay/services/basemap_configuration.dart';
 import 'package:ride_relay/services/biker_place_catalogue.dart';
 import 'package:ride_relay/services/discovery_layer_preferences.dart';
 import 'package:ride_relay/services/motorcycle_discovery.dart';
+import 'package:ride_relay/services/navigation_export.dart';
 import 'package:ride_relay/services/ride_plan_router.dart';
 import 'package:ride_relay/services/road_routing.dart';
+import 'package:ride_relay/services/route_preferences_memory.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 // Synthetic places; none is a rider's start, finish or home.
@@ -138,10 +141,8 @@ void main() {
     expect(harness.routing.calls.last, [_here, _cafe, _pass, _town]);
     expect(_stopLabels(tester), ['Cafe', 'Pass']);
 
-    await _tapVisible(
-      tester,
-      find.byKey(const Key('ride-plan-move-stop-up-1')),
-    );
+    // Dragged by its handle above the first stop (#891).
+    await _dragStop(tester, from: 1, to: 0);
     expect(_stopLabels(tester), ['Pass', 'Cafe']);
     expect(harness.routing.calls.last, [_here, _pass, _cafe, _town]);
 
@@ -155,6 +156,111 @@ void main() {
       'Cafe',
       'Town',
     ]);
+  });
+
+  testWidgets('dragging a stop down keeps each adjustment on its leg', (
+    tester,
+  ) async {
+    final harness = _Harness(location: _here);
+    final routed = await RidePlanRouter(routingService: harness.routing).route(
+      RidePlan.toDestination(_townPlace)
+          .addStop(const RidePlanPlace(point: _cafe, label: 'Cafe'))
+          .addStop(const RidePlanPlace(point: _pass, label: 'Pass'))
+          .withShapingPoints(const [
+            RouteShapingPoint(
+              id: 'drawn',
+              point: GeoPoint(latitude: 52.05, longitude: -1.03),
+              legIndex: 0,
+            ),
+          ]),
+      currentLocation: _here,
+    );
+    harness.routing.calls.clear();
+    await harness.open(
+      tester,
+      RidePlan.fromRoute(routed.route),
+      route: routed.route,
+    );
+
+    await _dragStop(tester, from: 0, to: 1);
+
+    expect(_stopLabels(tester), ['Pass', 'Cafe']);
+    expect(harness.routing.calls.single, [
+      _here,
+      const GeoPoint(latitude: 52.05, longitude: -1.03),
+      _pass,
+      _cafe,
+      _town,
+    ]);
+    expect(harness.routing.shapingIndexes.last, {1});
+  });
+
+  testWidgets('a stop\'s pin dragged on the map moves the stop and re-plans', (
+    tester,
+  ) async {
+    final harness = _Harness(location: _here);
+    final routed = await RidePlanRouter(routingService: harness.routing).route(
+      RidePlan.toDestination(_townPlace)
+          .addStop(const RidePlanPlace(point: _cafe, label: 'Cafe'))
+          .withShapingPoints(const [
+            RouteShapingPoint(
+              id: 'drawn',
+              point: GeoPoint(latitude: 52.2, longitude: -1.03),
+              legIndex: 1,
+            ),
+          ]),
+      currentLocation: _here,
+    );
+    harness.routing.calls.clear();
+    await harness.open(
+      tester,
+      RidePlan.fromRoute(routed.route),
+      route: routed.route,
+      basemapConfiguration: _mapLibre,
+    );
+
+    RoutePreviewPin pinFor(int index) => tester
+        .widget<ResolvedRouteMapPreview>(find.byType(ResolvedRouteMapPreview))
+        .pins
+        .singleWhere((pin) => pin.id == 'plan-place-$index');
+    final preview = tester.widget<ResolvedRouteMapPreview>(
+      find.byType(ResolvedRouteMapPreview),
+    );
+    expect(pinFor(0).draggable, isTrue);
+    expect(pinFor(1).draggable, isTrue);
+    expect(pinFor(2).draggable, isTrue);
+
+    // About 55 metres north: the same cafe, on the road beside it.
+    const nudged = GeoPoint(latitude: 52.1005, longitude: -1.00);
+    preview.onReshapeStart!(
+      RoutePreviewReshapeStart(point: _cafe, draggedPin: pinFor(1)),
+    );
+    await _frames(tester);
+    preview.onReshapeUpdate!(nudged);
+    await _frames(tester);
+
+    // The pin follows the finger; nothing is routed until it is let go.
+    expect(pinFor(1).point, nudged);
+    expect(harness.routing.calls, isEmpty);
+
+    preview.onReshapeEnd!();
+    await _frames(tester);
+
+    expect(harness.routing.calls.single, [
+      _here,
+      nudged,
+      const GeoPoint(latitude: 52.2, longitude: -1.03),
+      _town,
+    ]);
+    expect(harness.routing.shapingIndexes.last, {2});
+    expect(_stopLabels(tester), ['Cafe']);
+    expect(pinFor(1).point, nudged);
+
+    await tester.tap(find.byKey(const Key('confirm-reviewed-route')));
+    await _frames(tester);
+    final outcome = harness.outcome!;
+    expect(outcome.plan.stops.single.point, nudged);
+    expect(outcome.plan.shapingPoints.single.legIndex, 1);
   });
 
   testWidgets('drawn adjustments are on the map, never in the stop list', (
@@ -242,6 +348,150 @@ void main() {
     expect(harness.outcome!.route.preferences?.avoidMotorways, isTrue);
   });
 
+  testWidgets('confirmed route options are remembered for the next plan', (
+    tester,
+  ) async {
+    final harness = _Harness(location: _here);
+    await harness.open(tester, RidePlan.toDestination(_townPlace));
+    await _tapVisible(tester, find.text('Route options'));
+    await _tapVisible(tester, find.byKey(const Key('avoid-motorways-switch')));
+
+    // Cancelling is not a choice: nothing is remembered.
+    await tester.tap(find.byTooltip('Cancel route review'));
+    await tester.pumpAndSettle();
+    expect(
+      (await const RoutePreferencesMemory().load()).avoidMotorways,
+      isFalse,
+    );
+
+    await harness.open(tester, RidePlan.toDestination(_townPlace));
+    await _tapVisible(tester, find.text('Route options'));
+    await _tapVisible(tester, find.byKey(const Key('avoid-motorways-switch')));
+    await harness.confirm(tester);
+
+    expect(
+      (await const RoutePreferencesMemory().load()).avoidMotorways,
+      isTrue,
+    );
+  });
+
+  testWidgets('the plan opens in another app without being confirmed', (
+    tester,
+  ) async {
+    final shares = _RecordingShare();
+    final harness = _Harness(location: _here);
+    await harness.open(
+      tester,
+      RidePlan.toDestination(_townPlace),
+      exportCoordinator: NavigationExportCoordinator(
+        launcher: const _NoLauncher(),
+        shareGateway: shares,
+      ),
+    );
+
+    // Beside the confirm button (#895).
+    await tester.tap(find.byKey(const Key('ride-plan-open-with')));
+    await tester.pumpAndSettle();
+    // The first app offered; with no app to open, its GPX is shared instead.
+    await tester.tap(find.text(NavigationTarget.googleMaps.label));
+    await tester.pumpAndSettle();
+
+    expect(shares.targets, [NavigationTarget.googleMaps]);
+    expect(shares.routes.single.waypoints.map((point) => point.name), [
+      'Start',
+      'Town',
+    ]);
+    // The plan is still open, and still the rider's to confirm or not.
+    expect(find.byKey(const Key('ride-plan-itinerary')), findsOneWidget);
+    expect(harness.outcome, isNull);
+    await harness.confirm(tester);
+    expect(harness.outcome?.route.waypoints.last.name, 'Town');
+  });
+
+  testWidgets('a plan with no route yet has nothing to open elsewhere', (
+    tester,
+  ) async {
+    final harness = _Harness(location: null);
+    await harness.open(tester, RidePlan.toDestination(_townPlace));
+
+    expect(
+      tester
+          .widget<TextButton>(find.byKey(const Key('ride-plan-open-with')))
+          .onPressed,
+      isNull,
+    );
+  });
+
+  testWidgets('an imported track keeps its exact line until it is edited', (
+    tester,
+  ) async {
+    final harness = _Harness(location: _here);
+    final imported = _importedTrack();
+
+    await harness.open(
+      tester,
+      RidePlan.fromRoute(imported),
+      route: imported,
+      keepRouteUntilEdited: true,
+    );
+
+    // Nothing is re-planned on opening, and the surface says what an edit
+    // will do before one is made (#892).
+    expect(harness.routing.calls, isEmpty);
+    await _scrollTo(
+      tester,
+      find.byKey(const Key('ride-plan-original-line-note')),
+    );
+    expect(
+      find.byKey(const Key('ride-plan-original-line-note')),
+      findsOneWidget,
+    );
+    expect(_confirmButton(tester).onPressed, isNotNull);
+
+    await harness.confirm(tester);
+
+    final confirmed = harness.outcome!.route;
+    expect(confirmed.id, imported.id);
+    expect(
+      confirmed.paths.single.points,
+      imported.paths.single.points,
+      reason: 'the line as it came, not a re-plan of it',
+    );
+  });
+
+  testWidgets('the first edit to an imported track re-plans it on roads', (
+    tester,
+  ) async {
+    final harness = _Harness(location: _here);
+    final imported = _importedTrack();
+    await harness.open(
+      tester,
+      RidePlan.fromRoute(imported),
+      route: imported,
+      keepRouteUntilEdited: true,
+    );
+
+    await harness.choosePlace(
+      tester,
+      rowButton: const Key('ride-plan-add-stop'),
+      query: 'cafe',
+      result: 'Cafe, Shire',
+    );
+
+    expect(harness.routing.calls.single, [
+      imported.paths.single.points.first,
+      _cafe,
+      imported.paths.single.points.last,
+    ]);
+    expect(find.byKey(const Key('ride-plan-original-line-note')), findsNothing);
+    await harness.confirm(tester);
+    expect(harness.outcome!.route.id, imported.id);
+    expect(
+      harness.outcome!.route.paths.single.points,
+      isNot(imported.paths.single.points),
+    );
+  });
+
   testWidgets('a confirmed route reopens with its stops and can change', (
     tester,
   ) async {
@@ -278,6 +528,63 @@ void main() {
     expect(outcome.plan.stops.map((stop) => stop.label), ['Cafe', 'Pass']);
   });
 }
+
+/// MapLibre needs a network style, so a test that mounts it cannot wait for
+/// every frame to settle; these frames are enough for the plan to react.
+Future<void> _frames(WidgetTester tester) async {
+  for (var index = 0; index < 5; index += 1) {
+    await tester.pump(const Duration(milliseconds: 20));
+  }
+}
+
+const _mapLibre = BasemapConfiguration(
+  styleUrl: 'https://tiles.example.test/style.json',
+  attribution: 'Test tiles',
+);
+
+/// Drags stop [from] by its handle onto stop [to]'s row.
+Future<void> _dragStop(
+  WidgetTester tester, {
+  required int from,
+  required int to,
+}) async {
+  final handle = find.byKey(Key('ride-plan-drag-stop-$from'));
+  await _scrollTo(tester, handle);
+  final target = tester.getCenter(find.byKey(Key('ride-plan-stop-$to')));
+  final origin = tester.getCenter(find.byKey(Key('ride-plan-stop-$from')));
+  final gesture = await tester.startGesture(tester.getCenter(handle));
+  await tester.pump();
+  // Past the target's middle, in steps, as a finger moves.
+  final travel = target - origin;
+  final overshoot = Offset(0, travel.dy.sign * 12);
+  for (var step = 1; step <= 4; step += 1) {
+    await gesture.moveBy((travel + overshoot) / 4);
+    await tester.pump(const Duration(milliseconds: 20));
+  }
+  await gesture.up();
+  await tester.pumpAndSettle();
+}
+
+/// A recorded track with no route points: a line, not a list of places.
+ImportedRoute _importedTrack() => ImportedRoute(
+  id: 'imported-track',
+  name: 'Scouted loop',
+  importedAt: DateTime.utc(2026, 10, 4),
+  sourceFileName: 'scouted.gpx',
+  paths: const [
+    RoutePath(
+      kind: RoutePathKind.track,
+      points: [
+        GeoPoint(latitude: 52.00, longitude: -1.00),
+        GeoPoint(latitude: 52.04, longitude: -1.03),
+        GeoPoint(latitude: 52.09, longitude: -0.98),
+        GeoPoint(latitude: 52.15, longitude: -1.04),
+        GeoPoint(latitude: 52.30, longitude: -1.00),
+      ],
+    ),
+  ],
+  waypoints: const [],
+);
 
 Future<void> _tapVisible(WidgetTester tester, Finder finder) async {
   await _scrollTo(tester, finder);
@@ -347,6 +654,10 @@ class _Harness {
     RidePlan plan, {
     ImportedRoute? route,
     String? confirmLabel,
+    BasemapConfiguration basemapConfiguration = const BasemapConfiguration(),
+    NavigationExportCoordinator exportCoordinator =
+        const NavigationExportCoordinator(),
+    bool keepRouteUntilEdited = false,
   }) async {
     final router = RidePlanRouter(routingService: routing);
     await tester.pumpWidget(
@@ -372,13 +683,15 @@ class _Harness {
                       return position.value;
                     },
                     offerCoordinationChoice: offerCoordinationChoice,
+                    exportCoordinator: exportCoordinator,
+                    keepRouteUntilEdited: keepRouteUntilEdited,
                     confirmLabel: (plan) =>
                         confirmLabel ??
                         (plan.isGroup ? 'Create group ride' : 'Start'),
                   ),
                   route: route,
                   distanceUnit: DistanceUnit.kilometres,
-                  basemapConfiguration: const BasemapConfiguration(),
+                  basemapConfiguration: basemapConfiguration,
                   pointOfInterestLoader: () async => BikerPlaceCatalogue.empty,
                   discoveryLoader: () async =>
                       const MotorcycleDiscoveryCatalogue([]),
@@ -392,7 +705,11 @@ class _Harness {
       ),
     );
     await tester.tap(find.text('plan'));
-    await tester.pumpAndSettle();
+    if (basemapConfiguration.usesMapLibre) {
+      await _frames(tester);
+    } else {
+      await tester.pumpAndSettle();
+    }
   }
 
   Future<void> choosePlace(
@@ -467,4 +784,26 @@ class _FakeSearch implements DestinationSearchService {
     queries.add(query);
     return results[query.toLowerCase()] ?? const [];
   }
+}
+
+class _RecordingShare implements GpxShareGateway {
+  final routes = <ImportedRoute>[];
+  final targets = <NavigationTarget>[];
+
+  @override
+  Future<void> share({
+    required ImportedRoute route,
+    required NavigationTarget target,
+    Rect? sharePositionOrigin,
+  }) async {
+    routes.add(route);
+    targets.add(target);
+  }
+}
+
+class _NoLauncher implements ExternalUriLauncher {
+  const _NoLauncher();
+
+  @override
+  Future<bool> open(Uri uri) async => false;
 }

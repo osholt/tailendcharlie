@@ -1,3 +1,4 @@
+import 'controllers/app_update_gate_controller.dart';
 import 'controllers/eta_calibration_controller.dart';
 import 'services/eta_population_client.dart';
 import 'dart:async';
@@ -14,8 +15,10 @@ import 'controllers/ride_code_preference_controller.dart';
 import 'controllers/ride_diagnostics_controller.dart';
 import 'controllers/ride_controller.dart';
 import 'controllers/ride_invitation_link_controller.dart';
+import 'controllers/demo_route_choice_controller.dart';
 import 'controllers/mini_map_display_controller.dart';
 import 'controllers/route_progress_display_controller.dart';
+import 'controllers/speed_adaptive_zoom_controller.dart';
 import 'controllers/rider_profile_controller.dart';
 import 'controllers/road_rating_controller.dart';
 import 'controllers/shared_route_controller.dart';
@@ -29,6 +32,7 @@ import 'data/sqlite_event_store.dart';
 import 'services/nearby_bridge.dart';
 import 'services/global_ride_heatmap.dart';
 import 'internet/internet_relay_client.dart';
+import 'services/routing_service_endpoints.dart';
 import 'services/test_control_registry.dart';
 import 'services/test_control_session.dart';
 import 'services/test_control_server.dart';
@@ -72,6 +76,11 @@ Future<void> main() async {
     rideInvitationLinks,
     routeProgressDisplay,
     miniMapDisplay,
+    demoRouteChoice,
+    speedAdaptiveZoom,
+    // Where routing and geocoding live, as the relay last said (#917). Before
+    // the first frame, so the first search already goes to the right service.
+    _,
   ) = await (
     (
       RiderProfileController.load(),
@@ -91,6 +100,9 @@ Future<void> main() async {
     RideInvitationLinkController.load(),
     RouteProgressDisplayController.load(),
     MiniMapDisplayController.load(),
+    DemoRouteChoiceController.load(),
+    SpeedAdaptiveZoomController.load(),
+    RoutingServices.restore(),
   ).wait;
 
   final completedRides = await CompletedRidesController.load(
@@ -137,6 +149,12 @@ Future<void> main() async {
     ),
   );
   unawaited(eta.refresh());
+  // Told early, so a build the ride service has retired says so before the first
+  // join or sync fails. It only informs; see AppUpdateGateController. The same
+  // compatibility answer also says where routing and geocoding live (#917):
+  // RoutingServices adopts every one, so this launch check moves them too.
+  final updateGate = AppUpdateGateController.fromEnvironment();
+  unawaited(updateGate.check());
   runApp(
     EtaCalibrationScope(
       controller: eta,
@@ -150,6 +168,8 @@ Future<void> main() async {
         speedLimitDisplay: speedLimitDisplay,
         routeProgressDisplay: routeProgressDisplay,
         miniMapDisplay: miniMapDisplay,
+        demoRouteChoice: demoRouteChoice,
+        speedAdaptiveZoom: speedAdaptiveZoom,
         recordedRoutes: recordedRoutes,
         completedRides: completedRides,
         globalRideHeatmap: globalRideHeatmap,
@@ -159,6 +179,7 @@ Future<void> main() async {
         testControlRegistry: testControlRegistry,
         spokenGuidance: spokenGuidance,
         rideDiagnostics: rideDiagnostics,
+        updateGate: updateGate,
         initializeController: controller.initialize,
       ),
     ),

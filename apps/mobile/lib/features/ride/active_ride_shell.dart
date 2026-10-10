@@ -20,7 +20,9 @@ import '../../controllers/observer_access_controller.dart';
 import '../../controllers/pre_start_presence_controller.dart';
 import '../../controllers/ride_controller.dart';
 import '../../controllers/ride_location_lifecycle_controller.dart';
+import '../../controllers/demo_route_choice_controller.dart';
 import '../../controllers/mini_map_display_controller.dart';
+import '../../controllers/speed_adaptive_zoom_controller.dart';
 import '../../controllers/route_progress_display_controller.dart';
 import '../../controllers/road_rating_controller.dart';
 import '../../controllers/ride_push_notification_controller.dart';
@@ -124,6 +126,7 @@ import '../settings/unit_settings_sheet.dart';
 import 'ice_share_inbox_sheet.dart';
 import 'location_sharing_widgets.dart';
 import '../situational_awareness/situational_awareness_screen.dart';
+import '../simulation/demo_route_picker.dart';
 import '../simulation/ride_simulation_screen.dart';
 import 'end_ride_confirmation.dart';
 import 'ended_ride_screen.dart';
@@ -164,6 +167,35 @@ List<RoadRouteManeuver> simulationMarkerManeuvers(
 ) => maneuvers
     .where((maneuver) => maneuver.requiresSecondBikeDrop)
     .toList(growable: false);
+
+/// The junctions Ride Lab marks on a bundled demo [route], read from that same
+/// route's own decisions (#934), or null when [route] is not one of the bundled
+/// demos or its file is damaged (the caller then falls back to the GPX
+/// waypoints, a less detailed but still valid set).
+///
+/// Each demo reads *its own* decisions: a Cotswolds simulation marking the
+/// junctions of the French route would put every marker hundreds of miles away.
+@visibleForTesting
+Future<List<awareness_geo.GeoPoint>?> bundledDemoJunctions(
+  route_domain.ImportedRoute? route,
+) async {
+  final bundled = DemoRoutes.forSourceFileName(route?.sourceFileName);
+  if (bundled == null) return null;
+  try {
+    return simulationMarkerManeuvers(
+          await BundledDemoRouteLoader(bundled).loadManeuvers(),
+        )
+        .map(
+          (maneuver) => awareness_geo.GeoPoint(
+            latitude: maneuver.position.latitude,
+            longitude: maneuver.position.longitude,
+          ),
+        )
+        .toList(growable: false);
+  } on FormatException {
+    return null;
+  }
+}
 
 /// The only thing an observer link publishes.
 ///
@@ -319,6 +351,8 @@ class ActiveRideShell extends StatefulWidget {
     required this.speedLimitDisplay,
     this.routeProgressDisplay,
     this.miniMapDisplay,
+    this.demoRouteChoice,
+    this.speedAdaptiveZoom,
     this.completedRideStore,
     this.globalRideHeatmap,
     this.pushTokenSource,
@@ -365,6 +399,11 @@ class ActiveRideShell extends StatefulWidget {
   /// Whether to draw the group mini-map; the rider's own choice, and failing
   /// that their role (#850). Null draws it whenever there is a group to show.
   final MiniMapDisplayController? miniMapDisplay;
+
+  /// Which bundled demo route a Ride Lab simulation rides, and remembers (#934).
+  /// Null where it is not wired, which rides the default route.
+  final DemoRouteChoiceController? demoRouteChoice;
+  final SpeedAdaptiveZoomController? speedAdaptiveZoom;
   final CompletedRideStore? completedRideStore;
   final GlobalRideHeatmapController? globalRideHeatmap;
   final PushTokenSource? pushTokenSource;
@@ -506,6 +545,58 @@ Set<String> registeredTecRiderIds({
 /// These actions used to sit behind a hamburger on both the map and dashboard.
 /// Keeping them on the page means there is no second navigation system to
 /// discover, while the moving map keeps only its large riding-time controls.
+/// Asks for a ride's new name (#894). Saving an empty name clears it.
+class RenameRideDialog extends StatefulWidget {
+  const RenameRideDialog({super.key, required this.initialName});
+
+  final String initialName;
+
+  @override
+  State<RenameRideDialog> createState() => _RenameRideDialogState();
+}
+
+class _RenameRideDialogState extends State<RenameRideDialog> {
+  late final TextEditingController _name = TextEditingController(
+    text: widget.initialName,
+  );
+
+  @override
+  void dispose() {
+    _name.dispose();
+    super.dispose();
+  }
+
+  void _save() => Navigator.of(context).pop(_name.text.trim());
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+    title: const Text('Ride name'),
+    content: TextField(
+      key: const Key('rename-ride-field'),
+      controller: _name,
+      autofocus: true,
+      maxLength: RideSession.maximumRideNameLength,
+      textCapitalization: TextCapitalization.sentences,
+      textInputAction: TextInputAction.done,
+      decoration: const InputDecoration(
+        hintText: 'Leave empty to use the ride code',
+      ),
+      onSubmitted: (_) => _save(),
+    ),
+    actions: [
+      TextButton(
+        onPressed: () => Navigator.of(context).pop(),
+        child: const Text('Cancel'),
+      ),
+      FilledButton(
+        key: const Key('rename-ride-save'),
+        onPressed: _save,
+        child: const Text('Save'),
+      ),
+    ],
+  );
+}
+
 class _RideActionsPanel extends StatelessWidget {
   const _RideActionsPanel({
     required this.canChangeRoute,
@@ -537,7 +628,15 @@ class _RideActionsPanel extends StatelessWidget {
     this.onRideWithOthers,
     this.onRideOnAlone,
     required this.coordinationMode,
+    required this.rideName,
+    required this.onRenameRide,
   });
+
+  /// The ride's name on this phone, or null when it is known by its code.
+  final String? rideName;
+
+  /// Renames the ride after it was created (#894).
+  final VoidCallback onRenameRide;
 
   final bool canChangeRoute;
 
@@ -670,6 +769,18 @@ class _RideActionsPanel extends StatelessWidget {
               ),
               onTap: onObserverAccess,
             ),
+          ListTile(
+            key: const Key('ride-menu-rename'),
+            leading: const Icon(Icons.drive_file_rename_outline),
+            title: Text(rideName ?? 'Name this ride'),
+            subtitle: Text(
+              rideName == null
+                  ? 'Known by its code until it has a name'
+                  : 'Ride name on this phone and in My rides',
+            ),
+            trailing: const Icon(Icons.edit_outlined),
+            onTap: onRenameRide,
+          ),
           ExpansionTile(
             key: const Key('ride-more-options'),
             leading: const Icon(Icons.more_horiz),
@@ -805,6 +916,7 @@ class _PreStartRidePanel extends StatelessWidget {
     required this.onStartRide,
     required this.onChooseRoute,
     this.onJoinGroup,
+    this.compact = false,
   });
 
   final String rideCode;
@@ -817,8 +929,47 @@ class _PreStartRidePanel extends StatelessWidget {
   final VoidCallback onChooseRoute;
   final VoidCallback? onJoinGroup;
 
+  /// One slim strip carrying only **Start ride** (#933).
+  ///
+  /// For a Ride Lab demo, which has no code to read out, no roster to wait on
+  /// and a route that was chosen for it. The full panel there took about a third
+  /// of a portrait phone and half of a landscape one before the map began. A
+  /// real ride never sets this: its code, route and roster are what a leader
+  /// checks before setting off, so they stay as they were.
+  final bool compact;
+
   @override
-  Widget build(BuildContext context) => Material(
+  Widget build(BuildContext context) =>
+      compact ? _buildCompact() : _buildFull();
+
+  Widget _buildCompact() => Material(
+    key: const Key('pre-start-compact-bar'),
+    color: const Color(0xFF17212B),
+    child: SafeArea(
+      bottom: false,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        child: Center(
+          // Full width on a phone held upright; on a wide landscape strip a
+          // button that long is a target nobody needs.
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 420),
+            child: SizedBox(
+              width: double.infinity,
+              child: FilledButton.icon(
+                key: const Key('start-ride-button'),
+                onPressed: busy ? null : onStartRide,
+                icon: const Icon(Icons.play_arrow),
+                label: const Text('Start ride'),
+              ),
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
+
+  Widget _buildFull() => Material(
     color: const Color(0xFF17212B),
     child: SafeArea(
       bottom: false,
@@ -1005,6 +1156,25 @@ List<RideDestination> rideDestinations({required bool simulation}) {
     next('Ride', Icons.two_wheeler_outlined, Icons.two_wheeler),
     next('Settings', Icons.settings_outlined, Icons.settings),
   ];
+}
+
+/// The destination a tapped push opens, as an index into [rideDestinations].
+///
+/// A leader's broadcast or a rider's alert opens the map, where it is shown
+/// (#881). Every other category keeps the destination it always had.
+@visibleForTesting
+int pushOpenDestinationIndex({
+  required bool isSimulation,
+  required PushOpenRequest request,
+}) {
+  if (request.isGroupInstruction) return 0;
+  final safetyAlert = request.category == PushCategory.safety;
+  return switch ((isSimulation, safetyAlert)) {
+    (true, true) => 3,
+    (true, false) => 2,
+    (false, true) => 2,
+    (false, false) => 1,
+  };
 }
 
 enum _StartRideDecision { cancel, chooseRoute, start }
@@ -1343,6 +1513,10 @@ class _ActiveRideShellState extends State<ActiveRideShell>
 
   bool get _isSimulation => widget.rideController.session?.isSimulation == true;
 
+  /// The bundled route this simulation rides (#934): the rider's last choice.
+  DemoRoute get _demoRoute =>
+      widget.demoRouteChoice?.current ?? DemoRoutes.fallback;
+
   /// The ride this shell was opened for. The app keys each shell by ride.
   String? _rideId;
 
@@ -1390,9 +1564,9 @@ class _ActiveRideShellState extends State<ActiveRideShell>
     final carPlayRouting = RoutingConfiguration.fromEnvironment();
     _carPlayRoutingClient = http.Client();
     _carPlayDestinationPlanner = DestinationRoutePlanner(
-      searchService: NominatimDestinationSearchService(
+      searchService: buildDestinationSearchService(
         client: _carPlayRoutingClient,
-        baseUrl: carPlayRouting.geocodingBaseUrl,
+        configuration: carPlayRouting,
       ),
       routingService: buildPlanningRoutingService(
         client: _carPlayRoutingClient,
@@ -1528,7 +1702,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
     var publishStoredLeaderRoute = false;
     if (_isSimulation) {
       try {
-        route = await const BundledDemoRouteLoader().load();
+        route = await BundledDemoRouteLoader(_demoRoute).load();
         _simulationRouteStore = InMemoryRouteStore(route);
         _warnings.add(
           'Ride Lab is isolated: device GPS, internet relay and nearby radios '
@@ -2357,34 +2531,17 @@ class _ActiveRideShellState extends State<ActiveRideShell>
 
   Future<List<awareness_geo.GeoPoint>> _simulationJunctions(
     route_domain.ImportedRoute? route,
-  ) async {
-    if (route?.sourceFileName == 'demo_route.gpx') {
-      try {
-        return simulationMarkerManeuvers(
-              await const BundledDemoRouteLoader().loadManeuvers(),
-            )
-            .map(
-              (maneuver) => awareness_geo.GeoPoint(
-                latitude: maneuver.position.latitude,
-                longitude: maneuver.position.longitude,
-              ),
-            )
-            .toList(growable: false);
-      } on FormatException {
-        // Keep the demo usable if a local asset is damaged. GPX waypoints are
-        // a less detailed but still valid fallback for the simulation.
-      }
-    }
-    return route?.waypoints
-            .map(
-              (waypoint) => awareness_geo.GeoPoint(
-                latitude: waypoint.point.latitude,
-                longitude: waypoint.point.longitude,
-              ),
-            )
-            .toList(growable: false) ??
-        const <awareness_geo.GeoPoint>[];
-  }
+  ) async =>
+      await bundledDemoJunctions(route) ??
+      route?.waypoints
+          .map(
+            (waypoint) => awareness_geo.GeoPoint(
+              latitude: waypoint.point.latitude,
+              longitude: waypoint.point.longitude,
+            ),
+          )
+          .toList(growable: false) ??
+      const <awareness_geo.GeoPoint>[];
 
   void _onSimulationVisualChanged() {
     if (!mounted || !_isSimulation) return;
@@ -2998,6 +3155,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
                 (_locationController?.status.canSample ?? false)),
         basemap: selectedBasemap,
         mapStyleJson: _carPlayMapStyleJson,
+        localMarkerOutline: _localMarkerOutline,
         localPosition: _mapPosition.value,
         localHeadingDegrees: navigationPosition?.headingDegrees,
         localSpeedMetersPerSecond: navigationPosition?.speedMetersPerSecond,
@@ -4417,6 +4575,8 @@ class _ActiveRideShellState extends State<ActiveRideShell>
                 onJoinGroup: widget.onJoinGroupRequested == null
                     ? null
                     : _joinGroupBeforeStart,
+                // A demo needs one button and the map, not a lobby (#933).
+                compact: _isSimulation,
               ),
               Expanded(
                 child: MediaQuery.removePadding(
@@ -4616,6 +4776,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
         'ride-map:${_appliedAuthoritativeRouteRevision ?? 'local'}:'
         '${_activeRoute?.id ?? 'none'}',
       ),
+      demoRouteChoice: widget.demoRouteChoice,
       currentPosition: _mapPosition,
       completedRideStore: widget.completedRideStore,
       globalRideHeatmap: widget.globalRideHeatmap,
@@ -4717,6 +4878,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
       ),
       distanceUnit: widget.distanceUnits.value,
       speedLimitDisplay: widget.speedLimitDisplay,
+      speedAdaptiveZoom: widget.speedAdaptiveZoom,
       showRouteProgress: widget.routeProgressDisplay?.enabled ?? true,
       showGroupMiniMap: widget.miniMapDisplay?.visibleFor(_miniMapRole) ?? true,
       ridingDisplaySize: widget.mapStyleMode.ridingDisplaySize,
@@ -5013,7 +5175,15 @@ class _ActiveRideShellState extends State<ActiveRideShell>
             followingInstructionText:
                 current.followingInstruction?.standaloneText,
           );
-          return refreshed?.key == announcement.key ? refreshed?.phrase : null;
+          // Which of the two to say, and whether to say anything, is decided
+          // by the schedule: the distance in a prompt moves while a natural
+          // voice renders it, and that alone must not discard the render.
+          return currentGuidancePhrase(
+            issued: announcement,
+            issuedDistanceMeters: guidance.distanceMeters,
+            refreshed: refreshed,
+            currentDistanceMeters: current.distanceMeters,
+          );
         },
         // Navigation, so alerts-only silences this and keeps the warnings.
         enabled: spokenAudioAllows(
@@ -5412,14 +5582,11 @@ class _ActiveRideShellState extends State<ActiveRideShell>
       return;
     }
     _internetRelayController?.wake();
-    final safetyAlert = request.category == 'safety';
     setState(
-      () => _selectedIndex = switch ((_isSimulation, safetyAlert)) {
-        (true, true) => 3,
-        (true, false) => 2,
-        (false, true) => 2,
-        (false, false) => 1,
-      },
+      () => _selectedIndex = pushOpenDestinationIndex(
+        isSimulation: _isSimulation,
+        request: request,
+      ),
     );
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
@@ -5652,6 +5819,8 @@ class _ActiveRideShellState extends State<ActiveRideShell>
 
   Widget _buildRideActions() => _RideActionsPanel(
     coordinationMode: widget.rideController.coordinationMode,
+    rideName: widget.rideController.session?.rideName,
+    onRenameRide: () => unawaited(_renameRide()),
     canChangeRoute: _isSimulation || widget.rideController.isLocalRideLeader,
     canEditRoute:
         (_isSimulation || widget.rideController.isLocalRideLeader) && _hasRoute,
@@ -5696,6 +5865,22 @@ class _ActiveRideShellState extends State<ActiveRideShell>
         ? null
         : () => unawaited(_rideOnAlone()),
   );
+
+  /// Renames the ride after it was created (#894). The name now defaults to
+  /// the route's, and a route edited along the way can leave it saying
+  /// somewhere the ride no longer goes.
+  Future<void> _renameRide() async {
+    final controller = widget.rideController;
+    final name = await showDialog<String>(
+      context: context,
+      builder: (_) =>
+          RenameRideDialog(initialName: controller.session?.rideName ?? ''),
+    );
+    if (name == null || !mounted) return;
+    await controller.renameRide(name);
+    if (!mounted) return;
+    setState(() {});
+  }
 
   void _openAlertsAndReports() {
     unawaited(
@@ -6275,6 +6460,10 @@ class _ActiveRideShellState extends State<ActiveRideShell>
       onToggleMarker: _toggleSimulationMarker,
       onRideOff: _rideOffSimulationMarker,
       onRiderCountChanged: _restartSimulationWithRiderCount,
+      demoRouteTitle: _demoRoute.title,
+      onChooseDemoRoute: widget.demoRouteChoice == null
+          ? null
+          : _chooseSimulationRoute,
       markerPassCount: widget.rideController.markerPassCount,
       tecPassedMarker: widget.rideController.tecPassedCurrentMarker,
     );
@@ -6349,6 +6538,19 @@ class _ActiveRideShellState extends State<ActiveRideShell>
     await widget.rideController.restartSimulationRide();
   }
 
+  /// Offers the bundled routes and, on a different pick, starts a clean
+  /// simulation on it (#934). The shell is rebuilt for the new ride, which is
+  /// what loads the route; nothing here swaps a route under a running one.
+  Future<void> _chooseSimulationRoute() async {
+    final choice = widget.demoRouteChoice;
+    if (choice == null) return;
+    final picked = await showDemoRoutePicker(context, current: choice.current);
+    if (picked == null || picked.id == choice.current.id || !mounted) return;
+    await choice.choose(picked);
+    _simulationController?.pause();
+    await widget.rideController.restartSimulationRide();
+  }
+
   Future<void> _restartSimulationWithRiderCount(int riderCount) async {
     final simulation = _simulationController;
     if (simulation == null || riderCount == simulation.riderCount) return;
@@ -6387,6 +6589,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
       speedLimitDisplay: widget.speedLimitDisplay,
       routeProgressDisplay: widget.routeProgressDisplay,
       miniMapDisplay: widget.miniMapDisplay,
+      speedAdaptiveZoom: widget.speedAdaptiveZoom,
       miniMapRole: _miniMapRole,
       currentRideActive: true,
       lastRelaySync: _internetRelayController?.status.lastSuccessfulSync,
@@ -6577,7 +6780,13 @@ class _ActiveRideShellState extends State<ActiveRideShell>
     }
     final route = _currentRoute;
     final sharedRoutes = widget.sharedRoutes;
-    if (route != null) sharedRoutes.stageFreeRoamRoute(route);
+    // With this ride's id, so riding on alone files as one ride with it (#896).
+    if (route != null) {
+      sharedRoutes.stageFreeRoamRoute(
+        route,
+        continuesRideId: controller.session?.rideId,
+      );
+    }
     switch (decision) {
       case RideOnAloneDecision.leave:
         await _leaveRide();

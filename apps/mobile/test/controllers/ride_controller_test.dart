@@ -771,6 +771,73 @@ void main() {
   });
 
   test(
+    'a ride renamed after creation is filed under its new name (#894)',
+    () async {
+      await controller.createRide('Oliver', rideName: 'To Town');
+      final eventsBefore = controller.events.length;
+
+      await controller.renameRide('  Coast loop  ');
+
+      expect(controller.session?.rideName, 'Coast loop');
+      expect((await sessionStore.load())?.rideName, 'Coast loop');
+      // A label on this phone: nothing is relayed.
+      expect(controller.events, hasLength(eventsBefore));
+
+      await controller.renameRide(
+        'x' * (RideSession.maximumRideNameLength + 1),
+      );
+      expect(controller.session?.rideName, 'Coast loop');
+      expect(controller.errorMessage, isNotNull);
+
+      await controller.startRide();
+      await controller.endRide();
+      expect((await completedRideStore.list()).single.title, 'Coast loop');
+    },
+  );
+
+  test(
+    'a solo ride turned into a group ride is filed as one ride (#896)',
+    () async {
+      await controller.createRide(
+        'Oliver',
+        coordinationMode: RideCoordinationMode.solo,
+        rideName: 'To Town',
+      );
+      await controller.startRide();
+      final soloRideId = controller.session!.rideId;
+
+      await controller.startGroupRide(displayName: 'Oliver', startNow: true);
+      expect(controller.session!.continuesRideId, soloRideId);
+      expect(
+        (await sessionStore.load())?.continuesRideId,
+        soloRideId,
+        reason: 'kept across a restart until the group ride is filed',
+      );
+      // Filed already, as leaving it would file it.
+      expect((await completedRideStore.list()).single.rideId, soloRideId);
+
+      await controller.endRide();
+
+      final stored = await completedRideStore.list();
+      expect(stored, hasLength(1));
+      expect(stored.single.legs.map((leg) => leg.rideId), [
+        soloRideId,
+        controller.session!.rideId,
+      ]);
+      expect(stored.single.title, 'To Town');
+    },
+  );
+
+  test('an empty name clears it, and the ride is known by its code', () async {
+    await controller.createRide('Oliver', rideName: 'To Town');
+
+    await controller.renameRide('   ');
+
+    expect(controller.session?.rideName, isNull);
+    expect((await sessionStore.load())?.rideName, isNull);
+  });
+
+  test(
     'replaying an ended ride preserves library edits and bin status',
     () async {
       await controller.createRide('Oliver');

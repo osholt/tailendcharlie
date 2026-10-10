@@ -189,6 +189,13 @@ class CompatibilityResponse(BaseModel):
     requiredCapabilities: list[str]
     cacheSeconds: int
     updateUrls: dict[str, str]
+    # Minimum app build per platform, only for platforms whose gate is on. An
+    # empty mapping means no build is refused. Older clients ignore the field.
+    minimumClientBuilds: dict[str, int] = Field(default_factory=dict)
+    # Base URLs of the routing and geocoding services clients should use, keyed
+    # by API: valhalla, photon, nominatim, osrm. Empty when none is configured.
+    # Older clients ignore the field (#917).
+    serviceUrls: dict[str, str] = Field(default_factory=dict)
 
 
 class HeatmapContributorRegistrationRequest(BaseModel):

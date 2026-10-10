@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 from functools import lru_cache
+from urllib.parse import urlsplit
 
 from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -79,6 +80,12 @@ class Settings(BaseSettings):
     )
     protocol_version: int = Field(default=1, ge=1, le=1000)
     minimum_client_protocol: int = Field(default=1, ge=1, le=1000)
+    # Per-platform minimum app build (#37). 0 turns the gate off, which is the
+    # default: raising either is an operator decision documented in
+    # docs/internet-relay.md. A client below its platform's minimum receives the
+    # same structured 426 `update_required` as a protocol cutoff.
+    minimum_client_build_ios: int = Field(default=0, ge=0, le=2_100_000_000)
+    minimum_client_build_android: int = Field(default=0, ge=0, le=2_100_000_000)
     supported_capabilities: list[str] = Field(
         default_factory=lambda: [
             "ride-start-v1",
@@ -161,6 +168,31 @@ class Settings(BaseSettings):
         ge=64 * 1024,
         le=2 * 1024 * 1024,
     )
+    # Fuel prices (#951, docs/fuel-and-charging-data-decision.md). The UK source
+    # is the statutory Fuel Finder API, which needs registered client
+    # credentials; without both it is off. France's open feed needs none and is
+    # off until enabled. The app shows prices only while `fuel-prices-v1` is
+    # advertised, which follows these settings.
+    fuel_finder_client_id: str = Field(default="", max_length=255)
+    fuel_finder_client_secret: SecretStr | None = None
+    fuel_finder_base_url: str = "https://www.fuel-finder.service.gov.uk"
+    fuel_prices_france_enabled: bool = False
+    fuel_prices_france_url: str = "https://donnees.roulez-eco.fr/opendata/instantane"
+    fuel_price_refresh_seconds: int = Field(default=900, ge=300, le=3600)
+    # Between Fuel Finder requests. It allows one at a time and 100 a minute.
+    fuel_price_request_interval_seconds: float = Field(default=3.0, ge=0.6, le=60)
+    fuel_price_timeout_seconds: int = Field(default=30, ge=5, le=120)
+    fuel_price_maximum_source_bytes: int = Field(
+        default=8 * 1024 * 1024,
+        ge=256 * 1024,
+        le=32 * 1024 * 1024,
+    )
+    fuel_price_maximum_stations_per_source: int = Field(default=20_000, ge=100, le=50_000)
+    fuel_price_maximum_stations_per_response: int = Field(default=600, ge=10, le=2000)
+    fuel_price_maximum_latitude_span: float = Field(default=0.5, gt=0, le=2)
+    fuel_price_maximum_longitude_span: float = Field(default=0.8, gt=0, le=3)
+    fuel_price_rate_limit_requests: int = Field(default=120, ge=10, le=1000)
+    fuel_price_rate_limit_window_seconds: int = Field(default=60, ge=1, le=3600)
     heatmap_contributions_enabled: bool = True
     heatmap_public_enabled: bool = True
     heatmap_registration_rate_limit_requests: int = Field(default=10, ge=1, le=1000)
@@ -182,6 +214,15 @@ class Settings(BaseSettings):
     fcm_client_email: str = Field(default="", max_length=320)
     fcm_private_key_base64: SecretStr | None = None
     push_delivery_timeout_seconds: int = Field(default=8, ge=2, le=30)
+    # Self-hosted routing and geocoding (#917, docs/routing-service.md). Each is
+    # the base URL of one service, advertised to the app and the web planner in
+    # the compatibility document so the services can move without an app
+    # release. Empty advertises nothing, and clients keep their built-in public
+    # endpoints.
+    service_valhalla_url: str = ""
+    service_photon_url: str = ""
+    service_nominatim_url: str = ""
+    service_osrm_url: str = ""
 
     @field_validator("data_encryption_key", "cursor_signing_key")
     @classmethod
@@ -210,6 +251,7 @@ class Settings(BaseSettings):
 
     @field_validator(
         "tomtom_traffic_api_key",
+        "fuel_finder_client_secret",
         "apns_private_key_base64",
         "fcm_private_key_base64",
         mode="before",
@@ -219,6 +261,46 @@ class Settings(BaseSettings):
         if value is None or value == "":
             return None
         return value
+
+    @field_validator("fuel_finder_base_url", "fuel_prices_france_url")
+    @classmethod
+    def validate_fuel_source_url(cls, value: str) -> str:
+        """Fuel price sources are fetched with credentials or trusted as data: HTTPS only."""
+        value = value.strip()
+        parsed = urlsplit(value)
+        if (
+            parsed.scheme != "https"
+            or not parsed.hostname
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.fragment
+        ):
+            raise ValueError("must be an https URL without credentials or a fragment")
+        return value
+
+    @field_validator(
+        "service_valhalla_url",
+        "service_photon_url",
+        "service_nominatim_url",
+        "service_osrm_url",
+    )
+    @classmethod
+    def validate_service_url(cls, value: str) -> str:
+        """An advertised URL is followed by every phone, so only a plain HTTPS base."""
+        value = value.strip()
+        if not value:
+            return ""
+        parsed = urlsplit(value)
+        if (
+            parsed.scheme != "https"
+            or not parsed.hostname
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.query
+            or parsed.fragment
+        ):
+            raise ValueError("must be an https URL without credentials, a query or a fragment")
+        return value.rstrip("/")
 
     @model_validator(mode="after")
     def push_provider_settings_are_complete(self) -> Settings:
@@ -238,6 +320,17 @@ class Settings(BaseSettings):
         if any(fcm_values) and not all(fcm_values):
             raise ValueError("FCM requires project ID, client email and private key")
         return self
+
+    @property
+    def service_urls(self) -> dict[str, str]:
+        """The configured routing and geocoding services, by API, for clients."""
+        configured = {
+            "valhalla": self.service_valhalla_url,
+            "photon": self.service_photon_url,
+            "nominatim": self.service_nominatim_url,
+            "osrm": self.service_osrm_url,
+        }
+        return {api: url for api, url in configured.items() if url}
 
     @property
     def apns_configured(self) -> bool:

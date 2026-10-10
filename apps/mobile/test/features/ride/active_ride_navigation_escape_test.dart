@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ride_relay/app/ride_relay_app.dart';
 import 'package:ride_relay/controllers/completed_rides_controller.dart';
+import 'package:ride_relay/controllers/demo_route_choice_controller.dart';
 import 'package:ride_relay/controllers/distance_unit_controller.dart';
 import 'package:ride_relay/controllers/map_style_mode_controller.dart';
 import 'package:ride_relay/controllers/ride_code_preference_controller.dart';
@@ -15,6 +16,7 @@ import 'package:ride_relay/domain/completed_ride_store.dart';
 import 'package:ride_relay/domain/distance_unit.dart';
 import 'package:ride_relay/domain/recorded_route_store.dart';
 import 'package:ride_relay/features/map/ride_map.dart';
+import 'package:ride_relay/services/demo_route_loader.dart';
 import 'package:ride_relay/services/leader_ride_status.dart';
 import 'package:ride_relay/services/nearby_bridge.dart';
 import 'package:ride_relay/services/road_jurisdiction.dart';
@@ -209,6 +211,9 @@ RideRelayApp _app(
   speedLimitDisplay: _speedLimitDisplay,
   recordedRoutes: _recordedRoutes,
   completedRides: _completedRides,
+  // This test is about the French demo: its country-confirmed right-hand
+  // traffic and kilometres. The default demo is now the UK one (#934).
+  demoRouteChoice: DemoRouteChoiceController.inMemory(DemoRoutes.france),
   enableNativeServices: false,
 );
 

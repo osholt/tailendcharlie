@@ -19,6 +19,8 @@ class RideSimulationScreen extends StatelessWidget {
     required this.onToggleMarker,
     required this.onRideOff,
     required this.onRiderCountChanged,
+    this.demoRouteTitle,
+    this.onChooseDemoRoute,
     this.markerPassCount = 0,
     this.tecPassedMarker = false,
   });
@@ -31,6 +33,11 @@ class RideSimulationScreen extends StatelessWidget {
   final Future<void> Function() onToggleMarker;
   final Future<void> Function() onRideOff;
   final Future<void> Function(int riderCount) onRiderCountChanged;
+
+  /// The bundled route this simulation rides, and the way to choose another
+  /// (#934). Both null where the choice is not offered.
+  final String? demoRouteTitle;
+  final Future<void> Function()? onChooseDemoRoute;
   final int markerPassCount;
   final bool tecPassedMarker;
 
@@ -67,6 +74,8 @@ class RideSimulationScreen extends StatelessWidget {
               onToggleMarker: onToggleMarker,
               onRideOff: onRideOff,
               onRiderCountChanged: onRiderCountChanged,
+              demoRouteTitle: demoRouteTitle,
+              onChooseDemoRoute: onChooseDemoRoute,
               markerPassCount: markerPassCount,
               tecPassedMarker: tecPassedMarker,
             );
@@ -105,6 +114,8 @@ class _SimulationControls extends StatelessWidget {
     required this.onToggleMarker,
     required this.onRideOff,
     required this.onRiderCountChanged,
+    required this.demoRouteTitle,
+    required this.onChooseDemoRoute,
     required this.markerPassCount,
     required this.tecPassedMarker,
   });
@@ -114,6 +125,8 @@ class _SimulationControls extends StatelessWidget {
   final Future<void> Function() onToggleMarker;
   final Future<void> Function() onRideOff;
   final Future<void> Function(int riderCount) onRiderCountChanged;
+  final String? demoRouteTitle;
+  final Future<void> Function()? onChooseDemoRoute;
   final int markerPassCount;
   final bool tecPassedMarker;
 
@@ -244,6 +257,22 @@ class _SimulationControls extends StatelessWidget {
               'Changing the fleet starts a clean simulation.',
               style: TextStyle(color: Color(0xFF8F9BAA), fontSize: 12),
             ),
+            if (onChooseDemoRoute case final choose?) ...[
+              const SizedBox(height: 12),
+              OutlinedButton.icon(
+                key: const Key('simulation-demo-route'),
+                onPressed: () => unawaited(choose()),
+                icon: const Icon(Icons.route_outlined),
+                label: Text(
+                  demoRouteTitle ?? 'Choose a demo route',
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              const Text(
+                'Changing the route starts a clean simulation.',
+                style: TextStyle(color: Color(0xFF8F9BAA), fontSize: 12),
+              ),
+            ],
             const SizedBox(height: 16),
             Row(
               children: [

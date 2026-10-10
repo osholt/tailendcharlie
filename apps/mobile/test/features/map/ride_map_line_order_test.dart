@@ -316,6 +316,87 @@ void main() {
       });
     },
   );
+
+  // #940. Where To has no ride shell above the map to publish the rejoin route
+  // among its trails, so the map draws the one it is navigating by itself.
+  for (final withShellTrails in [false, true]) {
+    testWidgets('a rejoin route is drawn once '
+        '(${withShellTrails ? 'by the shell' : 'by a map with no shell'})', (
+      tester,
+    ) async {
+      final directory = Directory.systemTemp.createTempSync('solo-rejoin');
+      addTearDown(() => directory.deleteSync(recursive: true));
+      final cache = OfflineTileCache(
+        rootDirectory: directory,
+        configuration: const BasemapConfiguration(),
+        httpClient: MockClient((_) async => http.Response('', 404)),
+      );
+      addTearDown(cache.dispose);
+      final rejoin = ValueNotifier<ImportedRoute?>(
+        ImportedRoute(
+          id: 'rejoin-solo',
+          name: 'Advisory rejoin route',
+          importedAt: DateTime.utc(2026, 10, 10),
+          sourceFileName: 'advisory-rejoin.gpx',
+          paths: const [
+            RoutePath(
+              kind: RoutePathKind.track,
+              points: [
+                GeoPoint(latitude: 53.003, longitude: -1.015),
+                GeoPoint(latitude: 53.003, longitude: -1.005),
+                GeoPoint(latitude: 53, longitude: -1.005),
+              ],
+            ),
+          ],
+          waypoints: const [],
+          maneuvers: const [
+            RouteManeuver(
+              position: GeoPoint(latitude: 53.003, longitude: -1.005),
+              type: 'turn',
+              modifier: 'right',
+            ),
+          ],
+        ),
+      );
+      addTearDown(rejoin.dispose);
+      final trails = ValueNotifier<List<MapOverlayTrace>>(const []);
+      addTearDown(trails.dispose);
+      final navigation = ValueNotifier<MapNavigationPosition?>(
+        MapNavigationPosition(
+          point: const GeoPoint(latitude: 53.003, longitude: -1.014),
+          recordedAt: DateTime.utc(2026, 10, 10, 12),
+          speedMetersPerSecond: 12,
+          headingDegrees: 90,
+        ),
+      );
+      addTearDown(navigation.dispose);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: RideMapScreen(
+            routeStore: InMemoryRouteStore(_route),
+            routeImporter: RouteImporter(source: const _NoFileSource()),
+            offlineTileCache: cache,
+            navigationPosition: navigation,
+            rejoinNavigationRoute: rejoin,
+            riderTrails: withShellTrails ? trails : null,
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+
+      await _thenTearDownMap(tester, () async {
+        final layer = tester.widget<PolylineLayer>(find.byType(PolylineLayer));
+        final rejoinLines = layer.polylines.where(
+          (line) => line.color == RouteTrailStyle.rejoinBreadcrumb.color,
+        );
+        // The shell publishes its own trace; here it published none, so a
+        // second copy from the map would show as one.
+        expect(rejoinLines, hasLength(withShellTrails ? 0 : 1));
+      });
+    });
+  }
 }
 
 /// Runs [body], and lets the map's own timers run out before the tree goes

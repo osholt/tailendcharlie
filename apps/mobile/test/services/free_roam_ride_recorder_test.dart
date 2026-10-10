@@ -88,6 +88,22 @@ void main() {
     expect(completed.rideId, checkpoint.rideId);
     expect(completed.traveledRoute?.paths.single.points, hasLength(3));
   });
+
+  test('a navigation ridden on from a group ride names it (#896)', () {
+    final recorder = FreeRoamRideRecorder(
+      localDisplayName: 'Oliver',
+      idFactory: () => 'alone',
+    );
+    final route = _route('To Town');
+
+    recorder.start(route, continuesRideId: 'group-ride');
+
+    expect(recorder.checkpoint()?.continuesRideId, 'group-ride');
+    expect(recorder.finish()?.continuesRideId, 'group-ride');
+    // The next navigation is its own.
+    recorder.start(route);
+    expect(recorder.checkpoint()?.continuesRideId, isNull);
+  });
 }
 
 ImportedRoute _route(String name) => ImportedRoute(

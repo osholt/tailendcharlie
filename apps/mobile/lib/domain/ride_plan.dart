@@ -84,6 +84,28 @@ class RidePlanPlace {
   /// A GPX `<sym>`, kept so a café added as a stop stays a café on export.
   final String? symbol;
 
+  /// This place after its pin was dragged to [to] on the map (#891).
+  ///
+  /// A short nudge — onto the right road, or the other side of a junction —
+  /// is still the same place and keeps its name. A longer drag is somewhere
+  /// else, so it becomes a dropped pin rather than carrying a café's name to a
+  /// lay-by two miles away.
+  RidePlanPlace movedTo(GeoPoint to) =>
+      _metres(point, to) <= keepNameWithinMeters
+      ? RidePlanPlace(
+          point: to,
+          label: label,
+          description: description,
+          symbol: symbol,
+        )
+      : RidePlanPlace(point: to, label: droppedPinLabel);
+
+  /// How far a dragged pin may move and still keep its name.
+  static const keepNameWithinMeters = 150.0;
+
+  /// What a place dragged further than [keepNameWithinMeters] is called.
+  static const droppedPinLabel = 'Dropped pin';
+
   RouteWaypoint toWaypoint({required String defaultSymbol}) => RouteWaypoint(
     point: point,
     name: label,
@@ -441,6 +463,64 @@ class RidePlan {
     return removeStop(
       from,
     ).addStop(moved, index: target, currentLocation: currentLocation);
+  }
+
+  /// Moves one named place — the start, a stop or the destination, counted
+  /// in that order from zero — to where its pin was dragged (#891).
+  ///
+  /// The order of the places is unchanged, so every leg is still the same leg
+  /// and every drawn adjustment stays on it. Dragging "your location" makes the
+  /// start a place the rider chose, as choosing one from the start row does.
+  RidePlan withPlaceMoved(
+    int namedIndex,
+    GeoPoint to, {
+    GeoPoint? currentLocation,
+  }) {
+    final destinationIndex = stops.length + 1;
+    if (namedIndex < 0 || namedIndex > destinationIndex) {
+      throw RangeError.range(namedIndex, 0, destinationIndex, 'namedIndex');
+    }
+    if (namedIndex == 0) {
+      final from = resolvedStart(currentLocation: currentLocation);
+      return withStart(
+        PlaceStart(
+          from == null || startsAtCurrentLocation
+              ? RidePlanPlace(point: to, label: RidePlanPlace.droppedPinLabel)
+              : from.movedTo(to),
+        ),
+      );
+    }
+    if (namedIndex == destinationIndex) {
+      final end = destination;
+      return end == null ? this : withDestination(end.movedTo(to));
+    }
+    final index = namedIndex - 1;
+    return copyWith(stops: [...stops]..[index] = stops[index].movedTo(to));
+  }
+
+  /// What is still ahead of a rider part-way along this plan's route (#893).
+  ///
+  /// The first [passedStops] stops are behind them and so are the shaping
+  /// points in [passedShapingPointIds]; both are dropped, and the plan starts
+  /// from the rider's location. The remaining adjustments move onto the same
+  /// legs counted from there, so the leg the rider is on becomes leg 0. The
+  /// destination is kept even when it is behind them: an edit still goes
+  /// somewhere.
+  RidePlan remainingFromCurrentLocation({
+    required int passedStops,
+    Set<String> passedShapingPointIds = const {},
+  }) {
+    final passed = passedStops.clamp(0, stops.length);
+    return copyWith(
+      start: const CurrentLocationStart(),
+      stops: stops.sublist(passed),
+      shapingPoints: _sortedByLeg([
+        for (final point in shapingPoints)
+          if (point.legIndex >= passed &&
+              !passedShapingPointIds.contains(point.id))
+            _onLeg(point, point.legIndex - passed),
+      ]),
+    );
   }
 
   GeoPoint? _legStart(int leg, {GeoPoint? currentLocation}) => leg == 0

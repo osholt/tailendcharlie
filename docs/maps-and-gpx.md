@@ -18,6 +18,27 @@ small enough to retain street-level detail without rendering every GPS fix.
 Global opt-in coverage remains a separate feature and data boundary, with its
 coarser privacy-oriented z17 contribution cells.
 
+## Replaying a finished ride (#305, first slice)
+
+A ride in the ride library with a timed track of its own offers **Replay this
+ride**: play, pause, a scrubber, and 10x, 30x, 60x or 120x speed (60x by
+default; rides are hours long, so even the slowest is faster than real time).
+A dot moves along the recorded track on the same map as the ride's detail view.
+It needs nothing but what is already on the phone: the archived ride's
+`traveledRoute` keeps a `recordedAt` on every fix, so it works offline and
+sends nothing anywhere.
+
+It is **one rider's ride, not the group's**. When a ride is archived its event
+journal is deleted, so the other riders' positions are not kept, and there is
+no per-rider switching. The screen says so. A recording gap of more than two
+minutes (the recorder splits the track there) is skipped rather than played as
+a long stand-still; the screen says how many it skipped. A ride whose fixes
+carry no times, or that is too short to have a pace, shows no replay button.
+
+Replaying the whole group needs each rider's timed track stored at archive time
+or kept by the relay, and the visibility decision #305 asks for first (who may
+open a group replay, and for how long). Neither exists yet.
+
 The daytime map has two saved settings: **Restrained** applies Tail End
 Charlie's quieter road-first repaint to OpenFreeMap Liberty, while **Original**
 keeps the provider's daytime colours and labels, with deeper and wider road
@@ -25,6 +46,65 @@ outlines ([#841](#road-edges-in-daylight-841)) and no POI label that is a source
 identifier ([#860](#provider-labels-never-show-an-identifier-860)). They use the same vector tile
 source and offline tile cache; only their small style-document caches are kept
 separate so switching cannot serve the wrong palette.
+
+## Global ride heatmap colours (#913)
+
+The opt-in global layer is pink, through a deeper pink, to crimson, and gets
+more opaque as a road gets busier. It replaced a blue, amber, red ramp. Since
+[#905](https://github.com/osholt/tailendcharlie/issues/905) the layer draws
+road-level cells, and most roads have few rides, so most of what was drawn sat at
+the cold end: the blue of the good-biking-road highlight, 13 CIEDE2000 from it.
+The amber and red above it were 16 and 20 from the twisty orange.
+
+| density | colour | opacity | restrained light | original light | dark | vs twisty / pass / good-road | vs personal violet / dark orange / orange |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 0.20 (one low-use cell) | `#EC4899` | 0.50 | 1.68-1.82 | 1.50-1.83 | 2.02-2.14 | 39 / 55 / 41 | 28 / 34 / 39 |
+| 0.55 | `#DB2777` | 0.60 | 2.24-2.48 | 1.96-2.50 | 1.94-2.12 | 38 / 71 / 43 | 28 / 29 / 38 |
+| 1.00 | `#BE123C` | 0.75 | 3.47-3.96 | 2.89-4.02 | 1.85-2.09 | 33 / 67 / 46 | 35 / 19 / 33 |
+| *old 0.25* | `#0EA5E9` | 0.42 | 1.39-1.48 | 1.20-1.50 | 2.05-2.13 | 53 / 28 / **13** | n/a |
+| *old 0.70* | `#F59E0B` | 0.42 | 1.23-1.33 | 1.12-1.34 | 2.39-2.47 | **16** / 46 / 57 | |
+| *old 1.00* | `#EF4444` | 0.42 | 1.60-1.71 | 1.49-1.72 | 1.71-1.78 | **20** / 62 / 47 | |
+
+The contrast columns are WCAG 2.1 of the heat blended over the basemap ground at
+the stop's effective opacity, against that ground: the lowest to highest over
+background, park, water and (restrained light only) building. The phone draws the
+layer below the road layers, so road fills are not behind it; the planner has no
+road layer to sit under, so its test also measures the Liberty road fills (white,
+`#FFEEAA`, `#FFCC88`), all at 1.5 or more. The restrained light and dark grounds
+are `RouteTrailStyle.lightBasemapSurfaces` and `darkBasemapSurfaces`; the original
+light ground is the provider's own `#F8F4F0`, `#D8E8C8` and `#9EBDFF`. The distance
+columns are CIEDE2000 between the full-strength colours: about 2 is the smallest
+difference an eye can see, and every pair above is 19 or more. Blended into the
+basemap, no stop is under 20 from a highlight colour.
+
+Why these:
+
+- **Not blue, teal or orange.** The three discovery highlights are the orange
+  `#F97316`, the teal `#0F9D8A` and the blue `#2583E9`. A pink to crimson haze is
+  at least 33 from every one of them, where a heat ramp's usual yellow or amber
+  end was never going to clear the orange, and a yellow end would also have
+  vanished on the light basemaps (1.0-1.3:1).
+- **Related to the personal layer, not the same.** The personal layer runs violet
+  `#7C3AED` to orange `#F97316`. Both are warm, saturated and cold-to-hot, and
+  neither has a blue or green stop, but the global layer shares no colour with it:
+  its nearest stop to a personal one is 19 away (the crimson against the dark
+  orange).
+- **Opacity carries "hotter", not lightness.** No single colour is lighter than
+  both a light and a dark basemap, so the colour stays mid-tone and the busiest
+  roads simply cover more. That is also why the minimum contrast rose with
+  density instead of falling on one basemap.
+
+One definition drives all three renderers: `globalHeatmapRamp` in
+`apps/mobile/lib/features/map/heatmap_ramp.dart` feeds the MapLibre
+`heatmap-color` expression and the Flutter painter, and
+`GLOBAL_HEATMAP_RAMP` in `apps/website/global-heatmap.mjs` is the planner's copy,
+which also draws the legend swatch. `heatmap_ramp_test.dart` reads the planner's
+file and fails if the two drift. The personal layer is the same type with its
+unchanged violet to orange stops.
+
+Numbers do not show that a haze reads as heat in daylight. That needs a
+photograph of the global layer on a mounted phone over the light and dark maps,
+beside the discovery highlights, which #913 stays open for.
 
 ## Saved-route place labels stay offline
 
@@ -156,6 +236,54 @@ at 30 m/s.
   beats keeping the bias. Landscape chrome is confined to side rails, so
   landscape keeps its full bias.
 
+#### The zoom follows speed, closer around town (#936)
+
+> I think the map zoom should change based on vehicle speed. Around town being
+> more zoomed in would be useful.
+
+The zoom used to move by 0.8 of a level across 0-30 m/s from a speed that fell to
+zero at every stop, so a town ride sat at nearly the scale of an A road. With
+**Settings -> Zoom the map with speed** on, which is the default, the zoom is an
+offset from the resting zoom (14.65 portrait, 14.15 landscape) chosen in
+`lib/services/navigation_speed_zoom.dart`:
+
+| Speed | Offset | Portrait zoom |
+| --- | --- | --- |
+| 15 mph (6.7 m/s) and under | +0.9 | 15.55 |
+| 30 mph | about +0.5 | about 15.2 |
+| 45 mph | about -0.2 | about 14.4 |
+| 60 mph | about -0.75 | about 13.9 |
+| 65 mph (29 m/s) and over | -0.8 | 13.85 |
+
+Between the two ends it is a smoothstep, so nothing snaps at a threshold. The
+camera does not act on that curve directly. `NavigationZoomGovernor`, fed one raw
+fix speed at a time:
+
+1. filters the speed, believing a rider who is speeding up after 4 s and one who
+   is slowing down after 10 s;
+2. holds everything while the rider is stopped (under 1 m/s), including its
+   clocks, so a red light changes nothing;
+3. ignores a want smaller than 0.2 of a level;
+4. makes a want to zoom **in** last 8 s of moving time, and requires the current
+   fix to share it, so a slow-down for a junction is over before the zoom has
+   moved; a want to zoom **out** is not delayed;
+5. moves at no more than 0.15 of a level a second, and carries on to the target
+   once it has started.
+
+Stop-start traffic therefore holds one scale, and leaving a fast road for a town
+comes in after about ten seconds. Tilt and the forward bias still follow the
+original speed curve. Switching the setting off puts back the old 0.8-level
+curve exactly.
+
+A manual zoom is respected by the existing hand-over rather than by anything in
+this feature: a drag, a pinch, a double tap or a scroll takes the camera from
+follow mode, no follow command is issued while it is the rider's, and **Follow
+me** (or the bike stopping and moving off) gives it back, at the zoom the speed
+now calls for. `test/features/map/speed_adaptive_zoom_map_test.dart` drives a
+drag and a pinch through the real map to show it. CarPlay and Android Auto
+receive the commanded viewport, so their zoom follows the phone's while it is
+following; that has not been seen on a head unit.
+
 ### Rotation
 
 `NavigationHeadingSmoother` drives the map bearing. GPS course over ground is
@@ -171,6 +299,16 @@ settles in about two seconds without overshoot. Changes beyond 95° are rejected
 until a following fix corroborates them, so GPS noise and tunnel re-acquisition
 cost one update of latency instead of spinning the map. All comparisons take the
 shortest angular path, so crossing north rotates the short way.
+
+Route pins stay upright as the map turns (#935). A `flutter_map` marker turns with
+the tiles unless its layer counter-rotates, so a start, stop or end pin was upside
+down heading south; the waypoint layers on the ride map and on the route review
+now set `rotate: true`. The pin is still anchored on its centre, as it was. The
+MapLibre map draws the same places as circle layers, which have no heading to
+lose; `circle-pitch-alignment` is stated as `viewport` so a tilted map cannot
+flatten them. Café, discovery and marker-plan icons are not covered by this.
+`test/features/map/route_marker_upright_test.dart` measures the on-screen rotation
+of each pin at several map bearings and reads the MapLibre layer's properties.
 
 ### Overlay placement
 
@@ -638,12 +776,31 @@ not for every ride. The local rider's position source is rewritten when only
 their role changes (`didUpdateWidget`), because it is otherwise only written
 when they move.
 
-**Not covered.** CarPlay and Android Auto do not share this source: their map
-canvases are drawn natively (`CarPlaySceneDelegate.swift`'s `CarPlayRiderAnnotation`
-and `ProjectedMapRenderer.kt`'s `drawRider`) from a snapshot that carries `role`
-and `isTec` per rider, as circles with a ring for the TEC. Stars there are a
-native follow-up and are not claimed. The ride recap draws no rider markers (its
-map has a start and an end), so there is nothing to change.
+**On CarPlay and Android Auto (#912).** Their canvases do not share the phone's
+source: they are drawn natively, `CarPlayRiderAnnotationView` in
+`CarPlaySceneDelegate.swift` and `drawRider` / `drawLocalRider` in
+`ProjectedMapRenderer.kt`, from the snapshot `carplay_bridge.dart` publishes.
+They draw the same stars. The phone sends the decision, `markerOutline` (`star`
+or `circle`) on every entry of `riders` and in the `localRider` block, computed by
+`riderMarkerOutlineFor` and `localRiderMarkerOutline`; neither native side
+re-derives it from `role` and `isTec`, so there is one rule and a solo ride's
+leader stays a circle without either of them knowing what a solo ride is. An
+absent or unknown value is a circle, which is what an older snapshot gets.
+
+The shape is the resting star above in the phone's proportions, sized against
+the circle it replaces: points reach `1.06 / 0.8` and valleys `0.66 / 0.8` times
+the circle's radius, so a 38 pt CarPlay badge has points reaching about 25 pt and
+Android Auto's 11 px marker about 14.6 px. It keeps the rider's own colour and
+the same dark edge. On CarPlay the glyph inside is pulled in to the valleys; on
+Android Auto the ring the Tail End Charlie used to be given is no longer drawn
+around a star, because the shape says it. There is no heading nose on a car star,
+as there was none on the car circle; the local rider's heading arrow on Android
+Auto is unchanged. `CarPlayRiderMarkerShape`, `CarPlayStarGeometry` and
+`CarPlayRiderMarkerStyle` (RunnerTests) and `ProjectedMarkerShape`,
+`ProjectedMarkerOutline` and the renderer's pixels (`ProjectedMapRendererTest`,
+`AndroidAutoCompanionTest`) test the choice and the geometry. Not claimed: any
+head-unit validation, which stays with #698 and #703. The ride recap draws no
+rider markers (its map has a start and an end), so there is nothing to change.
 
 ### The light basemap
 
@@ -935,6 +1092,42 @@ route or the rider is substantially off route. Imported recorded GPX tracks do
 not invent directions from geometry alone. Route review reports how many turn
 instructions a route carries.
 
+"Near" means travelling along the route, not just within 150 m of it (#941). A
+manoeuvre's left, right or straight on is relative to its planned approach. A
+rider who reaches the line on another road at a junction is on a different
+approach, so the planned wording is wrong for them. On the 10 October ride, a
+rider coming in 90° across a roundabout's planned approach was told "take the
+exit straight on", went straight ahead of themselves and was off route for eight
+minutes. A moving rider whose heading is more than 60° from every nearby piece
+of the line is therefore off route (`route_travel_alignment.dart`). Distance
+alone still decides when there is no heading to trust (below 3 m/s, the floor
+the reroute bearing uses) and inside 20 m of the line, where GPS course lag
+through a bend or round a ring must not blank the banner mid-junction.
+
+Off route on your own, Where To reroutes the way a group follower does (#940).
+Before this, the reroute lived only in the group ride shell. On the 10 October
+ride a Where To rider was off route for four minutes and then eight, and heard
+nothing. `SoloNavigationReroute` (`lib/services/solo_navigation_reroute.dart`)
+works like this:
+
+- Once the rider has been on the route, three fixes more than 120 m from it
+  put them off route. "Off route. Recalculating directions." is said once. A
+  rider still on the way to a route that starts elsewhere is not off it;
+  Navigate to start covers that.
+- The group planner then routes from the rider's position and heading back to
+  a point ahead on the planned route. The map navigates by that route and draws
+  it in the rejoin colour.
+- Without a leader there is no "massively off route" band. A long detour still
+  gets a route back (`RouteRejoinThresholds.solo`).
+- The rider is back on route after two fixes within 60 m that are also
+  travelling along the route. Crossing it at a junction does not count.
+- Neither a new rejoin route nor the return to the planned route is switched
+  inside a junction, and a failed retry keeps the last route back.
+- A rejoin is rejected, and a later join point tried, if it would arrive on the
+  planned route facing back along it. That is the other end of a U-turn, as a
+  route that starts against the rider's heading is the first.
+- The log gains `REROUTE` lines and off/back-on-route notes.
+
 ### Roundabouts, direction and symbols
 
 OSRM reports a roundabout as joining the ring and then leaving it, and the
@@ -1132,16 +1325,28 @@ or background geocoding traffic. Latitude/longitude input bypasses geocoding.
 Generated road geometry is stored as an ordinary GPX-compatible track and stays
 visible offline after planning.
 
-Development-alpha builds use the public OSRM and Nominatim endpoints. Both are
-replaceable without an app update:
+Every routing, map-matching, speed-limit and geocoding endpoint is resolved in
+one place, `RoutingServices` in `lib/services/routing_service_endpoints.dart`
+(#917). For each service the order is:
+
+1. a build-time define;
+2. the `serviceUrls` the relay advertises in `/api/v1/compatibility`, which the
+   app keeps between launches;
+3. the public OSRM, Valhalla and Nominatim instances.
+
+The operator therefore moves the services, or moves them back, without an app
+update. See `routing-service.md`. The defines are for development:
 
 ```text
---dart-define=RIDE_RELAY_ROUTING_URL=https://routing.example.com
---dart-define=RIDE_RELAY_GEOCODING_URL=https://geocoding.example.com
+--dart-define=RIDE_RELAY_ROUTING_URL=https://osrm.example.com
+--dart-define=RIDE_RELAY_VALHALLA_URL=https://routing.example.com/valhalla
+--dart-define=RIDE_RELAY_GEOCODING_URL=https://routing.example.com/photon
+--dart-define=RIDE_RELAY_GEOCODING_API=photon
 ```
 
-Destination results are cached for the app session and requests identify Ride
-Relay with a valid User-Agent. The public Nominatim service forbids client-side
+Destination results are cached for the app session. Every routing and geocoding
+request identifies the app with a valid User-Agent and `X-Client-Id:
+tailendcharlie.app`, which the self-hosted service requires. The public Nominatim service forbids client-side
 autocomplete and limits aggregate use; production must use an approved provider
 or self-hosted proxy before scale testing. OSRM uses the driving profile, so it
 produces road-following routes but does not claim Calimoto-style motorcycle or
@@ -1297,16 +1502,12 @@ so data freshness is explicitly unknown. Current and prefetched readings are
 kept only in memory and cleared when the user turns the feature off; the cache
 is not persisted across app launches.
 
-Alpha builds default to FOSSGIS/OpenStreetMap.de's public Valhalla instance.
-The endpoint is replaceable without an app update:
-
-```text
---dart-define=RIDE_RELAY_SPEED_LIMIT_URL=https://routing.example.com/trace_attributes
-```
-
-The `locate` endpoint is derived from that URL by replacing its final path
-segment, so a self-hosted deployment cannot end up with the two halves of the
-lookup on different hosts. It is deliberately not separately configurable.
+Builds fall back to FOSSGIS/OpenStreetMap.de's public Valhalla instance. The
+lookup uses `trace_attributes` and `locate` on whichever Valhalla deployment is
+in force (#917): a `RIDE_RELAY_VALHALLA_URL` define, else the one the relay
+advertises, else the public instance. Both actions are derived from one base
+URL, the same one routing and map matching use, so a self-hosted deployment
+cannot end up with the two halves of the lookup on different hosts.
 
 Valhalla is MIT-licensed and its OpenStreetMap-derived road data is ODbL with
 attribution required. The app credits `© OpenStreetMap contributors` in the
@@ -1332,6 +1533,53 @@ Provider references:
 - [Valhalla data licences](https://valhalla.github.io/valhalla/contributing/data/data-sources/)
 - [Valhalla attribution requirements](https://valhalla.github.io/valhalla/mjolnir/attribution/)
 - [Public demo fair-use and client identification](https://github.com/valhalla/valhalla#demo-server)
+
+## Why downloaded tiles still drew slowly after a fast zoom (#953)
+
+The iOS ride map is `flutter_map` plus `vector_map_tiles`. "Downloaded" means the
+raw vector bytes are on the device; a tile still has to be decoded, clipped
+(above zoom 14 every tile is cut out of its zoom-14 parent), painted and turned
+into an image before it shows. #819 made the byte reads cheap. The cost that was
+left, measured with the real renderer offline in a macOS profile build (median of
+three runs, a dense city area, all tiles on disk):
+
+| Scenario | Before | After |
+| --- | --- | --- |
+| Zoom 14.65 out to 11.5 and back in 0.8 s: map blank when the gesture ends | 99% | 0% |
+| ... time until fully covered / until sharp | 1.3 s / 1.4 s | 3 ms / 3 ms to 0.4 s |
+| ... tile requests / images drawn | 240 / 82 | 20 to 40 / 9 to 33 |
+| ... time spent PNG-encoding tiles for a disk that discards them | 2.4 s | 0 |
+| Sweep 14.65, 11, 16.5, 11, 14.65 in 1.8 s: time until covered | 1.4 s | 3 ms |
+| ... images drawn | 123 | 22 to 28 |
+| Zoom out to a never-seen 10.5: time until sharp | 0.6 s | 0.2 to 0.3 s |
+| Zoom in to a never-seen 17.5: time until sharp | 1.0 s | 0.5 s |
+
+Absolute times on a phone are longer; the ratios are what carry over. Causes, in
+order of weight:
+
+1. **Nothing drawn was kept.** `fileCacheMaximumSizeInBytes: 0` switches off the
+   package's store of rendered tiles (deliberately: it must not keep a second,
+   ungoverned copy of the provider's tiles on disk) but every tile was still
+   PNG-encoded and written, then deleted. `flutter_map` forgets tile images two
+   zoom levels away, so zooming back redrew the whole screen from vector data.
+2. **Levels that were only flown through were drawn in full.** A render that has
+   started cannot be withdrawn: 240 requests, 82 completed.
+3. **The PNG encode was a third of the cost of a tile and held a render slot.**
+4. **The render queue drew the margin before the middle.** The package's queue is
+   last-in first-out and `flutter_map` asks for the middle first.
+
+`RideVectorTileLayer` (`lib/features/map/ride_vector_tile_layer.dart`) replaces the
+package's layer on the ride map, the group mini map and the ride library map. It
+keeps 64 MiB of finished tile images in memory, starts a render only after the zoom
+level has been steady for 90 ms, draws the tiles nearest the centre first, writes
+nothing to disk and uses three decoder isolates on six-core phones (two before).
+The logic is in `lib/services/rendered_tile_scheduler.dart`. It builds the raster
+pipeline from the package's own parts, so `vector_map_tiles` stays pinned to the
+exact version it was written against.
+
+Not changed, and still costly: above zoom 14 each tile re-parses its zoom-14
+parent. A fresh zoom-in to 17.5 spends about three quarters of its decode time on
+that repeat (#964 tracks sharing the parse).
 
 ## CarPlay draws with MapLibre, and shares the phone's tiles
 

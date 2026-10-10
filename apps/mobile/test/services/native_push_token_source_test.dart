@@ -101,6 +101,54 @@ void main() {
     await openedSubscription.cancel();
     await source.close();
   });
+
+  test(
+    'a push for a leader broadcast or an alert opens like any other',
+    () async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.android;
+      messenger.setMockMethodCallHandler(channel, (call) async => null);
+      const configuration = NativePushConfiguration(
+        enabled: true,
+        apiKey: 'api-key',
+        projectId: 'project-id',
+        messagingSenderId: '123456789',
+        iosAppId: '',
+        androidAppId: '1:123456789:android:abc',
+      );
+      final source = NativePushTokenSource(configuration, channel: channel);
+      final opened = <PushOpenRequest>[];
+      final subscription = source.openedNotifications.listen(opened.add);
+      await source.requestPermissionAndToken();
+
+      // The three keys builds 101 and 102 read, plus one a later relay might add:
+      // an extra key is ignored rather than refusing the open.
+      for (final category in [
+        PushCategory.leaderBroadcast,
+        PushCategory.groupAlert,
+      ]) {
+        await _sendNativeCall(
+          messenger,
+          channel,
+          MethodCall('notificationOpened', <String, Object?>{
+            'rideId': 'ride-1',
+            'eventId': 'event-$category',
+            'category': category,
+            'somethingNew': 'ignored',
+          }),
+        );
+      }
+
+      expect(opened.map((request) => request.category), [
+        'leaderBroadcast',
+        'groupAlert',
+      ]);
+      expect(opened.every((request) => request.isGroupInstruction), isTrue);
+      expect(opened.map((request) => request.rideId).toSet(), {'ride-1'});
+
+      await subscription.cancel();
+      await source.close();
+    },
+  );
 }
 
 Future<void> _sendNativeCall(

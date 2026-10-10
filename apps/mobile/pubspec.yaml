@@ -53,6 +53,7 @@ dependencies:
   uuid: ^4.6.0
   url_launcher: ^6.3.2
   vector_tile_renderer: 6.1.0
+  executor_lib: ^1.1.2
   vector_map_tiles: 9.0.0-beta.11
   wakelock_plus: ^1.7.0
   xml: ^7.0.1
@@ -90,9 +91,12 @@ flutter:
   assets:
     - assets/demo_route.gpx
     - assets/demo_route_maneuvers.json
+    - assets/demo_route_cotswolds.gpx
+    - assets/demo_route_cotswolds_maneuvers.json
     - assets/biker_places.json
     - assets/discovery_catalogue.geojson
     - assets/fixed_speed_cameras.geojson
+    - assets/fuel_stations.json
     - assets/mini_roundabouts.geojson
     - assets/route_places.json
     - assets/route_places_fr.json

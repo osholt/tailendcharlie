@@ -46,6 +46,29 @@ them on.
 | OSM Nominatim | Destination search | At most 1 request/s **per application** (all users combined), caching required, no autocomplete |
 | OpenFreeMap | Map tiles | Free, fair use, donation-funded |
 
+## Launch status (10 October 2026)
+
+The operator decided the open questions on #861 and asked for the beta to be
+launched. What is built and what is open, by gate. The day-of procedure, the
+store answers and the rollback are in [open-beta-launch.md](./open-beta-launch.md).
+**Built** means it exists in the repository and is tested; none of it has touched
+a store. **Open** gates block the link.
+
+| Gate | Status | Built | Still open |
+| --- | --- | --- | --- |
+| G1 Field quality | **Open** | The #855 evidence instrument is in; the listing says Bluetooth sharing is unverified and not to rely on it, so the "or do not imply it works" alternative is met. | Build 102 ridden by a mixed iOS and Android group: #839, #851, #853, #856, #616 and #859 are ready for validation, not validated. #855 and #268 need the airplane-mode check on real phones. Crash-free sessions of 99.5% or better from TestFlight and Play vitals: no data yet. |
+| G2 Infrastructure | **Open** | Self-hosted routing stack and runbook (#926), app and web endpoint resolution (#927, #929) under #917. `build_number` is required and checked against both stores before any build (#630). The compatibility gate, screen and tests exist (#37). | Cut-over and smoke test of the routing service (#917); the remaining OSRM calls (#930). Relay hardening: load test on the real VM, backup and restore, an alert that reaches the operator's phone, ride-size and event-rate caps (#273); per-device authentication (#337) before the code space is exposed to strangers. #37 needs a real old TestFlight and Play build to have shown the screen against pre-production. #398, #421 and #352 are still open. |
+| G3 Privacy, safety, legal | **Partly built** | Privacy policy and terms say beta, minimum age 17, push-notification tokens, and beta support; the terms say the emergency-stop alert reaches only the group, navigation is advisory and the phone is not to be handled while riding. Data safety, content rating, foreground-service and App Privacy answers drafted. | DPIA and retention decision (#338). Sharing stops after a group disperses (#859, ready for validation). The policy and terms still name the public routing services until cut-over. An in-app "leave and delete" action is not built; deletion is by email and expiry. The operator files the Play and App Store answers. |
+| G4 Usable without the operator | **Open** | Onboarding (#42) and menu consolidation (#306) are ready for validation. **Email beta support** on About & build and **Beta support** in Settings send the build identity to the support address. The listing text cannot drift into Nearby, CarPlay or Android Auto claims (`tools/testflight/test_beta_listing.py`). | Planning-flow phase 1 (#847, in progress) and phases 2 to 6 (#891 to #899). Invitations end to end from `join.html` without the WhatsApp group. Wording drift (#626). Nothing attaches ride diagnostics to a support email automatically; a rider shares them from Settings. |
+| G5 Platform reviews | **Built, awaiting reviews** | Android: the open-testing release needs a typed confirmation, refuses an Android Auto bundle, reads the track back, and builds without Android Auto (an explicit `-PandroidAuto=true` switch is off everywhere; no track has carried Android Auto since build 88). iOS: reviewer notes drafted; the `TestFlight public link` workflow opens, verifies and closes the link. | The Play Console check that **Android Auto is not opted in** (per app, not per track), and Play's own review of the open-testing release. Beta App Review of the build. #698 (CarPlay) and #703 (Android Auto) stay open and nothing claims either. |
+| G6 Support | **Mostly built** | One address, **testing@tailendcharlie.app**, in the app, the website, the privacy policy, the terms and every listing. | A public known-issues page generated from `tester-release-notes.md`; a written triage routine (the 48-hour rule is in the launch doc). Neither has a ticket. |
+
+Decisions recorded on #861 (9 and 10 October): self-hosted routing, a phase 1 cap
+of 100, support at `testing@tailendcharlie.app`, minimum age 17, and Android
+Auto left out of the open-testing build. The "Decisions needed" list below is
+therefore answered except for two scale questions the stores force: Apple has no
+17+ tier and Play's age bands are 16 to 17 and 18 and over.
+
 ## Gates: all must be true before the link goes public
 
 ### G1 Field quality: build 102 proven on a ride
@@ -62,17 +85,22 @@ them on.
 
 ### G2 Infrastructure that can take strangers
 
-1. **Stop depending on the public demo servers.** Recommended: run our own
-   Valhalla for Great Britain (and Ireland, for Northern Ireland routes) plus
-   Photon or Nominatim for geocoding. Oracle's Always Free allowance includes
-   an Ampere A1 VM with far more memory than the relay box (check the current
-   allowance), which is enough to build and serve a GB graph.
-   - Put it behind the existing Caddy, with per-client rate limits and the
-     `X-Client-Id` header.
-   - Valhalla can serve every routing call the app makes, so the OSRM demo
-     dependency can go entirely.
-   - The paid alternative is a hosted Valhalla/geocoder provider. That is a
-     cost decision for the operator (see "Decisions needed").
+1. **Stop depending on the public demo servers.** Decided: self-host on an
+   Oracle Always Free Ampere A1 VM, separate from the relay (#917). The runbook
+   is [`routing-service.md`](routing-service.md). It covers provisioning,
+   verification, cut-over, rollback and cost.
+   - Valhalla (motorcycle and auto costing) and Photon for Great Britain,
+     Ireland, the Isle of Man and France, behind Caddy with per-client rate
+     limits and an `X-Client-Id` check. The stack is in `deploy/routing/`.
+   - The relay advertises the service URLs in `/api/v1/compatibility`, so the
+     app and the web planner move over without a release, and back again by
+     unsetting them.
+   - Oracle's A1 allowance is now **2 OCPU / 12 GB**, not the 4 OCPU / 24 GB this
+     plan first assumed. The stack is sized to fit it at £0. Whatever A1
+     capacity the relay uses comes out of the same allowance.
+   - Valhalla can serve every routing call the app makes. Moving the remaining
+     OSRM calls to Valhalla `auto` changes the routes riders get, so it is a
+     follow-up that needs field validation (#930).
 2. **Relay hardening.**
    - Load-test N concurrent rides of 10 riders on the real VM size and record
      the result.
@@ -84,7 +112,10 @@ them on.
      space is exposed to strangers.
 3. **Version gate.**
    - Exercise `/api/v1/compatibility` end to end: an old beta build is told to
-     update, with a link, rather than failing in confusing ways (#37).
+     update, with a link, rather than failing in confusing ways (#37). The
+     per-platform minimum build, the screen and the tests exist; the gate stays
+     open until a real old TestFlight and Play build has shown the screen
+     against pre-production (see internet-relay.md).
    - The Android version code must not default to the run number (#630).
 
 ### G3 Privacy, safety and legal
@@ -93,6 +124,10 @@ them on.
   beta actually does: live location sharing and its retention, relay storage
   and deletion, opt-in heatmap and ETA contributions, diagnostics, and Nearby.
 - The DPIA and retention decision is complete (#338).
+- Global heatmap contribution is opt-in and asked at setup (#957, operator
+  decision of 10 October 2026). A rider who has not chosen contributes nothing;
+  riders from before the question existed are asked once on the home map. The
+  Data safety answer for approximate location says so.
 - No phone keeps sharing for hours after a group disperses (#859).
 - Terms with clear safety wording:
   - the app is not an emergency service;
@@ -176,8 +211,8 @@ API (`android-internal-testing.md`). Write that into the incident runbook.
 
 ## Decisions needed from the operator
 
-1. Routing and geocoding: self-host on a free-tier ARM VM (recommended) or pay
-   a hosted provider.
+1. ~~Routing and geocoding: self-host on a free-tier ARM VM (recommended) or
+   pay a hosted provider.~~ Decided: self-host (#917).
 2. The phase 1 tester cap and the groups invited.
 3. The support address, and whether there is a public community channel.
 4. The minimum age.
@@ -189,7 +224,7 @@ API (`android-internal-testing.md`). Write that into the incident runbook.
 | Gate | Tickets |
 | --- | --- |
 | G1 | #839, #851, #853, #856, #855, #268, #616 |
-| G2 | #273, #337, #37, #630, #398, #421, #352 |
+| G2 | #917, #273, #337, #37, #630, #398, #421, #352 |
 | G3 | #338, #859 |
 | G4 | #42, #847, #306, #626 |
 | G5 | #698, #703 |

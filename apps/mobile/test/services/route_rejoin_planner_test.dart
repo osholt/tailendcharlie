@@ -475,6 +475,86 @@ void main() {
       expect(plan.guidance, contains('turning around'));
     });
 
+    // #940. The other end of a U-turn: a rejoin point on a two-way road can be
+    // reached from either side, and a route that arrives facing back along
+    // the planned route leaves the rider pointing the wrong way at the handoff.
+    Future<RouteRejoinPlan> rejoinWith(
+      RoadRoutingService routing, {
+      List<GeoPoint>? plannedRoute,
+    }) async {
+      final planned = plannedRoute ?? route;
+      final planner = RouteRejoinPlanner(routingService: routing);
+      await planner.update(
+        riderId: 'rider',
+        sample: _sample(51, -0.96, start),
+        assessment: _onRoute(start),
+        plannedRoute: planned,
+      );
+      return planner.update(
+        riderId: 'rider',
+        sample: _sample(
+          51.01,
+          -0.95,
+          start.add(const Duration(minutes: 1)),
+          headingDegrees: 180,
+          speedMetersPerSecond: 12,
+        ),
+        assessment: _offRoute(
+          at: start.add(const Duration(minutes: 1)),
+          distance: 1112,
+          since: start.add(const Duration(seconds: 30)),
+        ),
+        plannedRoute: planned,
+      );
+    }
+
+    test('rejects a rejoin that arrives facing back along the route, and '
+        'tries a later join', () async {
+      final routing = _ArrivingRouting(backwardsFor: 1);
+      final plan = await rejoinWith(routing);
+
+      expect(plan.status, RouteRejoinStatus.routed);
+      expect(routing.calls, hasLength(2));
+      expect(
+        progressOf(_fromRoutingPoint(routing.calls[1][1])),
+        greaterThan(progressOf(_fromRoutingPoint(routing.calls[0][1]))),
+      );
+    });
+
+    test(
+      'a rejoin that can only arrive backwards is refused, not offered',
+      () async {
+        final plan = await rejoinWith(_ArrivingRouting(backwardsFor: 3));
+
+        expect(plan.status, RouteRejoinStatus.arrivalDirectionConflict);
+        expect(plan.hasBreadcrumb, isFalse);
+        expect(plan.guidance, contains('facing the wrong way'));
+      },
+    );
+
+    test('the planned direction is taken where the rejoin lands', () async {
+      // North for 3 km, then east: a westbound arrival on the eastbound leg is
+      // backwards, though it is square to where the route began.
+      final bent = [
+        const GeoPoint(latitude: 50.97, longitude: -0.96),
+        for (var index = 0; index <= 16; index += 1)
+          GeoPoint(latitude: 51, longitude: -0.96 + index * 0.01),
+      ];
+      final plan = await rejoinWith(
+        _ArrivingRouting(backwardsFor: 3),
+        plannedRoute: bent,
+      );
+      expect(plan.status, RouteRejoinStatus.arrivalDirectionConflict);
+    });
+
+    test('a rejoin arriving the planned way is accepted first time', () async {
+      final routing = _ArrivingRouting(backwardsFor: 0);
+      final plan = await rejoinWith(routing);
+
+      expect(plan.status, RouteRejoinStatus.routed);
+      expect(routing.calls, hasLength(1));
+    });
+
     test('routes a massively off-course rider to the TEC', () async {
       final routing = _StubRouting();
       final planner = RouteRejoinPlanner(routingService: routing);
@@ -904,6 +984,54 @@ class _BackwardRouting implements RoadRoutingService {
     distanceMeters: 1234,
     duration: const Duration(minutes: 3),
   );
+}
+
+/// Leaves southwards, the fixture rider's heading, then reaches the rejoin
+/// point either from the east, heading west against the eastbound route, for
+/// the first [backwardsFor] calls, or from the north.
+class _ArrivingRouting implements RoadRoutingService {
+  _ArrivingRouting({required this.backwardsFor});
+
+  final int backwardsFor;
+  final List<List<route_domain.GeoPoint>> calls = [];
+
+  @override
+  Future<RoadRouteResult> routeThrough(
+    List<route_domain.GeoPoint> waypoints, {
+    route_domain.RoutePreferences? preferences,
+    double? originBearingDegrees,
+  }) async {
+    calls.add(List.unmodifiable(waypoints));
+    final first = waypoints.first;
+    final last = waypoints.last;
+    final south = route_domain.GeoPoint(
+      latitude: first.latitude - 0.002,
+      longitude: first.longitude,
+    );
+    return RoadRouteResult(
+      points: [
+        first,
+        south,
+        if (calls.length <= backwardsFor) ...[
+          route_domain.GeoPoint(
+            latitude: south.latitude,
+            longitude: last.longitude + 0.004,
+          ),
+          route_domain.GeoPoint(
+            latitude: last.latitude,
+            longitude: last.longitude + 0.004,
+          ),
+        ] else
+          route_domain.GeoPoint(
+            latitude: south.latitude,
+            longitude: last.longitude,
+          ),
+        last,
+      ],
+      distanceMeters: 1234,
+      duration: const Duration(minutes: 3),
+    );
+  }
 }
 
 class _NoRouteThenForwardRouting implements RoadRoutingService {

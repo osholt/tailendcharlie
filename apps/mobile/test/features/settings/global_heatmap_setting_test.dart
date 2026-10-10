@@ -55,17 +55,15 @@ void main() {
       final consent = find.byKey(const Key('global-heatmap-consent'));
       await tester.ensureVisible(consent);
       expect(heatmap.visible, isFalse);
-      expect(heatmap.consent, HeatmapContributionConsent.always);
+      // Nobody who has not chosen is shown as having chosen (#957).
+      expect(heatmap.consent, HeatmapContributionConsent.never);
+      expect(heatmap.consentAnswered, isFalse);
+      expect(find.text('Not chosen yet: nothing is shared'), findsOneWidget);
 
-      final shareHistory = find.byKey(
-        const Key('global-heatmap-share-history'),
-      );
-      await tester.ensureVisible(shareHistory);
-      await tester.tap(shareHistory);
-      await tester.pumpAndSettle();
+      // Bulk sharing is only offered once the rider has chosen to share.
       expect(
-        find.text('There are no saved rides to share yet.'),
-        findsOneWidget,
+        find.byKey(const Key('global-heatmap-share-history')),
+        findsNothing,
       );
 
       await tester.ensureVisible(consent);
@@ -74,6 +72,8 @@ void main() {
       await tester.tap(find.text('Never').last);
       await tester.pumpAndSettle();
       expect(heatmap.consent, HeatmapContributionConsent.never);
+      // Choosing Never when nothing was chosen is an answer, not a no-op.
+      expect(heatmap.consentAnswered, isTrue);
       expect(heatmap.visible, isFalse);
 
       await tester.ensureVisible(consent);
@@ -87,6 +87,17 @@ void main() {
       await tester.pumpAndSettle();
       expect(heatmap.consent, HeatmapContributionConsent.askAfterEachRide);
       expect(heatmap.visible, isFalse);
+
+      final shareHistory = find.byKey(
+        const Key('global-heatmap-share-history'),
+      );
+      await tester.ensureVisible(shareHistory);
+      await tester.tap(shareHistory);
+      await tester.pumpAndSettle();
+      expect(
+        find.text('There are no saved rides to share yet.'),
+        findsOneWidget,
+      );
 
       final remove = find.byKey(const Key('global-heatmap-remove-data'));
       await tester.ensureVisible(remove);

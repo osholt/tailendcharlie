@@ -16,17 +16,24 @@ import '../../services/biker_place_catalogue.dart';
 import '../../services/discovery_layer_preferences.dart';
 import '../../services/motorcycle_discovery.dart';
 import '../../services/measurement_formatter.dart';
+import '../../services/navigation_export.dart';
 import '../../services/navigation_guidance.dart';
 import '../../services/ride_plan_router.dart';
 import '../../services/road_routing.dart';
 import '../../services/route_marker_plan.dart';
+import '../../services/route_preferences_memory.dart';
 import '../../services/route_reshape_planner.dart';
 import '../../services/route_twistiness.dart';
 import '../../services/route_verification.dart';
 import '../../services/route_waypoint_editor.dart';
+import '../../services/fuel_stop_finder.dart';
+import 'fuel_stop_flow.dart';
+import 'fuel_stop_sheet.dart';
 import 'maneuver_list_screen.dart';
+import 'place_memory_panel.dart';
 import 'place_search_sheet.dart';
 import 'resolved_route_map_preview.dart';
+import 'navigation_export_sheet.dart';
 import 'ride_plan_panels.dart';
 import 'route_preferences_panel.dart';
 import 'sheet_close_button.dart';
@@ -53,6 +60,10 @@ class RidePlanEditing {
     this.acquireCurrentLocation,
     this.offerCoordinationChoice = false,
     this.confirmLabel = defaultConfirmLabel,
+    this.replanOnOpen = false,
+    this.preferencesMemory = const RoutePreferencesMemory(),
+    this.exportCoordinator = const NavigationExportCoordinator(),
+    this.keepRouteUntilEdited = false,
   });
 
   final RidePlan plan;
@@ -77,6 +88,25 @@ class RidePlanEditing {
   final String Function(RidePlan plan) confirmLabel;
 
   static String defaultConfirmLabel(RidePlan plan) => 'Confirm';
+
+  /// Whether the route being edited is not this plan, routed, even though it
+  /// has the same number of places: a plan trimmed to what is left of a ride
+  /// starts somewhere else (#893). Its line is shown until the new one comes.
+  final bool replanOnOpen;
+
+  /// Where the confirmed route options are remembered for the next new plan
+  /// (#894). Null keeps nothing.
+  final RoutePreferencesMemory? preferencesMemory;
+
+  /// Hands the planned route to another navigation app or a GPX file from
+  /// beside the confirm button (#895). Null offers no hand-off.
+  final NavigationExportCoordinator? exportCoordinator;
+
+  /// Whether the route being reviewed is kept exactly as it is until the plan
+  /// is first edited (#892): an imported GPX, a recording, a saved route. Its
+  /// line is confirmable as it came, and only a change to the start, a stop,
+  /// the destination, the options or the line re-plans it on roads.
+  final bool keepRouteUntilEdited;
 }
 
 /// A confirmed plan and the route it was routed to.
@@ -206,6 +236,11 @@ class RouteReviewScreen extends StatefulWidget {
     ImportedRoute? route,
     List<String> warnings = const [],
     bool showMarkerPlan = false,
+    ImportedRoute? previousRoute,
+    ImportedRoute? comparisonRoute,
+    double? distanceMeters,
+    Duration? duration,
+    RouteVerification? verification,
     Future<BikerPlaceCatalogue> Function()? pointOfInterestLoader,
     Future<MotorcycleDiscoveryCatalogue> Function()? discoveryLoader,
     Future<DiscoveryLayerPreferences> Function()? discoveryPreferencesLoader,
@@ -226,7 +261,11 @@ class RouteReviewScreen extends StatefulWidget {
           distanceUnit: distanceUnit,
           basemapConfiguration: basemapConfiguration,
           warnings: warnings,
-          previousRoute: route,
+          previousRoute: previousRoute ?? route,
+          comparisonRoute: comparisonRoute,
+          distanceMeters: distanceMeters,
+          duration: duration,
+          verification: verification,
           canEditStops: true,
           showMarkerPlan: showMarkerPlan,
           planning: planning,
@@ -241,6 +280,8 @@ class RouteReviewScreen extends StatefulWidget {
     );
     final confirmed = routed;
     if (action != RouteReviewAction.confirm || confirmed == null) return null;
+    // The options a rider confirms are the next new plan's default (#894).
+    await planning.preferencesMemory?.remember(plan.preferences);
     return RidePlanOutcome(
       plan: plan,
       route: confirmed.withMarkerReview(markerReview ?? confirmed.markerReview),
@@ -344,6 +385,14 @@ class _RouteReviewScreenState extends State<RouteReviewScreen> {
   bool _planRouted = false;
   String? _planError;
 
+  /// Whether the line on screen is still the route as it came, untouched by
+  /// any edit (#892). The first edit re-plans it on roads.
+  late bool _lineIsOriginal = widget.planning?.keepRouteUntilEdited ?? false;
+
+  /// A named place whose pin is being dragged on the map, and where it is now
+  /// (#891). Counted as the plan's places are: start, stops, destination.
+  ({int index, GeoPoint point})? _draggedPlace;
+
   /// A fix the host fetched on request, for a host whose position does not
   /// update on its own.
   GeoPoint? _acquiredLocation;
@@ -395,7 +444,9 @@ class _RouteReviewScreenState extends State<RouteReviewScreen> {
       // Anything else — a new plan, or a route whose waypoints are not the
       // plan's places — is routed now, so the line, the list and the drawn
       // adjustments all describe the same legs.
-      _planRouted = isRoutedPlan(widget.route, plan);
+      _planRouted =
+          planning.keepRouteUntilEdited ||
+          (!planning.replanOnOpen && isRoutedPlan(widget.route, plan));
       if (!_planRouted) {
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (mounted) unawaited(_replan(plan));
@@ -434,6 +485,7 @@ class _RouteReviewScreenState extends State<RouteReviewScreen> {
       _planError = null;
       _planRouted = false;
       _reshaping = routable;
+      _lineIsOriginal = false;
     });
     widget.onPlanChanged?.call(plan);
     if (!routable) {
@@ -478,6 +530,38 @@ class _RouteReviewScreenState extends State<RouteReviewScreen> {
     }
   }
 
+  bool _exporting = false;
+
+  /// "Open route with": the plan's route, as it is on screen, to another
+  /// navigation app or a GPX file (#895). It used to be reachable only after
+  /// confirming, from the map's "Navigate or export route".
+  Future<void> _openRouteWith() async {
+    final coordinator = widget.planning?.exportCoordinator;
+    if (coordinator == null || _exporting) return;
+    final target = await NavigationExportSheet.show(context);
+    if (target == null || !mounted) return;
+    setState(() => _exporting = true);
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    final renderObject = context.findRenderObject();
+    final origin = renderObject is RenderBox && renderObject.hasSize
+        ? renderObject.localToGlobal(Offset.zero) & renderObject.size
+        : null;
+    try {
+      final result = await coordinator.export(
+        target,
+        route,
+        sharePositionOrigin: origin,
+      );
+      messenger?.showSnackBar(SnackBar(content: Text(result.message)));
+    } on Object catch (error) {
+      messenger?.showSnackBar(
+        SnackBar(content: Text('Could not open the route: $error')),
+      );
+    } finally {
+      if (mounted) setState(() => _exporting = false);
+    }
+  }
+
   void _setCoordinationMode(RidePlan plan, RideCoordinationMode mode) {
     final updated = plan.withCoordinationMode(mode);
     setState(() => _plan = updated);
@@ -491,6 +575,7 @@ class _RouteReviewScreenState extends State<RouteReviewScreen> {
       title: 'Start from',
       offerCurrentLocation: true,
       currentLocationKnown: _currentLocation != null,
+      currentPoint: _currentLocation,
     );
     if (choice == null || !mounted) return;
     switch (choice) {
@@ -506,9 +591,21 @@ class _RouteReviewScreenState extends State<RouteReviewScreen> {
       context,
       searchService: widget.planning!.searchService,
       title: 'Where to?',
+      currentPoint: _currentLocation,
     );
     if (choice is! PlaceSearchPlace || !mounted) return;
     await _replan(plan.withDestination(choice.place));
+  }
+
+  /// Saves a place on the plan - a stop, the destination, a start the rider
+  /// chose, or a pin they dropped by dragging - as Home, Work or a name of their
+  /// own (#937). Stays on the phone.
+  Future<void> _savePlace(RidePlanPlace place) async {
+    final saved = await PlaceMemoryActions.saveOnce(context, place);
+    if (saved == null || !mounted) return;
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text('Saved as ${saved.name}')));
   }
 
   Future<void> _addStop(RidePlan plan) async {
@@ -516,10 +613,35 @@ class _RouteReviewScreenState extends State<RouteReviewScreen> {
       context,
       searchService: widget.planning!.searchService,
       title: 'Add a stop',
+      currentPoint: _currentLocation,
     );
     if (choice is! PlaceSearchPlace || !mounted) return;
     await _replan(
       plan.addStop(choice.place, currentLocation: _currentLocation),
+    );
+  }
+
+  /// "Navigate to fuel" on the plan (#951): stations for the rider's fuel
+  /// along this route, ahead of the rider if they are on it, and the chosen
+  /// one added on the leg nearest it, like a café added on the map.
+  Future<void> _addFuelStop() async {
+    final query = fuelStopQueryFor(
+      routePath: RouteMarkerPlanAnalyzer.primaryRiddenPath(route),
+      rider: _currentLocation,
+    );
+    if (query == null) return;
+    final finder = await FuelStopFinder.shared();
+    if (!mounted) return;
+    final chosen = await FuelStopSheet.show(
+      context,
+      search: finder.find(query),
+      distanceUnit: distanceUnit,
+      actionLabel: 'Add stop',
+    );
+    if (chosen == null || !mounted) return;
+    await _recalculateEditedRoute(
+      insertRouteWaypoint(route, fuelStopWaypoint(chosen)),
+      failurePrefix: 'Could not route via ${chosen.label}.',
     );
   }
 
@@ -664,6 +786,18 @@ class _RouteReviewScreenState extends State<RouteReviewScreen> {
     if (_reshapeCallback == null) return;
     // A plan still waiting for its first route has no line to drag.
     if (_plan != null && !_planRouted) return;
+    if (start.draggedPin case final pin?) {
+      // A named place moves with the finger and is routed when it is let go;
+      // the line under it is left alone (#891).
+      final index = planPlacePinIndex(pin);
+      if (_plan != null && index != null) {
+        setState(() {
+          _draggedPlace = (index: index, point: start.point);
+          _reshapeError = null;
+        });
+      }
+      return;
+    }
     final current = route.shapingPoints;
     _reshapeHistory.add(List.unmodifiable(current));
     if (_reshapeHistory.length > 20) _reshapeHistory.removeAt(0);
@@ -693,6 +827,10 @@ class _RouteReviewScreenState extends State<RouteReviewScreen> {
   }
 
   void _updateRouteReshape(GeoPoint point) {
+    if (_draggedPlace case final dragged?) {
+      setState(() => _draggedPlace = (index: dragged.index, point: point));
+      return;
+    }
     final activeId = _activeShapingPointId;
     if (activeId == null) return;
     final updated = [
@@ -706,6 +844,23 @@ class _RouteReviewScreenState extends State<RouteReviewScreen> {
   }
 
   void _endRouteReshape() {
+    if (_draggedPlace case final dragged?) {
+      _draggedPlace = null;
+      final plan = _plan;
+      if (plan == null) return;
+      // The places keep their order, so every drawn adjustment stays on the
+      // leg it was drawn on.
+      unawaited(
+        _replan(
+          plan.withPlaceMoved(
+            dragged.index,
+            dragged.point,
+            currentLocation: _currentLocation,
+          ),
+        ),
+      );
+      return;
+    }
     if (_activeShapingPointId == null) return;
     _activeShapingPointId = null;
     _queueReshape(immediate: true);
@@ -764,6 +919,7 @@ class _RouteReviewScreenState extends State<RouteReviewScreen> {
             if (_plan != null) {
               _adoptRouteShapingPoints(result.route);
               _planRouted = true;
+              _lineIsOriginal = false;
             }
             _verification = result.verification;
           });
@@ -1157,6 +1313,17 @@ class _RouteReviewScreenState extends State<RouteReviewScreen> {
         .toList(growable: false);
     final reviewWaypoints = _reviewWaypoints(route);
     final plan = _plan;
+    // On the plan surface the pins are the plan's places, so a dragged or
+    // added stop is where the rider put it while its route is calculated.
+    final placePinPoints =
+        plan
+            ?.controls(currentLocation: _currentLocation)
+            ?.namedPlaces
+            .map((place) => place.point)
+            .toList(growable: false) ??
+        reviewWaypoints
+            .map((waypoint) => waypoint.point)
+            .toList(growable: false);
     // A drop-off group's leader plans marker positions, wherever the route
     // came from; choosing that mode on the plan surface brings the plan in.
     final showMarkerPlan =
@@ -1272,6 +1439,28 @@ class _RouteReviewScreenState extends State<RouteReviewScreen> {
                               Navigator.of(context).pop(RouteReviewAction.edit),
                     icon: const Icon(Icons.edit_location_alt_outlined),
                   ),
+                // Another app or a GPX file, straight from the plan (#895).
+                // It hands over the route on screen and leaves the plan open,
+                // so the rider can still confirm it here, or not.
+                if (plan != null && widget.planning!.exportCoordinator != null)
+                  TextButton.icon(
+                    key: const Key('ride-plan-open-with'),
+                    onPressed:
+                        _reshapeQueued ||
+                            _reshaping ||
+                            _generatingAlternative ||
+                            _exporting ||
+                            !_planRouted
+                        ? null
+                        : () => unawaited(_openRouteWith()),
+                    icon: _exporting
+                        ? const SizedBox.square(
+                            dimension: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.ios_share_outlined),
+                    label: const Text('Open with'),
+                  ),
                 TextButton.icon(
                   key: const Key('confirm-reviewed-route'),
                   onPressed:
@@ -1311,11 +1500,19 @@ class _RouteReviewScreenState extends State<RouteReviewScreen> {
                         key: const Key('route-review-map'),
                         paths: previewPaths,
                         referencePaths: comparisonPreviewPaths ?? const [],
-                        pins: reviewWaypoints.indexed
+                        pins: placePinPoints.indexed
                             .map(
                               (entry) => RoutePreviewPin(
-                                point: entry.$2.point,
+                                id: plan == null
+                                    ? null
+                                    : '$planPlacePinPrefix${entry.$1}',
+                                point: _draggedPlace?.index == entry.$1
+                                    ? _draggedPlace!.point
+                                    : entry.$2,
                                 kind: entry.$1 == 0 ? 'start' : 'waypoint',
+                                // A plan's start, stops and destination can
+                                // be dragged while drawing (#891).
+                                draggable: plan != null,
                               ),
                             )
                             .followedBy(
@@ -1418,6 +1615,10 @@ class _RouteReviewScreenState extends State<RouteReviewScreen> {
                             ),
                           if (reviewWaypoints.isNotEmpty)
                             MarkerLayer(
+                              key: const Key('route-review-waypoints'),
+                              // Upright however the map is turned; the number
+                              // inside the pin must stay readable (#935).
+                              rotate: true,
                               markers: reviewWaypoints.indexed
                                   .map(
                                     (entry) => Marker(
@@ -1578,6 +1779,7 @@ class _RouteReviewScreenState extends State<RouteReviewScreen> {
                   if (plan != null) ...[
                     RidePlanItinerary(
                       plan: plan,
+                      lineIsOriginal: _lineIsOriginal,
                       currentLocationKnown: _currentLocation != null,
                       // Edits stay possible while a route is calculated: the
                       // newest edit wins and an overtaken answer is dropped.
@@ -1586,6 +1788,7 @@ class _RouteReviewScreenState extends State<RouteReviewScreen> {
                       onChangeDestination: () =>
                           unawaited(_changeDestination(plan)),
                       onAddStop: () => unawaited(_addStop(plan)),
+                      onSavePlace: (place) => unawaited(_savePlace(place)),
                       onMoveStop: (from, to) => unawaited(
                         _replan(
                           plan.moveStop(
@@ -1628,6 +1831,16 @@ class _RouteReviewScreenState extends State<RouteReviewScreen> {
                           ),
                         ),
                       ],
+                    ),
+                    // A fuel stop or charger along this route (#951). Below the
+                    // itinerary's own controls so it moves none of them.
+                    Align(
+                      alignment: AlignmentDirectional.centerStart,
+                      child: FuelStopButton(
+                        onPressed: _reshapeQueued || _generatingAlternative
+                            ? null
+                            : () => unawaited(_addFuelStop()),
+                      ),
                     ),
                     const SizedBox(height: 12),
                   ],
@@ -2152,6 +2365,19 @@ ImportedRoute placeholderPlanRoute(RidePlan plan, {GeoPoint? currentLocation}) {
 /// plan surface opens, so the list, the line and the drawn adjustments agree
 /// about which legs there are.
 @visibleForTesting
+/// The id prefix of a plan place's map pin; the rest is its index among the
+/// plan's start, stops and destination.
+const planPlacePinPrefix = 'plan-place-';
+
+/// Which of the plan's places [pin] is, or null when it is none of them.
+int? planPlacePinIndex(RoutePreviewPin pin) {
+  final id = pin.id;
+  if (!pin.draggable || id == null || !id.startsWith(planPlacePinPrefix)) {
+    return null;
+  }
+  return int.tryParse(id.substring(planPlacePinPrefix.length));
+}
+
 bool isRoutedPlan(ImportedRoute route, RidePlan plan) =>
     !plan.derivedFromGeometry &&
     route.paths.any((path) => path.points.length >= 2) &&

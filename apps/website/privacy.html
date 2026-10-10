@@ -45,7 +45,7 @@
     <main class="wrap legal">
       <h1>Privacy Policy</h1>
       <p class="legal-meta">
-        Effective 16 August 2026 &middot; Tail End Charlie is operated by
+        Effective 10 October 2026 &middot; Tail End Charlie is operated by
         <strong>Holt Racing Limited</strong> ("we", "us")
       </p>
 
@@ -79,11 +79,12 @@
 
       <div class="legal-summary">
         <p>
-          <strong>Alpha notice:</strong> Tail End Charlie is in active
-          development. As we add and change features, what data we collect
-          and how we handle it may change too, so this policy should be
-          treated as preliminary and is likely to be updated frequently
-          during this stage. We'll keep it accurate as the app evolves.
+          <strong>Beta notice:</strong> Tail End Charlie is in an open beta
+          and in active development. As we add and change features, what data
+          we collect and how we handle it may change too, so this policy
+          should be treated as preliminary and is likely to be updated
+          frequently during this stage. We'll keep it accurate as the app
+          evolves.
         </p>
       </div>
 
@@ -107,10 +108,15 @@
         Location sharing only happens while a ride screen is open and only
         with the group you are riding with &mdash; you can pause or stop it
         at any time from within the app. A ride that nobody ends does not keep
-        sharing for ever: if you have been away from the group for a while
-        and are not on the route, the app asks whether you are still riding,
-        and if you do not answer it stops sharing your location until you
-        choose to resume.
+        sharing for ever: if you have been away from the group, and not on an
+        unfinished route, for about half an hour, the app asks whether you are
+        still riding. If you do not answer, it stops sharing your location 15
+        minutes after you were asked or last moved, whichever is later, and
+        keeps it stopped until you choose to resume. Sending an alert, such as
+        an emergency-stop alert, switches sharing back on so that you can be
+        found. A dot on the ride menu always shows whether you are sharing, and
+        a message on the ride screen says so while you are being asked or
+        sharing is off.
       </p>
 
       <h3>Ride and group data</h3>
@@ -184,6 +190,39 @@
       <ul>
         <li>Your distance-unit and display preferences.</li>
         <li>Imported or recorded GPX route files you haven't shared.</li>
+        <li>
+          Places you have chosen in the app's destination search, so the search
+          can show them again: the last ten, newest first, which you can clear
+          from the search. And any places you save as <strong>Home</strong>,
+          <strong>Work</strong> or under a name of your own, with the address or
+          coordinates they point to, which you can rename, move or delete from
+          the search. They are not part of a ride, so no other rider and no
+          relay sees them, and they are not written to the diagnostics log or
+          included in an exported ride. Typing in the search narrows this list
+          on your phone and sends nothing; a search is sent to the search
+          provider only when you submit it. When you choose one of these places
+          as a start, stop or destination it is used like any other place, so
+          its coordinates go to the routing service to calculate the route, as
+          described under Who we share information with.
+        </li>
+        <li>
+          The record of alerts raised during a ride (the one-tap
+          <strong>Report</strong> button, or a speed-camera or police report),
+          kept with the completed ride in your Ride Library with the time, the
+          place and who raised each one. It appears on the ride review. If you
+          export or share a ride, the alerts are included in the GPX, CSV or
+          summary you choose to send.
+        </li>
+        <li>
+          If your build offers the <strong>Record ride diagnostics</strong>
+          setting, which is off by default: a text log of each turn
+          instruction and when it was spoken, every alert, and this phone's own
+          route. In a group ride it also counts how updates from other riders
+          reached your phone, by phone signal or by Bluetooth. It records no
+          other rider's position and no rider's name (other phones appear as
+          &ldquo;phone A&rdquo;, &ldquo;phone B&rdquo;). Nothing is sent
+          anywhere until you choose a recipient when you share the log.
+        </li>
       </ul>
 
       <h3 id="global-ride-heatmap">Personal and global ride heatmaps</h3>
@@ -196,11 +235,14 @@
       <p>
         The separate <strong>Global rides</strong> layer displays a public,
         thresholded aggregate. Viewing it is off by default and never opts you
-        into contribution. Contribution of completed rides is on by default;
-        first setup and Settings let you turn it off, while Settings also lets
-        you choose Never, Ask after each ride, or Always after a ride, and hide
-        0, 500 m, 1 km (the default), or 2 km at both ends. Settings can share
-        existing saved ride coverage in one bulk action.
+        into contribution. Contribution of completed rides is opt-in and off
+        until you choose. First setup asks, with no option pre-selected, and
+        skipping it means Never. A phone that installed the app before that
+        question existed, and never stored a choice, is asked once on the home
+        map and shares nothing until you answer. Settings lets you choose
+        Never, Ask after each ride, or Always after a ride, and hide 0, 500 m,
+        1 km (the default), or 2 km at both ends. Settings can share existing
+        saved ride coverage in one bulk action.
       </p>
       <p>
         If you consent, your phone uses only the travelled recording, removes
@@ -338,12 +380,37 @@
         and can be incomplete or out of date, so roadside signs always apply.
       </p>
 
+      <p id="fuel-prices">
+        The mobile app draws fuel stations and chargers from a map layer
+        bundled with the app, and <strong>Navigate to fuel</strong> ranks them
+        on your phone; neither sends anything. Where the Tail End Charlie relay
+        offers fuel prices, the app asks it for the prices inside the part of
+        the map you are viewing, as boxes on a fixed grid of about 55 by 50
+        kilometres. The request carries the app's version and platform but no
+        rider, ride or device identifier, and the relay does not store it. The
+        relay collects prices itself from the UK Government's Fuel Finder
+        scheme and, where enabled, France's prix-carburants open data; neither
+        receives anything from your phone.
+      </p>
+
       <h3>Device identifier</h3>
       <p>
         The app generates a random identifier on your device to distinguish
         participants within a ride's event stream. It is not your name, email
         address, phone number, or an Apple or Google account identifier
         &mdash; the app does not have user accounts or sign-in at all.
+      </p>
+
+      <h3>Push notifications</h3>
+      <p>
+        If you allow notifications, your phone registers with Apple's push
+        service (iOS) or Google's Firebase Cloud Messaging (Android) so the
+        relay can send an alert hint to riders in your ride. The registration
+        token is encrypted on the relay, tied to your random device
+        identifier for one ride, and revoked when you leave or the ride ends.
+        Notification text contains no name, position or emergency-contact
+        details. Apple and Google process the token under their own privacy
+        policies. You can refuse notifications and still use the app.
       </p>
 
       <h3>Technical and security information</h3>
@@ -483,7 +550,7 @@
           </tr>
           <tr>
             <td>A ride record overall (if never explicitly ended)</td>
-            <td>72 hours from creation</td>
+            <td>72 hours after any phone in the ride last synchronised</td>
           </tr>
           <tr>
             <td>A planned route shared with an app code</td>
@@ -568,8 +635,8 @@
 
       <h2>Children</h2>
       <p>
-        Tail End Charlie is not directed at, or intended for use by, children
-        under 16.
+        Tail End Charlie is for riders aged 17 or over. It is not directed at,
+        or intended for use by, anyone under 17.
       </p>
 
       <h2>International transfers</h2>
@@ -594,6 +661,12 @@
         <a href="mailto:privacy@tailendcharlie.app"
           >privacy@tailendcharlie.app</a
         >
+      </p>
+      <p>
+        Beta support, bug reports and feedback:
+        <a href="mailto:testing@tailendcharlie.app"
+          >testing@tailendcharlie.app</a
+        >. For data requests use the privacy address above.
       </p>
     </main>
 

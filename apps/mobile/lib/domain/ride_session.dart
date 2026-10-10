@@ -27,6 +27,7 @@ class RideSession {
     this.riderColor = riderColorDefault,
     this.coordinationMode = RideCoordinationMode.secondBikeDropOff,
     this.rideName,
+    this.continuesRideId,
   }) : assert(
          !isSimulation ||
              (simulationRiderCount >= minimumSimulationRiderCount &&
@@ -54,15 +55,30 @@ class RideSession {
   final RiderColor riderColor;
   final RideCoordinationMode coordinationMode;
 
-  /// Optional, leader-chosen at creation. Never required: rides are always
-  /// identifiable by their six-digit code even with no name set.
+  /// Optional, leader-chosen at creation and renamable afterwards (#894).
+  /// Never required: rides are always identifiable by their six-digit code
+  /// even with no name set.
+  ///
+  /// A label on this phone: it names the ride here, in My rides and in what
+  /// this rider shares. Joining riders never read it from the journal, which
+  /// is why renaming needs no event.
   final String? rideName;
+
+  /// The ride this one carried on from on this phone, when it began as a
+  /// solo ↔ group conversion (#896). Filed with it as one ride in My rides.
+  /// Local only: it is never written to the journal.
+  final String? continuesRideId;
+
+  /// The longest ride name kept, the same bound a watcher's page uses.
+  static const maximumRideNameLength = 80;
 
   RideSession copyWith({
     RideRole? role,
     String? rideCode,
     int? simulationRiderCount,
     RideCoordinationMode? coordinationMode,
+    String? rideName,
+    bool clearRideName = false,
   }) => RideSession(
     rideId: rideId,
     rideCode: rideCode ?? this.rideCode,
@@ -78,7 +94,8 @@ class RideSession {
     riderSymbol: riderSymbol,
     riderColor: riderColor,
     coordinationMode: coordinationMode ?? this.coordinationMode,
-    rideName: rideName,
+    rideName: clearRideName ? null : rideName ?? this.rideName,
+    continuesRideId: continuesRideId,
   );
 
   Map<String, Object?> toJson() => {
@@ -97,6 +114,7 @@ class RideSession {
     'riderColor': riderColor.name,
     'coordinationMode': coordinationMode.name,
     if (rideName != null) 'rideName': rideName,
+    if (continuesRideId != null) 'continuesRideId': continuesRideId,
   };
 
   factory RideSession.fromJson(Map<String, Object?> json) => RideSession(
@@ -119,6 +137,7 @@ class RideSession {
       json['coordinationMode'] as String?,
     ),
     rideName: json['rideName'] as String?,
+    continuesRideId: json['continuesRideId'] as String?,
   );
 
   static int _simulationRiderCount(Object? value) {
