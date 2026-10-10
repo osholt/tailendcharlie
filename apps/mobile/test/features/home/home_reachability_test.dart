@@ -390,7 +390,19 @@ void main() {
       findsNothing,
       reason: 'the bar belongs to the field while a search is open',
     );
-    // The way in it displaced, offered underneath the field instead.
+    // The way in it displaced, offered underneath the field instead. Saved
+    // places (#937) and the fuel search (#951) sit above it, so the sheet's
+    // lazily built list may need scrolling to reach it.
+    await tester.scrollUntilVisible(
+      find.byKey(const Key('home-search-join-code')),
+      120,
+      scrollable: find
+          .ancestor(
+            of: find.byKey(const Key('home-search-circular-ride')),
+            matching: find.byType(Scrollable),
+          )
+          .first,
+    );
     expect(find.byKey(const Key('home-search-join-code')), findsOneWidget);
     expect(find.text('Join a ride with a code'), findsOneWidget);
   });
