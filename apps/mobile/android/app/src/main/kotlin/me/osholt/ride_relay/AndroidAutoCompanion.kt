@@ -16,6 +16,31 @@ import java.util.concurrent.CopyOnWriteArraySet
  */
 internal data class ProjectedPoint(val latitude: Double, val longitude: Double)
 
+/**
+ * The outline of a rider's marker on the car screen (#912).
+ *
+ * The phone decides it, with `riderMarkerOutlineFor` in
+ * `lib/domain/rider_marker_outline.dart`: the leader and the Tail End Charlie
+ * the ride resolved are stars, everyone else is a circle, and a ride of one has
+ * neither. It arrives as `markerOutline` rather than being re-derived here from
+ * `role` and `isTec`, so there is one rule, and this side does not need to know
+ * what a solo ride is.
+ */
+internal enum class ProjectedMarkerOutline {
+    CIRCLE,
+    STAR;
+
+    companion object {
+        /**
+         * Anything but the exact word `star` is a circle: a snapshot from before
+         * the field existed, or a value this build does not know, must not turn
+         * a marker into a shape nobody asked for.
+         */
+        fun from(raw: Any?): ProjectedMarkerOutline =
+            if (raw == "star") STAR else CIRCLE
+    }
+}
+
 internal data class ProjectedRider(
     val label: String,
     val role: String,
@@ -25,6 +50,7 @@ internal data class ProjectedRider(
     val colourArgb: Int,
     val point: ProjectedPoint?,
     val headingDegrees: Double?,
+    val markerOutline: ProjectedMarkerOutline = ProjectedMarkerOutline.CIRCLE,
 )
 
 internal data class ProjectedAlert(
@@ -114,6 +140,8 @@ internal data class ProjectedRideSnapshot(
     val remainingPoints: List<ProjectedPoint>,
     val localPoint: ProjectedPoint?,
     val localHeadingDegrees: Double?,
+    /** The shape of this phone's own marker, which knows about solo rides (#912). */
+    val localMarkerOutline: ProjectedMarkerOutline = ProjectedMarkerOutline.CIRCLE,
     /**
      * Whether the phone is framing the rider or the whole route.
      *
@@ -173,6 +201,12 @@ internal data class ProjectedRideSnapshot(
                 localPoint = localPosition?.let(::point),
                 localHeadingDegrees = (localPosition?.get("headingDegrees") as? Number)
                     ?.toDouble(),
+                // The phone's own block is the source; the rider list's entry for
+                // this phone says the same and covers a snapshot without the block.
+                localMarkerOutline = (raw["localRider"] as? Map<*, *>)
+                    ?.let { ProjectedMarkerOutline.from(it["markerOutline"]) }
+                    ?: riders.firstOrNull { it.isLocal }?.markerOutline
+                    ?: ProjectedMarkerOutline.CIRCLE,
                 followRider = raw["followRider"] == true,
                 // Anything that is not explicitly imperial is metric, which is
                 // the app's own default and the safer way round: a rider who
@@ -237,6 +271,7 @@ internal data class ProjectedRideSnapshot(
             colourArgb = riderColour(raw["riderColor"] as? String),
             point = point(raw),
             headingDegrees = (raw["headingDegrees"] as? Number)?.toDouble(),
+            markerOutline = ProjectedMarkerOutline.from(raw["markerOutline"]),
         )
 
         private fun point(raw: Map<*, *>): ProjectedPoint? {

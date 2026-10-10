@@ -79,6 +79,12 @@ class Settings(BaseSettings):
     )
     protocol_version: int = Field(default=1, ge=1, le=1000)
     minimum_client_protocol: int = Field(default=1, ge=1, le=1000)
+    # Per-platform minimum app build (#37). 0 turns the gate off, which is the
+    # default: raising either is an operator decision documented in
+    # docs/internet-relay.md. A client below its platform's minimum receives the
+    # same structured 426 `update_required` as a protocol cutoff.
+    minimum_client_build_ios: int = Field(default=0, ge=0, le=2_100_000_000)
+    minimum_client_build_android: int = Field(default=0, ge=0, le=2_100_000_000)
     supported_capabilities: list[str] = Field(
         default_factory=lambda: [
             "ride-start-v1",
