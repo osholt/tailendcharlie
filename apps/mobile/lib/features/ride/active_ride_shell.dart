@@ -3017,6 +3017,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
                 (_locationController?.status.canSample ?? false)),
         basemap: selectedBasemap,
         mapStyleJson: _carPlayMapStyleJson,
+        localMarkerOutline: _localMarkerOutline,
         localPosition: _mapPosition.value,
         localHeadingDegrees: navigationPosition?.headingDegrees,
         localSpeedMetersPerSecond: navigationPosition?.speedMetersPerSecond,
@@ -5032,7 +5033,15 @@ class _ActiveRideShellState extends State<ActiveRideShell>
             followingInstructionText:
                 current.followingInstruction?.standaloneText,
           );
-          return refreshed?.key == announcement.key ? refreshed?.phrase : null;
+          // Which of the two to say, and whether to say anything, is decided
+          // by the schedule: the distance in a prompt moves while a natural
+          // voice renders it, and that alone must not discard the render.
+          return currentGuidancePhrase(
+            issued: announcement,
+            issuedDistanceMeters: guidance.distanceMeters,
+            refreshed: refreshed,
+            currentDistanceMeters: current.distanceMeters,
+          );
         },
         // Navigation, so alerts-only silences this and keeps the warnings.
         enabled: spokenAudioAllows(

@@ -84,7 +84,10 @@ them on.
      space is exposed to strangers.
 3. **Version gate.**
    - Exercise `/api/v1/compatibility` end to end: an old beta build is told to
-     update, with a link, rather than failing in confusing ways (#37).
+     update, with a link, rather than failing in confusing ways (#37). The
+     per-platform minimum build, the screen and the tests exist; the gate stays
+     open until a real old TestFlight and Play build has shown the screen
+     against pre-production (see internet-relay.md).
    - The Android version code must not default to the run number (#630).
 
 ### G3 Privacy, safety and legal

@@ -136,6 +136,10 @@ endpoint is treated as legacy protocol 1: core events may sync, while start,
 membership-leave and route-revision events remain queued locally unless their
 capabilities are advertised. Unsupported clients stop before ride state is
 accepted and receive a specific update-required or server-upgrade-required UI.
+The relay can also declare a minimum app build per platform (off by default,
+#37); an app below it is told to update with the right store or TestFlight link
+and keeps every local safety feature. See
+[internet-relay.md](./internet-relay.md#minimum-app-build-and-the-update-required-screen-37).
 
 ### First-run setup
 

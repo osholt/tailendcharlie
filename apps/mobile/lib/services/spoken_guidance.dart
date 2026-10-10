@@ -670,6 +670,12 @@ class SpokenGuidanceSpeaker {
     } on SpokenGuidanceFocusDenied {
       _spokenAlertKeys.remove(key);
       return false;
+    } on SpokenGuidanceSuperseded {
+      // Speech was stopped while the natural voice rendered this (#616). It was
+      // not said, so it is not remembered as said: a warning that is still
+      // true is announced again at the next evaluation.
+      _spokenAlertKeys.remove(key);
+      return false;
     } finally {
       _releaseSpeechSlot();
     }
