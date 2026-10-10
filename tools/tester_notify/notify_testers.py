@@ -64,7 +64,7 @@ def load_mail_icon() -> bytes | None:
 # "About & build" will show them, so a mismatch is a support conversation.
 TRACK_LABELS = {
     "alpha": "Play closed testing (alpha)",
-    "beta": "Play closed testing (beta)",
+    "beta": "Play open testing (beta)",
 }
 
 # Every link the mail may contain. The relay's base URL can carry a path and, if

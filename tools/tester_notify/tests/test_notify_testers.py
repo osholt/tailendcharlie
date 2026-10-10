@@ -112,8 +112,8 @@ class RenderingTest(unittest.TestCase):
     def test_beta_track_renders_its_own_label(self) -> None:
         email = render_email(context(track="beta"))
 
-        self.assertIn("Play closed testing (beta)", email.subject)
-        self.assertIn("Play closed testing (beta)", email.body)
+        self.assertIn("Play open testing (beta)", email.subject)
+        self.assertIn("Play open testing (beta)", email.body)
 
     def test_says_so_when_no_change_list_was_produced(self) -> None:
         email = render_email(context(changes=(), changes_baseline=""))

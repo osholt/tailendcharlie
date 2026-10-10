@@ -1071,6 +1071,18 @@ route or the rider is substantially off route. Imported recorded GPX tracks do
 not invent directions from geometry alone. Route review reports how many turn
 instructions a route carries.
 
+"Near" means travelling along the route, not just within 150 m of it (#941). A
+manoeuvre's left, right or straight on is relative to its planned approach. A
+rider who reaches the line on another road at a junction is on a different
+approach, so the planned wording is wrong for them. On the 10 October ride, a
+rider coming in 90° across a roundabout's planned approach was told "take the
+exit straight on", went straight ahead of themselves and was off route for eight
+minutes. A moving rider whose heading is more than 60° from every nearby piece
+of the line is therefore off route (`route_travel_alignment.dart`). Distance
+alone still decides when there is no heading to trust (below 3 m/s, the floor
+the reroute bearing uses) and inside 20 m of the line, where GPS course lag
+through a bend or round a ring must not blank the banner mid-junction.
+
 ### Roundabouts, direction and symbols
 
 OSRM reports a roundabout as joining the ring and then leaving it, and the

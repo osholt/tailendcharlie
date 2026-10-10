@@ -1282,6 +1282,79 @@ void main() {
     expect(find.text('Next Main Road'), findsOneWidget);
   });
 
+  testWidgets('a rider crossing the route near it is not given its turns '
+      '(#941)', (tester) async {
+    final directory = Directory.systemTemp.createTempSync('crossing-rider');
+    addTearDown(() => directory.deleteSync(recursive: true));
+    final route = ImportedRoute(
+      id: 'crossing-route',
+      name: 'Crossing route',
+      importedAt: DateTime.utc(2026, 10, 10),
+      sourceFileName: 'crossing.gpx',
+      paths: const [
+        RoutePath(
+          kind: RoutePathKind.track,
+          points: [
+            GeoPoint(latitude: 51, longitude: -2),
+            GeoPoint(latitude: 51, longitude: -1.96),
+          ],
+        ),
+      ],
+      waypoints: const [],
+      maneuvers: const [
+        RouteManeuver(
+          position: GeoPoint(latitude: 51, longitude: -1.98),
+          type: 'turn',
+          modifier: 'left',
+          name: 'Planned Road',
+        ),
+      ],
+    );
+    // About 45 m north of an eastbound route, on a road crossing it.
+    MapNavigationPosition fix(double heading, int second) =>
+        MapNavigationPosition(
+          point: const GeoPoint(latitude: 51.0004, longitude: -1.985),
+          recordedAt: DateTime.utc(2026, 10, 10, 10, 0, second),
+          speedMetersPerSecond: 12,
+          headingDegrees: heading,
+          accuracyMeters: 5,
+        );
+    final navigation = ValueNotifier<MapNavigationPosition?>(fix(180, 0));
+    addTearDown(navigation.dispose);
+    final cache = OfflineTileCache(
+      rootDirectory: directory,
+      configuration: const BasemapConfiguration(),
+      httpClient: MockClient((_) async => http.Response('', 404)),
+    );
+    addTearDown(cache.dispose);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData.dark(useMaterial3: true),
+        home: RideMapScreen(
+          routeStore: InMemoryRouteStore(route),
+          routeImporter: RouteImporter(source: const _NoFileSource()),
+          offlineTileCache: cache,
+          navigationPosition: navigation,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(const Key('navigation-guidance-status-banner')),
+      findsOneWidget,
+    );
+    expect(find.textContaining('Off route'), findsWidgets);
+    expect(find.text('Planned Road'), findsNothing);
+
+    // The same place, heading the route's way: a parallel road or the far
+    // carriageway, which keeps its directions.
+    navigation.value = fix(90, 1);
+    await tester.pump();
+    expect(find.text('Planned Road'), findsOneWidget);
+  });
+
   testWidgets('pre-start map keeps riding controls and guidance hidden', (
     tester,
   ) async {
