@@ -1,0 +1,14 @@
+[Unit]
+Description=Weekly refresh of Tail End Charlie routing and geocoding data
+
+[Timer]
+# Monday night, UK time. GraphHopper publishes the weekly Photon dump early on
+# Monday and Geofabrik rebuilds its extracts daily. Group rides cluster at the
+# weekend, so a weeknight build and promotion disturbs the fewest riders.
+OnCalendar=Mon *-*-* 23:00:00 Europe/London
+RandomizedDelaySec=30min
+Persistent=true
+Unit=routing-data-refresh.service
+
+[Install]
+WantedBy=timers.target
