@@ -406,6 +406,7 @@ class _HomeScreenState extends State<HomeScreen> {
     // with the map and a client it lends to the geocoder.
     _position.removeListener(_publishHomeCarPlayState);
     _position.removeListener(_observeAutomaticUnits);
+    _fuelPreference?.removeListener(_onFuelPreferenceChanged);
     widget.updateGate?.removeListener(_onUpdateGateChanged);
     unawaited(_carPlayBridge.dispose());
     _position.dispose();
@@ -759,8 +760,10 @@ class _HomeScreenState extends State<HomeScreen> {
                 if (_routeOnMap != null)
                   HostMapMenuAction(
                     id: 'home-navigate-to-fuel',
-                    label: 'Find fuel or a charger',
-                    icon: Icons.local_gas_station_outlined,
+                    label: _fuelSearchPreference.searchLabel,
+                    icon: _fuelSearchPreference.isElectric
+                        ? Icons.ev_station_outlined
+                        : Icons.local_gas_station_outlined,
                     onSelected: () =>
                         setState(() => _fuelStopRequestToken = Object()),
                   ),
@@ -994,9 +997,7 @@ class _HomeScreenState extends State<HomeScreen> {
       context,
       searchService: _destinationPlanner.searchService,
       hasPosition: _position.value != null,
-      fuelSearchLabel:
-          (_fuelPreference?.value ?? FuelPreferenceController.defaultPreference)
-              .searchLabel,
+      fuelSearchLabel: _fuelSearchPreference.searchLabel,
     );
     if (outcome == null || !mounted) return;
     switch (outcome) {
@@ -1027,10 +1028,19 @@ class _HomeScreenState extends State<HomeScreen> {
   /// action says "Navigate to fuel".
   FuelPreferenceController? _fuelPreference;
 
+  void _onFuelPreferenceChanged() {
+    if (mounted) setState(() {});
+  }
+
+  FuelPreference get _fuelSearchPreference =>
+      _fuelPreference?.value ?? FuelPreferenceController.defaultPreference;
+
   Future<void> _readFuelPreference() async {
     try {
       final preference = await FuelPreferenceController.shared();
-      if (mounted) _fuelPreference = preference;
+      if (!mounted) return;
+      _fuelPreference = preference;
+      preference.addListener(_onFuelPreferenceChanged);
     } on Object {
       // The default wording stands.
     }
