@@ -23,7 +23,7 @@ results in the PR body. Nothing here is field evidence: every issue stays
 | --- | --- | --- |
 | #935 | Route start, stop and end markers stay upright as the map turns (#938). | Rotate the map in navigation |
 | #936 | The follow camera zooms with speed, closer around town (#946). | Town then A-road: zoom changes smoothly |
-| #953 | Rendered tiles are kept in memory and only the settled zoom level is drawn (tiles PR). | Pinch fast in and out on a downloaded region on an iPhone |
+| #953 | Rendered tiles are kept in memory and only the settled zoom level is drawn (#966). | Pinch fast in and out on a downloaded region on an iPhone |
 | #937 | Search history (last ten) and saved places (Home, Work, custom) in Where to? (#954). Stored on the phone only. | Save Home, search, clear history |
 | #913 | The global heatmap is pink to crimson, distinct from discovery blue (#915). | Open the global heatmap |
 | #912 | Leader and Tail End Charlie drawn as stars on CarPlay and Android Auto (#932). | Head unit, group ride |
