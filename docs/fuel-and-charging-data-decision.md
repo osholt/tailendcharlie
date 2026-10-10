@@ -313,7 +313,7 @@ Where the rider finds it:
 
 - **Where to?** on Home: "Navigate to fuel" or "Navigate to charger", worded
   from the preference.
-- **Free-roam map menu** while following a route: "Find fuel or a charger",
+- **Free-roam map menu** while following a route, with the same wording,
   because the search field is off the navigation canvas.
 - **Plan surface:** the same button below the route options.
 
