@@ -6775,7 +6775,13 @@ class _ActiveRideShellState extends State<ActiveRideShell>
     }
     final route = _currentRoute;
     final sharedRoutes = widget.sharedRoutes;
-    if (route != null) sharedRoutes.stageFreeRoamRoute(route);
+    // With this ride's id, so riding on alone files as one ride with it (#896).
+    if (route != null) {
+      sharedRoutes.stageFreeRoamRoute(
+        route,
+        continuesRideId: controller.session?.rideId,
+      );
+    }
     switch (decision) {
       case RideOnAloneDecision.leave:
         await _leaveRide();

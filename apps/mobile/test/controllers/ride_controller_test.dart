@@ -795,6 +795,39 @@ void main() {
     },
   );
 
+  test(
+    'a solo ride turned into a group ride is filed as one ride (#896)',
+    () async {
+      await controller.createRide(
+        'Oliver',
+        coordinationMode: RideCoordinationMode.solo,
+        rideName: 'To Town',
+      );
+      await controller.startRide();
+      final soloRideId = controller.session!.rideId;
+
+      await controller.startGroupRide(displayName: 'Oliver', startNow: true);
+      expect(controller.session!.continuesRideId, soloRideId);
+      expect(
+        (await sessionStore.load())?.continuesRideId,
+        soloRideId,
+        reason: 'kept across a restart until the group ride is filed',
+      );
+      // Filed already, as leaving it would file it.
+      expect((await completedRideStore.list()).single.rideId, soloRideId);
+
+      await controller.endRide();
+
+      final stored = await completedRideStore.list();
+      expect(stored, hasLength(1));
+      expect(stored.single.legs.map((leg) => leg.rideId), [
+        soloRideId,
+        controller.session!.rideId,
+      ]);
+      expect(stored.single.title, 'To Town');
+    },
+  );
+
   test('an empty name clears it, and the ride is known by its code', () async {
     await controller.createRide('Oliver', rideName: 'To Town');
 

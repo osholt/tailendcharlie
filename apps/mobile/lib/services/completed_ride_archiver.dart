@@ -32,6 +32,7 @@ class CompletedRideArchiver {
       rideId: session.rideId,
       rideCode: session.rideCode,
       rideName: session.rideName,
+      continuesRideId: session.continuesRideId,
       localDisplayName: session.displayName,
       localRole: session.role,
       startedAt: summary.startedAt,

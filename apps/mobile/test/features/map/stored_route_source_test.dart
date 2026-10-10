@@ -64,6 +64,12 @@ void main() {
     await _followOriginalTrack(tester);
 
     expect(find.byKey(const Key('route-review-title')), findsOneWidget);
+    // On the plan surface, with its line kept until an edit (#892).
+    await _scrollReviewTo(
+      tester,
+      find.byKey(const Key('ride-plan-original-line-note')),
+    );
+    await _scrollReviewTo(tester, find.textContaining('tidied recording'));
     expect(find.textContaining('tidied recording'), findsOneWidget);
     await _confirmReview(tester);
 
@@ -149,6 +155,7 @@ void main() {
     await _followOriginalTrack(tester);
 
     expect(find.byKey(const Key('route-review-title')), findsOneWidget);
+    await _scrollReviewTo(tester, find.textContaining('Reversed'));
     expect(find.textContaining('Reversed'), findsWidgets);
     await _confirmReview(tester);
 
@@ -270,6 +277,7 @@ void main() {
     await tester.tap(find.byKey(const Key('use-stored-route')));
     await _followOriginalTrack(tester);
 
+    await _scrollReviewTo(tester, find.textContaining('raw recorded track'));
     expect(find.textContaining('raw recorded track'), findsOneWidget);
     await _confirmReview(tester);
 
@@ -350,6 +358,20 @@ final _testPlaces = ApproximatePlaceIndex.fromJson(
     ],
   }),
 );
+
+/// The review's list builds lazily; the plan's itinerary sits above the
+/// warnings, so they are scrolled to before they exist to be found.
+Future<void> _scrollReviewTo(WidgetTester tester, Finder finder) async {
+  final list = find
+      .descendant(of: find.byType(ListView), matching: find.byType(Scrollable))
+      .first;
+  for (var step = 0; step < 30 && finder.evaluate().isEmpty; step += 1) {
+    await tester.drag(list, const Offset(0, -150));
+    await tester.pumpAndSettle();
+  }
+  await tester.ensureVisible(finder.first);
+  await tester.pumpAndSettle();
+}
 
 Future<void> _confirmReview(WidgetTester tester) async {
   await tester.scrollUntilVisible(

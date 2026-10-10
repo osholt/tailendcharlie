@@ -33,6 +33,7 @@ class FreeRoamRideRecorder {
 
   ImportedRoute? _plannedRoute;
   String? _rideId;
+  String? _continuesRideId;
   DateTime? _startedAt;
   GeoPoint? _lastAcceptedPoint;
   double _totalDistanceMeters = 0;
@@ -42,9 +43,17 @@ class FreeRoamRideRecorder {
   String? get activeRideId => _rideId;
 
   /// Starts recording; rerouting preserves the original comparison plan.
-  void start(ImportedRoute route, {GeoPoint? initialPosition}) {
+  ///
+  /// [continuesRideId] is the group ride this navigation carries on from,
+  /// when the rider rode on alone; the two are filed as one ride (#896).
+  void start(
+    ImportedRoute route, {
+    GeoPoint? initialPosition,
+    String? continuesRideId,
+  }) {
     if (!active) {
       _rideId = 'free-roam-${_idFactory()}';
+      _continuesRideId = continuesRideId;
       _startedAt = _clock();
       _trailRecorder.clear();
       _lastAcceptedPoint = null;
@@ -138,6 +147,7 @@ class FreeRoamRideRecorder {
       markerSessions: const [],
       plannedRoute: plan,
       traveledRoute: travelled,
+      continuesRideId: _continuesRideId,
     );
     return completed;
   }
@@ -145,6 +155,7 @@ class FreeRoamRideRecorder {
   void _reset() {
     _plannedRoute = null;
     _rideId = null;
+    _continuesRideId = null;
     _startedAt = null;
     _lastAcceptedPoint = null;
     _totalDistanceMeters = 0;
