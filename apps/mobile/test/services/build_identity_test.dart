@@ -182,6 +182,70 @@ void main() {
     });
   });
 
+  group('beta support', () {
+    const stamped = BuildIdentity(
+      appVersion: '1.0.1',
+      appBuild: '137',
+      track: DistributionTrack.playClosedAlpha,
+      platform: TargetPlatform.android,
+      relayHost: 'relay.tailendcharlie.app',
+    );
+
+    test(
+      'the beta support address is the one the listings and website use',
+      () {
+        expect(BuildIdentity.betaSupportEmail, 'testing@tailendcharlie.app');
+      },
+    );
+
+    test(
+      'the support link writes to that address with the build in the body',
+      () {
+        final uri = stamped.supportEmailUri;
+
+        expect(uri.scheme, 'mailto');
+        expect(uri.path, 'testing@tailendcharlie.app');
+        final query = Uri.splitQueryString(uri.query);
+        expect(query['subject'], 'Tail End Charlie beta feedback (build 137)');
+        expect(query['body'], contains(stamped.bugReportLine));
+        expect(query['body'], contains('Play closed testing (alpha)'));
+      },
+    );
+
+    test(
+      'spaces are percent-encoded, because mail apps show a + literally',
+      () {
+        final uri = stamped.supportEmailUri;
+
+        expect(uri.query, isNot(contains('+')));
+        expect(uri.query, contains('%20'));
+      },
+    );
+
+    test('the message carries no relay host and nothing about the rider', () {
+      final text = Uri.decodeFull(stamped.supportEmailUri.toString());
+
+      expect(text, isNot(contains('relay.tailendcharlie.app')));
+      expect(text, isNot(contains('https://')));
+    });
+
+    test(
+      'an unstamped build still opens a message and says it is unstamped',
+      () {
+        const unstamped = BuildIdentity(
+          appVersion: RelayClientDescriptor.unknownVersion,
+          appBuild: RelayClientDescriptor.unknownVersion,
+          track: DistributionTrack.local,
+          platform: TargetPlatform.android,
+        );
+        final query = Uri.splitQueryString(unstamped.supportEmailUri.query);
+
+        expect(query['subject'], 'Tail End Charlie beta feedback');
+        expect(query['body'], contains('unstamped build'));
+      },
+    );
+  });
+
   group('update state', () {
     BuildIdentity identity({
       DateTime? builtAt,

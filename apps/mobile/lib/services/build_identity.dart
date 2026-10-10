@@ -144,6 +144,12 @@ class BuildIdentity {
   static const playClosedTestingOptInUrl =
       'https://play.google.com/apps/testing/app.tailendcharlie';
 
+  /// The one address testers write to for help, bugs and feedback during the
+  /// beta. It forwards to the operator. The same address is in the store
+  /// listings, the website and the privacy policy, so a tester who finds it in
+  /// any of them reaches the same inbox.
+  static const betaSupportEmail = 'testing@tailendcharlie.app';
+
   /// TestFlight's own landing page. A build-specific TestFlight invitation link
   /// can only be issued from App Store Connect, so it is supplied per build
   /// through `RIDE_RELAY_TESTER_UPDATE_URL` when one exists.
@@ -211,6 +217,28 @@ class BuildIdentity {
   String get bugReportLine =>
       'Tail End Charlie ${reportsVersion ? '$appVersion+$appBuild' : 'unstamped build (version not reported)'} · '
       '${track.label} · ${platform.name}';
+
+  /// A `mailto:` link that opens a message to [betaSupportEmail] with the build
+  /// identity already in the body, so the first reply does not have to ask which
+  /// build it is about.
+  ///
+  /// The body carries [bugReportLine] and nothing else: no relay host, no
+  /// location, no ride code. The query is encoded by hand because
+  /// [Uri.queryParameters] writes a space as `+`, which mail apps show literally.
+  Uri get supportEmailUri {
+    String encode(String value) => Uri.encodeComponent(value);
+    final subject = reportsVersion
+        ? 'Tail End Charlie beta feedback (build $appBuild)'
+        : 'Tail End Charlie beta feedback';
+    final body =
+        '\n\nPlease describe what happened above this line.\n---\n'
+        '$bugReportLine';
+    return Uri(
+      scheme: 'mailto',
+      path: betaSupportEmail,
+      query: 'subject=${encode(subject)}&body=${encode(body)}',
+    );
+  }
 
   bool get hasRelayEndpoint => relayHost.isNotEmpty;
 
