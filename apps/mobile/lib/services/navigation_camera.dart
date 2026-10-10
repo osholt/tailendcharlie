@@ -206,6 +206,7 @@ abstract final class NavigationCameraPlanner {
     bool leftHandTraffic = true,
     List<Rect> occlusions = const [],
     double topInsetPixels = 0,
+    double? speedZoomOffset,
   }) {
     final speed = (speedMetersPerSecond ?? 0).isFinite
         ? (speedMetersPerSecond ?? 0).clamp(
@@ -218,7 +219,12 @@ abstract final class NavigationCameraPlanner {
     final speedFactor = normalised * normalised * (3 - 2 * normalised);
     final baseZoom = landscape ? 14.15 : 14.65;
     final baseTilt = landscape ? 53.0 : 51.0;
-    final zoom = baseZoom - 0.8 * speedFactor;
+    // The speed-adaptive zoom (#936), when it is on, chooses the zoom itself:
+    // an offset from the resting zoom that `NavigationZoomGovernor` has already
+    // smoothed. Tilt and the forward bias keep following [speedFactor].
+    final zoom = speedZoomOffset != null && speedZoomOffset.isFinite
+        ? baseZoom + speedZoomOffset
+        : baseZoom - 0.8 * speedFactor;
     final tilt =
         baseTilt +
         (navigationCameraMaximumTiltDegrees - baseTilt) * speedFactor;

@@ -17,6 +17,7 @@ import 'controllers/ride_controller.dart';
 import 'controllers/ride_invitation_link_controller.dart';
 import 'controllers/mini_map_display_controller.dart';
 import 'controllers/route_progress_display_controller.dart';
+import 'controllers/speed_adaptive_zoom_controller.dart';
 import 'controllers/rider_profile_controller.dart';
 import 'controllers/road_rating_controller.dart';
 import 'controllers/shared_route_controller.dart';
@@ -74,6 +75,7 @@ Future<void> main() async {
     rideInvitationLinks,
     routeProgressDisplay,
     miniMapDisplay,
+    speedAdaptiveZoom,
     // Where routing and geocoding live, as the relay last said (#917). Before
     // the first frame, so the first search already goes to the right service.
     _,
@@ -96,6 +98,7 @@ Future<void> main() async {
     RideInvitationLinkController.load(),
     RouteProgressDisplayController.load(),
     MiniMapDisplayController.load(),
+    SpeedAdaptiveZoomController.load(),
     RoutingServices.restore(),
   ).wait;
 
@@ -162,6 +165,7 @@ Future<void> main() async {
         speedLimitDisplay: speedLimitDisplay,
         routeProgressDisplay: routeProgressDisplay,
         miniMapDisplay: miniMapDisplay,
+        speedAdaptiveZoom: speedAdaptiveZoom,
         recordedRoutes: recordedRoutes,
         completedRides: completedRides,
         globalRideHeatmap: globalRideHeatmap,

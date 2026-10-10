@@ -17,6 +17,7 @@ import 'package:maplibre_gl/maplibre_gl.dart' as ml;
 import 'package:url_launcher/url_launcher.dart';
 import 'package:vector_map_tiles/vector_map_tiles.dart' as vmt;
 
+import '../../controllers/speed_adaptive_zoom_controller.dart';
 import '../../controllers/speed_limit_display_controller.dart';
 import '../../controllers/shared_route_controller.dart';
 import '../../controllers/personal_ride_heatmap_controller.dart';
@@ -74,6 +75,7 @@ import '../../services/motorcycle_discovery.dart';
 import '../../services/discovery_marker_selection.dart';
 import '../../services/navigation_export.dart';
 import '../../services/navigation_camera.dart';
+import '../../services/navigation_speed_zoom.dart';
 import '../../services/navigation_heading.dart';
 import '../../services/offline_tile_cache.dart';
 import '../../services/received_quick_message.dart';
@@ -81,6 +83,10 @@ import '../../services/rider_trail_recorder.dart';
 import '../../services/road_routing.dart';
 import '../../services/route_geometry_enricher.dart';
 import '../../services/route_importer.dart';
+import '../../services/fuel_preference.dart';
+import '../../services/fuel_prices.dart';
+import '../../services/fuel_station_catalogue.dart';
+import '../../services/fuel_stop_finder.dart';
 import '../../services/route_marker_plan.dart';
 import '../../services/route_journey_progress.dart';
 import '../../services/route_progress.dart';
@@ -94,7 +100,11 @@ import '../../services/stored_route_library.dart';
 import '../../services/trail_direction_arrows.dart';
 import 'place_search_sheet.dart';
 import 'circular_ride_sheet.dart';
+import 'discovery_layer_toggles.dart'
+    show chargerLayerColour, fuelStationLayerColour;
 import 'discovery_layer_visibility.dart';
+import 'fuel_stop_flow.dart';
+import 'fuel_stop_sheet.dart';
 import 'discovery_road_sheet.dart';
 import 'hazard_map_symbol.dart';
 import 'leader_broadcast_sheet.dart';
@@ -508,6 +518,8 @@ class RideMapFeature extends StatefulWidget {
     this.onCircularRideRequestHandled,
     this.editRouteRequestToken,
     this.onEditRouteRequestHandled,
+    this.fuelStopRequestToken,
+    this.onFuelStopRequestHandled,
     this.pendingSharedGpxFile,
     this.pendingInAppRoute,
     this.acquireCurrentPosition,
@@ -525,6 +537,7 @@ class RideMapFeature extends StatefulWidget {
     this.distanceUnit = DistanceUnit.kilometres,
     this.ridingDisplaySize = RidingDisplaySize.small,
     this.speedLimitDisplay,
+    this.speedAdaptiveZoom,
     this.showRouteProgress = true,
     this.showGroupMiniMap = true,
     this.basemapConfiguration = const BasemapConfiguration(),
@@ -585,6 +598,8 @@ class RideMapFeature extends StatefulWidget {
     VoidCallback? onCircularRideRequestHandled,
     Object? editRouteRequestToken,
     VoidCallback? onEditRouteRequestHandled,
+    Object? fuelStopRequestToken,
+    VoidCallback? onFuelStopRequestHandled,
     PickedGpxFile? pendingSharedGpxFile,
     PendingInAppRoute? pendingInAppRoute,
     Future<GeoPoint?> Function()? acquireCurrentPosition,
@@ -598,6 +613,7 @@ class RideMapFeature extends StatefulWidget {
     DistanceUnit distanceUnit = DistanceUnit.kilometres,
     RidingDisplaySize ridingDisplaySize = RidingDisplaySize.small,
     SpeedLimitDisplayController? speedLimitDisplay,
+    SpeedAdaptiveZoomController? speedAdaptiveZoom,
     bool showRouteProgress = true,
     bool showGroupMiniMap = true,
     bool darkMapStyle = false,
@@ -656,6 +672,8 @@ class RideMapFeature extends StatefulWidget {
     onCircularRideRequestHandled: onCircularRideRequestHandled,
     editRouteRequestToken: editRouteRequestToken,
     onEditRouteRequestHandled: onEditRouteRequestHandled,
+    fuelStopRequestToken: fuelStopRequestToken,
+    onFuelStopRequestHandled: onFuelStopRequestHandled,
     pendingSharedGpxFile: pendingSharedGpxFile,
     pendingInAppRoute: pendingInAppRoute,
     acquireCurrentPosition: acquireCurrentPosition,
@@ -669,6 +687,7 @@ class RideMapFeature extends StatefulWidget {
     distanceUnit: distanceUnit,
     ridingDisplaySize: ridingDisplaySize,
     speedLimitDisplay: speedLimitDisplay,
+    speedAdaptiveZoom: speedAdaptiveZoom,
     showRouteProgress: showRouteProgress,
     showGroupMiniMap: showGroupMiniMap,
     basemapConfiguration: BasemapConfiguration.fromEnvironment().forBrightness(
@@ -771,6 +790,10 @@ class RideMapFeature extends StatefulWidget {
   /// once per token, like the route-change and circular-ride requests.
   final Object? editRouteRequestToken;
   final VoidCallback? onEditRouteRequestHandled;
+
+  /// Bumped by the host to find a fuel stop or charger (#951).
+  final Object? fuelStopRequestToken;
+  final VoidCallback? onFuelStopRequestHandled;
   final PickedGpxFile? pendingSharedGpxFile;
   final PendingInAppRoute? pendingInAppRoute;
   final Future<GeoPoint?> Function()? acquireCurrentPosition;
@@ -800,6 +823,9 @@ class RideMapFeature extends StatefulWidget {
   final DistanceUnit distanceUnit;
   final RidingDisplaySize ridingDisplaySize;
   final SpeedLimitDisplayController? speedLimitDisplay;
+
+  /// Whether the follow camera zooms with speed (#936). Null is on.
+  final SpeedAdaptiveZoomController? speedAdaptiveZoom;
   final bool showRouteProgress;
 
   /// Whether the group overview may be drawn at all (#850).
@@ -980,6 +1006,8 @@ class _RideMapFeatureState extends State<RideMapFeature> {
         onCircularRideRequestHandled: widget.onCircularRideRequestHandled,
         editRouteRequestToken: widget.editRouteRequestToken,
         onEditRouteRequestHandled: widget.onEditRouteRequestHandled,
+        fuelStopRequestToken: widget.fuelStopRequestToken,
+        onFuelStopRequestHandled: widget.onFuelStopRequestHandled,
         pendingSharedGpxFile: widget.pendingSharedGpxFile,
         pendingInAppRoute: widget.pendingInAppRoute,
         acquireCurrentPosition: widget.acquireCurrentPosition,
@@ -987,6 +1015,7 @@ class _RideMapFeatureState extends State<RideMapFeature> {
         distanceUnit: widget.distanceUnit,
         ridingDisplaySize: widget.ridingDisplaySize,
         speedLimitDisplay: widget.speedLimitDisplay,
+        speedAdaptiveZoom: widget.speedAdaptiveZoom,
         showRouteProgress: widget.showRouteProgress,
         showGroupMiniMap: widget.showGroupMiniMap,
         localMotorcycleStyle: widget.localMotorcycleStyle,
@@ -1080,6 +1109,8 @@ class RideMapScreen extends StatefulWidget {
     this.onCircularRideRequestHandled,
     this.editRouteRequestToken,
     this.onEditRouteRequestHandled,
+    this.fuelStopRequestToken,
+    this.onFuelStopRequestHandled,
     this.pendingSharedGpxFile,
     this.pendingInAppRoute,
     this.acquireCurrentPosition,
@@ -1099,6 +1130,7 @@ class RideMapScreen extends StatefulWidget {
     this.distanceUnit = DistanceUnit.kilometres,
     this.ridingDisplaySize = RidingDisplaySize.small,
     this.speedLimitDisplay,
+    this.speedAdaptiveZoom,
     this.showRouteProgress = true,
     this.showGroupMiniMap = true,
     this.disposeOfflineTileCache = false,
@@ -1237,6 +1269,10 @@ class RideMapScreen extends StatefulWidget {
   /// once per token, like the route-change and circular-ride requests.
   final Object? editRouteRequestToken;
   final VoidCallback? onEditRouteRequestHandled;
+
+  /// Bumped by the host to find a fuel stop or charger (#951).
+  final Object? fuelStopRequestToken;
+  final VoidCallback? onFuelStopRequestHandled;
   final PickedGpxFile? pendingSharedGpxFile;
   final PendingInAppRoute? pendingInAppRoute;
   final Future<GeoPoint?> Function()? acquireCurrentPosition;
@@ -1270,6 +1306,9 @@ class RideMapScreen extends StatefulWidget {
   final DistanceUnit distanceUnit;
   final RidingDisplaySize ridingDisplaySize;
   final SpeedLimitDisplayController? speedLimitDisplay;
+
+  /// Whether the follow camera zooms with speed (#936). Null is on.
+  final SpeedAdaptiveZoomController? speedAdaptiveZoom;
   final bool showRouteProgress;
 
   /// Whether the group overview may be drawn at all (#850).
@@ -1322,6 +1361,8 @@ class _RideMapScreenState extends State<RideMapScreen>
   static const _navigationGuidancePlanner = NavigationGuidancePlanner();
   static const _discoveryLineSource = 'ride-relay-discovery-lines';
   static const _discoveryPointSource = 'ride-relay-discovery-points';
+  static const _fuelPointSource = 'ride-relay-fuel-points';
+  static const _fuelPointLayer = 'ride-relay-fuel-stations';
 
   final MapControllerImpl _mapController = MapControllerImpl();
   final _localTravelDirection = RiderTravelDirection();
@@ -1547,6 +1588,11 @@ class _RideMapScreenState extends State<RideMapScreen>
   final GlobalKey _bottomChromeKey = GlobalKey();
   final GlobalKey _landscapeGuidanceKey = GlobalKey();
   double? _smoothedNavigationSpeedMetersPerSecond;
+
+  /// Decides when the follow camera's zoom may change with speed (#936). Fed the
+  /// raw fix speed, because it filters for itself and more slowly than the
+  /// smoothing above.
+  final _speedZoomGovernor = NavigationZoomGovernor();
   // The speed readout is its own notifier so a new fix repaints the badge
   // without rebuilding the map: MapLibre keeps its platform view mounted and
   // only calls setState when navigation mode changes.
@@ -1643,6 +1689,14 @@ class _RideMapScreenState extends State<RideMapScreen>
   List<String> _discoveryLayerFailures = const [];
   bool _bikerCafesVisible = true;
   List<GeoPoint>? _discoveryViewportCorners;
+
+  /// The bundled fuel station and charger layer, the rider's fuel, whether the
+  /// layer is switched on, and the latest prices for the view (#951).
+  FuelStationCatalogue _fuelStationCatalogue = FuelStationCatalogue.empty;
+  FuelPreferenceController? _fuelPreference;
+  bool _fuelStationsVisible = true;
+  FuelPriceSnapshot _fuelPrices = FuelPriceSnapshot.empty;
+  Timer? _fuelPriceDebounce;
 
   BasemapConfiguration get _basemap => widget.offlineTileCache.configuration;
 
@@ -1833,6 +1887,14 @@ class _RideMapScreenState extends State<RideMapScreen>
         widget.mapLibreOfflineManager ?? _offlineManagerFor(_basemap);
     widget.currentPosition?.addListener(_onPositionChanged);
     widget.navigationPosition?.addListener(_onPositionChanged);
+    // A fix already there when the map mounts is never announced to the
+    // listener, so the zoom would start without its speed (#936).
+    if (_navigationFix case final fix? when fix.speedMetersPerSecond != null) {
+      _speedZoomGovernor.update(
+        speedMetersPerSecond: fix.speedMetersPerSecond!,
+        at: fix.recordedAt,
+      );
+    }
     _recordLocalTrail(_effectivePosition, _navigationFix?.recordedAt);
     if (_effectivePosition case final initialPoint?) {
       _localTravelDirection.update(
@@ -1870,6 +1932,7 @@ class _RideMapScreenState extends State<RideMapScreen>
     _maybeHandleChangeRouteRequest();
     _maybeHandleCircularRideRequest();
     _maybeHandleEditRouteRequest();
+    _maybeHandleFuelStopRequest();
   }
 
   @override
@@ -1883,6 +1946,9 @@ class _RideMapScreenState extends State<RideMapScreen>
     }
     if (oldWidget.editRouteRequestToken != widget.editRouteRequestToken) {
       _maybeHandleEditRouteRequest();
+    }
+    if (oldWidget.fuelStopRequestToken != widget.fuelStopRequestToken) {
+      _maybeHandleFuelStopRequest();
     }
     if (oldWidget.globalRideHeatmap != widget.globalRideHeatmap) {
       oldWidget.globalRideHeatmap?.removeListener(_onGlobalRideHeatmapChanged);
@@ -2013,6 +2079,8 @@ class _RideMapScreenState extends State<RideMapScreen>
     if (_ownsPersonalRideHeatmap) _personalRideHeatmap?.dispose();
     widget.globalRideHeatmap?.removeListener(_onGlobalRideHeatmapChanged);
     _globalHeatmapDebounce?.cancel();
+    _fuelPriceDebounce?.cancel();
+    _fuelPreference?.removeListener(_onFuelPreferenceChanged);
     unawaited(_groupPipBridge.dispose());
     _routingClient.close();
     if (widget.disposeOfflineTileCache) widget.offlineTileCache.dispose();
@@ -2244,6 +2312,18 @@ class _RideMapScreenState extends State<RideMapScreen>
             ..clear()
             ..addAll(preferences.categories);
           _bikerCafesVisible = preferences.bikerCafesVisible;
+          _fuelStationsVisible = preferences.fuelStationsVisible;
+        });
+      }),
+      load('the fuel station layer', () async {
+        final catalogue = await FuelStationCatalogue.shared();
+        final preference = await FuelPreferenceController.shared();
+        if (!mounted) return;
+        _fuelPreference?.removeListener(_onFuelPreferenceChanged);
+        preference.addListener(_onFuelPreferenceChanged);
+        setState(() {
+          _fuelStationCatalogue = catalogue;
+          _fuelPreference = preference;
         });
       }),
     ]);
@@ -4053,6 +4133,27 @@ class _RideMapScreenState extends State<RideMapScreen>
                 )
                 .toList(growable: false),
           ),
+        if (_visibleFuelStations.isNotEmpty)
+          MarkerLayer(
+            key: const Key('fuel-stations-layer'),
+            markers: [
+              for (final option in _visibleFuelOptions)
+                Marker(
+                  point: LatLng(
+                    option.station.point.latitude,
+                    option.station.point.longitude,
+                  ),
+                  width: 92,
+                  height: 52,
+                  alignment: Alignment.topCenter,
+                  child: _FuelPin(
+                    option: option,
+                    label: fuelPinLabel(option, DateTime.now()),
+                    onTap: () => unawaited(_showFuelStation(option)),
+                  ),
+                ),
+            ],
+          ),
         // Both the completed plan and actual travelled trails remain visible
         // behind the rider. The former keeps route progress legible even when
         // location recording has a gap; the latter shows where the bike really
@@ -4090,6 +4191,9 @@ class _RideMapScreenState extends State<RideMapScreen>
         if (route != null && route.waypoints.isNotEmpty)
           MarkerLayer(
             key: const Key('ride-route-waypoint-layer'),
+            // Pins stay upright on screen as the map turns under them. Left
+            // to turn with the tiles a pin is upside down heading south (#935).
+            rotate: true,
             markers: () {
               // The same decision the MapLibre layer makes, from the same
               // function, so the two renderers cannot drift apart (#574).
@@ -4711,6 +4815,9 @@ class _RideMapScreenState extends State<RideMapScreen>
       leftHandTraffic: _routeUsesLeftHandTraffic,
       occlusions: _navigationOcclusions,
       topInsetPixels: MediaQuery.paddingOf(context).top,
+      speedZoomOffset: (widget.speedAdaptiveZoom?.enabled ?? true)
+          ? _speedZoomGovernor.offset
+          : null,
     );
     // MapLibre is tilted, so the bias is the perspective look-ahead the plan
     // solved. FlutterMap is flat, so it is a straight ground offset at that
@@ -4925,6 +5032,7 @@ class _RideMapScreenState extends State<RideMapScreen>
         _smoothedNavigationSpeedMetersPerSecond = previousSpeed == null
             ? boundedSpeed
             : previousSpeed * 0.72 + boundedSpeed * 0.28;
+        _speedZoomGovernor.update(speedMetersPerSecond: boundedSpeed, at: at);
         _riderSpeedObservedAt = at;
         // Kept past the readout being retired: it is what tells a stop apart
         // from a lost signal when the fixes go quiet (#445).
@@ -5076,6 +5184,10 @@ class _RideMapScreenState extends State<RideMapScreen>
 
   NavigationGuidanceAssessment _assessNavigationGuidance(GeoPoint? position) {
     final navigationRoute = _rejoinRoute ?? _route;
+    // The course and speed belong to the fix, so they are only used when the
+    // position being judged is that fix (#941).
+    final fix = _navigationFix;
+    final fixAtPosition = fix != null && identical(fix.point, position);
     return _navigationGuidancePlanner.assess(
       route: navigationRoute,
       position: position,
@@ -5083,6 +5195,8 @@ class _RideMapScreenState extends State<RideMapScreen>
       minimumManeuverProgressMeters: _rejoinRoute == null
           ? _mainRouteGuidanceFloorMeters
           : null,
+      headingDegrees: fixAtPosition ? fix.headingDegrees : null,
+      speedMetersPerSecond: fixAtPosition ? fix.speedMetersPerSecond : null,
     );
   }
 
@@ -5267,6 +5381,7 @@ class _RideMapScreenState extends State<RideMapScreen>
     setState(() => _discoveryViewportCorners = corners);
     _scheduleMapLibreSync(overlays: true);
     _scheduleGlobalHeatmapRefresh();
+    _scheduleFuelPriceRefresh();
   }
 
   void _updateViewportZoom(double zoom) {
@@ -6015,6 +6130,40 @@ class _RideMapScreenState extends State<RideMapScreen>
           circleStrokeColor: '#10151C',
         ),
       );
+      // Fuel stations and chargers for the rider's fuel, with the price and
+      // its age under each (#951).
+      await controller.addGeoJsonSource(_fuelPointSource, _fuelPointGeoJson());
+      await controller.addCircleLayer(
+        _fuelPointSource,
+        _fuelPointLayer,
+        const ml.CircleLayerProperties(
+          circleRadius: 6,
+          circleColor: ['get', 'color'],
+          circleStrokeWidth: 3,
+          circleStrokeColor: '#10151C',
+        ),
+      );
+      await controller.addSymbolLayer(
+        _fuelPointSource,
+        'ride-relay-fuel-prices',
+        const ml.SymbolLayerProperties(
+          textField: ['get', 'price'],
+          textFont: ['Noto Sans Regular'],
+          textSize: 11,
+          textOffset: [0, 1.3],
+          textAnchor: 'top',
+          textColor: [
+            'case',
+            ['get', 'current'],
+            '#F5F7FA',
+            '#98A3B1',
+          ],
+          textHaloColor: '#10151C',
+          textHaloWidth: 1.5,
+          textOptional: true,
+        ),
+        enableInteraction: false,
+      );
       await controller.addGeoJsonSource(
         _riddenRouteSource,
         _riddenRouteGeoJson(),
@@ -6090,6 +6239,10 @@ class _RideMapScreenState extends State<RideMapScreen>
           circleStrokeWidth: 2,
           circleStrokeColor: '#10151C',
           circleStrokeOpacity: ['get', 'opacity'],
+          // A circle has no heading to lose, but it can be flattened into an
+          // ellipse lying on a tilted map. Stated rather than left to the
+          // default: these are the route's start, stops and end (#935).
+          circlePitchAlignment: 'viewport',
         ),
       );
       await controller.addGeoJsonSource(
@@ -6340,6 +6493,7 @@ class _RideMapScreenState extends State<RideMapScreen>
         (_personalHeatmapSource, _visiblePersonalHeatmap.toGeoJson),
         (_discoveryLineSource, _discoveryLineGeoJson),
         (_discoveryPointSource, _discoveryPointGeoJson),
+        (_fuelPointSource, _fuelPointGeoJson),
         (_riddenRouteSource, _riddenRouteGeoJson),
         (_remainingRouteSource, _remainingRouteGeoJson),
         (_riderTrailSource, _riderTrailGeoJson),
@@ -6431,6 +6585,7 @@ class _RideMapScreenState extends State<RideMapScreen>
           (_personalHeatmapSource, _visiblePersonalHeatmap.toGeoJson),
           (_discoveryLineSource, _discoveryLineGeoJson),
           (_discoveryPointSource, _discoveryPointGeoJson),
+          (_fuelPointSource, _fuelPointGeoJson),
           (_riderTrailSource, _riderTrailGeoJson),
           (_markerPlanSource, _markerPlanGeoJson),
           (_overlaySource, _overlayGeoJson),
@@ -6747,6 +6902,275 @@ class _RideMapScreenState extends State<RideMapScreen>
   List<BikerPlace> get _visibleBikerCafes =>
       _selectedDiscoveries.whereType<BikerPlace>().toList(growable: false);
 
+  Object? _fuelSelectionKey;
+  List<FuelStation> _fuelSelectionCache = const [];
+
+  /// The fuel stations or chargers drawn (#951): for the rider's fuel, in
+  /// view, thinned like the discovery pins but on a budget of their own, so
+  /// pumps never crowd out cafés and roads. Drawn under [fuelLayerShownIn].
+  List<FuelStation> get _visibleFuelStations {
+    final preference = _fuelPreference?.value;
+    if (preference == null ||
+        !fuelLayerShownIn(
+          _discoveryLayerContext,
+          layerEnabled: _fuelStationsVisible,
+          riderAskedForFuel: _fuelStopRequested,
+        )) {
+      _fuelSelectionKey = null;
+      return _fuelSelectionCache = const [];
+    }
+    final anchors = _discoveryAnchorPoints;
+    final key = (
+      _fuelStationCatalogue,
+      preference,
+      _usesMapLibreRenderer,
+      Object.hashAll(anchors.map((point) => (point.latitude, point.longitude))),
+      (_lastViewportZoom * 4).floor(),
+    );
+    if (key == _fuelSelectionKey) return _fuelSelectionCache;
+    _fuelSelectionKey = key;
+    if (anchors.isEmpty || _lastViewportZoom < fuelStationMinimumZoom) {
+      return _fuelSelectionCache = const [];
+    }
+    final stations = _fuelStationCatalogue
+        .within(
+          west: anchors.map((p) => p.longitude).reduce(math.min) - .02,
+          south: anchors.map((p) => p.latitude).reduce(math.min) - .02,
+          east: anchors.map((p) => p.longitude).reduce(math.max) + .02,
+          north: anchors.map((p) => p.latitude).reduce(math.max) + .02,
+          kind: preference.isElectric
+              ? FuelStationKind.charging
+              : FuelStationKind.fuel,
+        )
+        .where(
+          (station) =>
+              station.compatibilityWith(preference) !=
+              FuelCompatibility.incompatible,
+        );
+    return _fuelSelectionCache = selectDiscoveryMarkers<FuelStation>(
+      [
+        for (final station in stations)
+          DiscoveryMarkerCandidate(
+            id: station.id,
+            group: 'fuel',
+            point: GeoPoint(
+              latitude: station.point.latitude,
+              longitude: station.point.longitude,
+            ),
+            value: station,
+          ),
+      ],
+      zoom: (_lastViewportZoom * 4).floor() / 4,
+      viewport: _discoveryViewportCorners ?? const [],
+      tileSize: _usesMapLibreRenderer ? 512 : 256,
+      maximumMarkers: 40,
+    );
+  }
+
+  Object? _fuelOptionsKey;
+  List<FuelStopOption> _fuelOptionsCache = const [];
+
+  /// [_visibleFuelStations] with the prices the relay has for them.
+  List<FuelStopOption> get _visibleFuelOptions {
+    final stations = _visibleFuelStations;
+    final preference = _fuelPreference?.value;
+    if (stations.isEmpty || preference == null) return const [];
+    final key = (stations, _fuelPrices, preference);
+    if (key == _fuelOptionsKey) return _fuelOptionsCache;
+    _fuelOptionsKey = key;
+    final byId = {
+      for (final option in attachFuelPrices(
+        stations: stations,
+        snapshot: _fuelPrices,
+        preference: preference,
+      ))
+        option.station.id: option,
+    };
+    return _fuelOptionsCache = [
+      for (final station in stations) byId[station.id]!,
+    ];
+  }
+
+  void _onFuelPreferenceChanged() {
+    if (!mounted) return;
+    setState(() => _fuelPrices = FuelPriceSnapshot.empty);
+    _scheduleMapLibreSync(overlays: true);
+    _scheduleFuelPriceRefresh(immediate: true);
+  }
+
+  /// Prices for the stations in view (#951). Only for liquid fuel (there is
+  /// no charger tariff source), only while the layer is drawn, and only at a
+  /// zoom where the view fits the relay's small boxes. The relay client
+  /// caches, so panning back and forth asks nothing new.
+  void _scheduleFuelPriceRefresh({bool immediate = false}) {
+    _fuelPriceDebounce?.cancel();
+    final corners = _discoveryViewportCorners;
+    final preference = _fuelPreference?.value;
+    if (corners == null ||
+        corners.length < 2 ||
+        preference == null ||
+        preference.isElectric ||
+        _visibleFuelStations.isEmpty) {
+      return;
+    }
+    final west = math.min(corners[0].longitude, corners[1].longitude);
+    final east = math.max(corners[0].longitude, corners[1].longitude);
+    final south = math.min(corners[0].latitude, corners[1].latitude);
+    final north = math.max(corners[0].latitude, corners[1].latitude);
+    if (north - south > 1.0 || east - west > 1.5) return;
+    _fuelPriceDebounce = Timer(
+      immediate ? Duration.zero : const Duration(milliseconds: 600),
+      () async {
+        final result = await RelayFuelPriceClient.shared().fetch(
+          fuelPriceTiles(
+            west: west,
+            south: south,
+            east: east,
+            north: north,
+            limit: 4,
+          ),
+        );
+        if (!mounted ||
+            result.availability != FuelPriceAvailability.available) {
+          return;
+        }
+        setState(() => _fuelPrices = result.snapshot);
+        _scheduleMapLibreSync(overlays: true);
+      },
+    );
+  }
+
+  Map<String, dynamic> _fuelPointGeoJson() {
+    final now = DateTime.now();
+    return MapGeoJson.points([
+      for (final option in _visibleFuelOptions)
+        MapGeoJsonPoint(
+          id: 'fuel-station-${option.station.id}',
+          point: GeoPoint(
+            latitude: option.station.point.latitude,
+            longitude: option.station.point.longitude,
+          ),
+          properties: {
+            'name': option.label,
+            'color': _hexColor(
+              option.station.kind == FuelStationKind.charging
+                  ? chargerLayerColour
+                  : fuelStationLayerColour,
+            ),
+            // Only a current price is drawn at full strength; a stale one is
+            // dimmed by the layer, and an unconfirmed one is left off.
+            'price': fuelPinLabel(option, now)?.text ?? '',
+            'current': fuelPinLabel(option, now)?.current ?? false,
+          },
+        ),
+    ]);
+  }
+
+  /// A fuel station or charger tapped on the map (#951).
+  Future<void> _showFuelStation(FuelStopOption option) async {
+    final station = option.station;
+    final now = DateTime.now();
+    final price = option.priceText(now);
+    final catalogue = _fuelStationCatalogue;
+    final go = await showModalBottomSheet<bool>(
+      context: context,
+      showDragHandle: true,
+      builder: (sheetContext) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.only(top: 3, right: 12),
+                    child: Icon(
+                      station.kind == FuelStationKind.charging
+                          ? Icons.ev_station
+                          : Icons.local_gas_station,
+                      color: station.kind == FuelStationKind.charging
+                          ? chargerLayerColour
+                          : fuelStationLayerColour,
+                    ),
+                  ),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          option.label,
+                          style: Theme.of(sheetContext).textTheme.titleLarge,
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          key: const Key('fuel-station-detail'),
+                          station.kind == FuelStationKind.charging
+                              ? '${station.chargerSummary}. Tariff and '
+                                    'availability not shown.'
+                              : price ?? 'No price available.',
+                        ),
+                        if (option.quote?.reportedAt case final reported?)
+                          Text(
+                            'Price reported '
+                            '${MaterialLocalizations.of(sheetContext).formatMediumDate(reported.toLocal())}'
+                            ' ${TimeOfDay.fromDateTime(reported.toLocal()).format(sheetContext)}',
+                            style: const TextStyle(
+                              color: Color(0xFF98A3B1),
+                              fontSize: 12,
+                            ),
+                          ),
+                        const SizedBox(height: 4),
+                        for (final credit in [
+                          catalogue.attribution,
+                          ?option.source?.attribution,
+                        ])
+                          Text(
+                            credit,
+                            style: const TextStyle(
+                              color: Color(0xFF98A3B1),
+                              fontSize: 12,
+                            ),
+                          ),
+                        if (option.source?.reportErrorUrl case final url?)
+                          TextButton(
+                            style: TextButton.styleFrom(
+                              padding: EdgeInsets.zero,
+                            ),
+                            onPressed: () => unawaited(
+                              launchUrl(
+                                url,
+                                mode: LaunchMode.externalApplication,
+                              ),
+                            ),
+                            child: const Text('Report a wrong price'),
+                          ),
+                      ],
+                    ),
+                  ),
+                  // A way out that is not "act on it" (#592).
+                  const SheetCloseButton(),
+                ],
+              ),
+              const SizedBox(height: 18),
+              FilledButton.icon(
+                key: const Key('route-via-fuel-station'),
+                onPressed: _routing
+                    ? null
+                    : () => Navigator.of(sheetContext).pop(true),
+                icon: const Icon(Icons.add_road_outlined),
+                label: Text(_route == null ? 'Go here' : 'Add as a stop'),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (go == true && mounted) await _addPlaceToPlan(fuelStopPlace(option));
+  }
+
   Map<String, dynamic> _discoveryLineGeoJson() => {
     'type': 'FeatureCollection',
     'features': [
@@ -7021,6 +7445,14 @@ class _RideMapScreenState extends State<RideMapScreen>
     String layerId,
     ml.Annotation? annotation,
   ) {
+    if (layerId == _fuelPointLayer && id.startsWith('fuel-station-')) {
+      final stationId = id.substring('fuel-station-'.length);
+      final option = _visibleFuelOptions
+          .where((option) => option.station.id == stationId)
+          .firstOrNull;
+      if (option != null) unawaited(_showFuelStation(option));
+      return;
+    }
     if (layerId == 'ride-relay-discovery-lines' ||
         layerId == 'ride-relay-discovery-points') {
       if (id.startsWith('biker-cafe-')) {
@@ -7177,6 +7609,13 @@ class _RideMapScreenState extends State<RideMapScreen>
     RidePlan plan, {
     ImportedRoute? editing,
     bool replanOnOpen = false,
+    bool keepRouteUntilEdited = false,
+    List<String> warnings = const [],
+    ImportedRoute? previousRoute,
+    ImportedRoute? comparisonRoute,
+    double? distanceMeters,
+    Duration? duration,
+    RouteVerification? verification,
   }) async {
     final outcome = await RouteReviewScreen.showPlan(
       context,
@@ -7195,15 +7634,74 @@ class _RideMapScreenState extends State<RideMapScreen>
         acquireCurrentLocation: widget.acquireCurrentPosition,
         confirmLabel: (_) => widget.rideStarted ? 'Update route' : 'Use route',
         replanOnOpen: replanOnOpen,
+        keepRouteUntilEdited: keepRouteUntilEdited,
         preferencesMemory: _preferencesMemory,
+        exportCoordinator:
+            widget.navigationExportCoordinator ??
+            const NavigationExportCoordinator(),
       ),
       route: editing,
+      warnings: warnings,
+      previousRoute: previousRoute,
+      comparisonRoute: comparisonRoute,
+      distanceMeters: distanceMeters,
+      duration: duration,
+      verification: verification,
       distanceUnit: widget.distanceUnit,
       basemapConfiguration: _basemap,
       showMarkerPlan: widget.markerFeaturesEnabled,
     );
     if (outcome == null || !mounted) return null;
     return _commitRoute(outcome.route);
+  }
+
+  /// An imported GPX, a recording or a saved route, on the plan surface with
+  /// its line exactly as it came (#892).
+  ///
+  /// Imports used to open a separate review that could reshape the line but
+  /// not edit its start, stops or destination. Here they get the whole plan
+  /// surface, and nothing about the route changes until the rider changes
+  /// something: confirming it untouched rides the line that was imported. The
+  /// surface says, before any edit, that an edit re-plans it on roads.
+  Future<ImportedRoute?> _reviewImportOnPlanSurface(
+    ImportedRoute route, {
+    double? distanceMeters,
+    Duration? duration,
+    List<String> warnings = const [],
+    RouteVerification? verification,
+    ImportedRoute? comparisonRoute,
+  }) async {
+    // A backstop behind the rider-facing checks, as in [_reviewRoute].
+    if (widget.routeAuthority.routeChangeRefusal case final refusal?) {
+      throw FormatException(refusal);
+    }
+    // A GPX route (route points, not a track) still needs its roads; a track
+    // is never touched here.
+    final enrichment = await _routeGeometryEnricher.enrich(route);
+    final activeRoute = enrichment.route;
+    if (!mounted) return null;
+    return _planOnSurface(
+      RidePlan.fromRoute(activeRoute),
+      editing: activeRoute,
+      keepRouteUntilEdited: true,
+      warnings: [
+        ...warnings,
+        ?enrichment.warning,
+        if (enrichment.attempted &&
+            !enrichment.changed &&
+            enrichment.warning != null)
+          'Online road recalculation was unavailable. The original geometry '
+              'is shown and remains usable offline.',
+      ],
+      previousRoute: comparisonRoute ?? _route,
+      comparisonRoute: comparisonRoute,
+      distanceMeters: distanceMeters,
+      duration: duration,
+      // The geometry that is reviewed is what was checked (#840).
+      verification: enrichment.changed
+          ? enrichment.verification ?? verification
+          : verification,
+    );
   }
 
   Future<void> _planCircularRide() async {
@@ -7561,17 +8059,14 @@ class _RideMapScreenState extends State<RideMapScreen>
         warnings = [...warnings, ...match.reviewWarnings];
       }
     }
-    final review = await _reviewRoute(
+    return _reviewImportOnPlanSurface(
       route,
       distanceMeters: distanceMeters,
       duration: duration,
       warnings: warnings,
       verification: verification,
-      previousRoute: comparisonRoute,
       comparisonRoute: comparisonRoute,
     );
-    if (review.action != RouteReviewAction.confirm) return null;
-    return _commitRoute(review.route);
   }
 
   Future<({RouteReviewAction action, ImportedRoute route})> _reviewRoute(
@@ -8120,6 +8615,29 @@ class _RideMapScreenState extends State<RideMapScreen>
                       _discoveryLayerPreferences?.setBikerCafesVisible(visible),
                     );
                     _scheduleMapLibreSync(overlays: true);
+                  },
+                ),
+                CheckboxListTile(
+                  key: const Key('fuel-stations-layer-toggle'),
+                  value: _fuelStationsVisible,
+                  secondary: const Icon(
+                    Icons.local_gas_station,
+                    color: fuelStationLayerColour,
+                  ),
+                  title: const Text('Fuel stations and chargers'),
+                  subtitle: const Text('For the fuel set in Settings'),
+                  contentPadding: EdgeInsets.zero,
+                  onChanged: (enabled) {
+                    final visible = enabled ?? false;
+                    setState(() => _fuelStationsVisible = visible);
+                    setSheetState(() {});
+                    unawaited(
+                      _discoveryLayerPreferences?.setFuelStationsVisible(
+                        visible,
+                      ),
+                    );
+                    _scheduleMapLibreSync(overlays: true);
+                    _scheduleFuelPriceRefresh(immediate: true);
                   },
                 ),
                 for (final category in MotorcycleDiscoveryCategory.values)
@@ -8893,6 +9411,77 @@ class _RideMapScreenState extends State<RideMapScreen>
     });
   }
 
+  Object? _handledFuelStopRequestToken;
+
+  /// True while the rider is choosing a fuel stop they asked for. The fuel
+  /// layer is drawn then even while navigating (#951, #846).
+  bool _fuelStopRequested = false;
+
+  /// Finds a fuel stop or charger when the host asks (#951).
+  void _maybeHandleFuelStopRequest() {
+    final token = widget.fuelStopRequestToken;
+    if (token == null || identical(token, _handledFuelStopRequestToken)) {
+      return;
+    }
+    _handledFuelStopRequestToken = token;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      widget.onFuelStopRequestHandled?.call();
+      if (mounted) unawaited(_findFuelStop());
+    });
+  }
+
+  /// "Navigate to fuel" / "Navigate to charger" (#951).
+  ///
+  /// Stations for the rider's fuel, ahead on the route still to ride or around
+  /// the rider without one, ranked by detour and price. The choice becomes a
+  /// stop on the leg nearest it, confirmed on the plan surface like a café
+  /// added from the map, or the destination when there is no route.
+  Future<void> _findFuelStop() async {
+    await _persistedRouteRead.future;
+    if (!mounted || _routing || _fuelStopRequested) return;
+    if (widget.routeAuthority.routeChangeRefusal case final refusal?) {
+      _showMessage(refusal);
+      return;
+    }
+    final route = _route;
+    final query = fuelStopQueryFor(
+      routePath: route == null
+          ? null
+          : RouteMarkerPlanAnalyzer.primaryRiddenPath(route),
+      remainingPaths:
+          widget.isNavigating && _progressGeometry.progressMeters > 0
+          ? _progressGeometry.remainingPaths
+          : null,
+      rider: _effectivePosition,
+    );
+    if (query == null) {
+      _showMessage(
+        'Your location is not known yet, so there is nowhere to search from.',
+      );
+      return;
+    }
+    setState(() => _fuelStopRequested = true);
+    _scheduleMapLibreSync(overlays: true);
+    _scheduleFuelPriceRefresh(immediate: true);
+    try {
+      final finder = await FuelStopFinder.shared();
+      if (!mounted) return;
+      final chosen = await FuelStopSheet.show(
+        context,
+        search: finder.find(query),
+        distanceUnit: widget.distanceUnit,
+        actionLabel: route == null ? 'Go' : 'Add stop',
+      );
+      if (chosen == null || !mounted) return;
+      await _addPlaceToPlan(fuelStopPlace(chosen));
+    } finally {
+      if (mounted) {
+        setState(() => _fuelStopRequested = false);
+        _scheduleMapLibreSync(overlays: true);
+      }
+    }
+  }
+
   /// Reopens the route on the plan surface when the host asks (#847).
   void _maybeHandleEditRouteRequest() {
     final token = widget.editRouteRequestToken;
@@ -8940,6 +9529,9 @@ class _RideMapScreenState extends State<RideMapScreen>
           : RidePlan.fromRoute(route),
       editing: route,
       replanOnOpen: underWay,
+      // Not under way, a route read from a recording or a file keeps its line
+      // until the rider changes something (#892).
+      keepRouteUntilEdited: !underWay,
     );
   }
 
@@ -13479,6 +14071,67 @@ class _RideCompletionSuggestion extends StatelessWidget {
               ),
               child: const Text('End ride'),
             ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// A fuel station or charger on the flutter_map renderer, with its price and
+/// the price's age under it (#951).
+class _FuelPin extends StatelessWidget {
+  const _FuelPin({
+    required this.option,
+    required this.label,
+    required this.onTap,
+  });
+
+  final FuelStopOption option;
+  final ({String text, bool current})? label;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final charging = option.station.kind == FuelStationKind.charging;
+    final label = this.label;
+    return Semantics(
+      button: true,
+      label: [
+        charging ? 'Charger' : 'Fuel station',
+        option.label,
+        ?label?.text,
+      ].join(': '),
+      child: GestureDetector(
+        onTap: onTap,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              charging ? Icons.ev_station : Icons.local_gas_station,
+              color: charging ? chargerLayerColour : fuelStationLayerColour,
+              size: 28,
+              shadows: const [Shadow(color: Color(0xFF10151C), blurRadius: 4)],
+            ),
+            if (label != null)
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 4),
+                decoration: BoxDecoration(
+                  color: const Color(0xCC10151C),
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                child: Text(
+                  label.text,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 10,
+                    color: label.current
+                        ? const Color(0xFFF5F7FA)
+                        : const Color(0xFF98A3B1),
+                  ),
+                ),
+              ),
           ],
         ),
       ),

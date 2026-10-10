@@ -1,0 +1,46 @@
+{
+  "success": true,
+  "data": [
+    {
+      "node_id": "0001aaaa",
+      "trading_name": "Example Services North",
+      "brand_name": "EXAMPLE",
+      "is_same_trading_and_brand_name": false,
+      "public_phone_number": null,
+      "temporary_closure": false,
+      "permanent_closure": false,
+      "permanent_closure_date": null,
+      "is_motorway_service_station": true,
+      "is_supermarket_service_station": false,
+      "location": {
+        "address_line_1": "1 Example Road",
+        "address_line_2": null,
+        "city": "Exampleton",
+        "country": "England",
+        "county": null,
+        "postcode": "ZZ1 1ZZ",
+        "latitude": 52.1,
+        "longitude": -1.9
+      },
+      "amenities": ["customer_toilets", "twenty_four_hour_fuel"],
+      "opening_times": {"usual_days": {"monday": {"open": "00:00", "close": "00:00", "is_24_hours": true}}},
+      "fuel_types": ["E10", "E5", "B7_Standard"]
+    },
+    {
+      "node_id": "0002bbbb",
+      "trading_name": "Example Supermarket Fuel",
+      "brand_name": "EXAMPLE MARKET",
+      "temporary_closure": true,
+      "permanent_closure": false,
+      "location": {"postcode": "ZZ1 2ZZ", "latitude": "52.12", "longitude": "-1.95"},
+      "fuel_types": ["E10", "B7_Standard"]
+    },
+    {
+      "node_id": "0003cccc",
+      "trading_name": "Forecourt Without A Position",
+      "brand_name": "EXAMPLE",
+      "location": {"postcode": "ZZ1 3ZZ", "latitude": null, "longitude": null},
+      "fuel_types": ["E10"]
+    }
+  ]
+}

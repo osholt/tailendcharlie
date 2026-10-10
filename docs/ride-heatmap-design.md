@@ -45,12 +45,29 @@ Settings offers **Contribute my completed rides** with these values:
 
 - **Never**
 - **Ask after each ride**
-- **Always after a ride** (default)
+- **Always after a ride**
 
-First setup shows the default-on contribution switch, its data summary and the
-three-contributor publication threshold; skipping the product tour does not
-skip this choice. Settings retains the same opt-out and the more detailed
-three-value control. The first later change away from Never shows the data
+Contribution is opt-in (#957, operator decision of 10 October 2026: "at setup
+ask about contributing to the global heat map"). A rider who has not chosen
+contributes nothing: the fallback when no choice is stored is **Never**, and
+`GlobalRideHeatmapController.consentAnswered` records whether a choice was ever
+made, so "said no" and "never asked" stay distinguishable.
+
+- **First setup** has a step offering the three values with none pre-selected,
+  its data summary and the three-contributor publication threshold. It can be
+  skipped, and skipping (or continuing without choosing) records **Never**.
+  Skipping the product tour does not skip this step.
+- **Installs that never stored a choice** (they predate the question, or only
+  ever saw the old pre-ticked switch, which never wrote a value) are asked
+  once, on the home map after launch. The question is never shown during a
+  ride, while one is being restored or arranged, or over navigation, including
+  a route restored from the last session. Every way out of it (a choice, Don't
+  share, or the back gesture) stores an answer, so it is asked once. Until
+  then nothing is contributed.
+- **Riders who stored a choice keep it**, whatever it was.
+
+Settings retains the same three-value control, shown empty ("Not chosen yet")
+until a choice exists. The first later change away from Never shows the data
 summary again.
 The endpoint control is **Hide at each end** with 0, 500 m, 1 km (default) and
 2 km choices. The same value is removed from both ends. A recording with no
@@ -334,8 +351,9 @@ archive, heatmap credential, consent mode or endpoint-trim preference.
 - A transport-spy test proves cells cross the interface only after trimming,
   quantisation, deduplication and shuffling, and proves forbidden metadata does
   not.
-- Consent defaults to Always after a ride and setup presents an opt-out;
-  viewing never changes it; contribution failures do
+- Consent falls back to Never when nothing is stored, setup presents the three
+  values with none pre-selected (skipping means Never), and a rider who never
+  chose is asked once outside a ride; viewing never changes it; contribution failures do
   not block local archiving.
 - Personal layer tests prove no network client is invoked and deleting a ride
   invalidates the overlay cache.

@@ -94,6 +94,7 @@ flutter:
     - assets/biker_places.json
     - assets/discovery_catalogue.geojson
     - assets/fixed_speed_cameras.geojson
+    - assets/fuel_stations.json
     - assets/mini_roundabouts.geojson
     - assets/route_places.json
     - assets/route_places_fr.json

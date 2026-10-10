@@ -15,6 +15,7 @@ import '../../controllers/map_style_mode_controller.dart';
 import '../../controllers/ride_code_preference_controller.dart';
 import '../../controllers/ride_controller.dart';
 import '../../controllers/mini_map_display_controller.dart';
+import '../../controllers/speed_adaptive_zoom_controller.dart';
 import '../../controllers/route_progress_display_controller.dart';
 import '../../controllers/rider_profile_controller.dart';
 import '../../controllers/shared_route_controller.dart';
@@ -55,7 +56,9 @@ import '../map/stored_route_picker.dart';
 import '../ride/previous_rides_screen.dart';
 import '../ride/route_recorder_screen.dart';
 import '../settings/unit_settings_sheet.dart';
+import '../../services/fuel_preference.dart';
 import '../settings/about_build_sheet.dart';
+import '../settings/heatmap_consent_prompt.dart';
 import '../update/update_required_screen.dart';
 
 /// Runs the stateful half of a destination-search handoff in the only safe
@@ -112,6 +115,7 @@ class HomeScreen extends StatefulWidget {
     required this.speedLimitDisplay,
     this.routeProgressDisplay,
     this.miniMapDisplay,
+    this.speedAdaptiveZoom,
     required this.recordedRoutes,
     required this.completedRides,
     this.globalRideHeatmap,
@@ -139,6 +143,7 @@ class HomeScreen extends StatefulWidget {
   final SpeedLimitDisplayController speedLimitDisplay;
   final RouteProgressDisplayController? routeProgressDisplay;
   final MiniMapDisplayController? miniMapDisplay;
+  final SpeedAdaptiveZoomController? speedAdaptiveZoom;
   final RecordedRouteStore recordedRoutes;
   final CompletedRidesController completedRides;
   final GlobalRideHeatmapController? globalRideHeatmap;
@@ -215,6 +220,13 @@ class _HomeScreenState extends State<HomeScreen> {
   final _buildIdentity = BuildIdentity.fromEnvironment();
   bool _joinGroupOpenScheduled = false;
 
+  /// Whether the map has read the route it last stored. A route restored from
+  /// the last session *is* navigation (see [_routeOnMap]), and it arrives a
+  /// moment after the first frame, so the question waits for the map to say
+  /// there is none rather than racing it. A build with no platform map never
+  /// says, and has no route to restore.
+  late bool _mapRouteResolved = !widget.enableNativeServices;
+
   /// True while the destination search is open, so the field can grow into it
   /// and the other actions can step aside (#595).
   bool _searching = false;
@@ -246,6 +258,7 @@ class _HomeScreenState extends State<HomeScreen> {
     );
     _position.addListener(_publishHomeCarPlayState);
     _position.addListener(_observeAutomaticUnits);
+    unawaited(_readFuelPreference());
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) _publishHomeCarPlayState();
     });
@@ -255,6 +268,7 @@ class _HomeScreenState extends State<HomeScreen> {
     _takeRouteFromGroup();
     if (widget.openJoinGroup) {
       _scheduleJoinGroupSheet();
+      _scheduleHeatmapConsentAsk();
       return;
     }
     final choice = widget.riderProfile.takePendingRideChoice();
@@ -270,15 +284,58 @@ class _HomeScreenState extends State<HomeScreen> {
         }
       });
     }
+    // Registered last, so that anything the rider asked for on the way in opens
+    // first and the question then finds a screen that is no longer current.
+    _scheduleHeatmapConsentAsk();
+  }
+
+  /// Whether the one-time global-heatmap question could be put to the rider
+  /// right now (#957). Navigation and rides are read at the moment of asking,
+  /// not when it was scheduled, so a route that appears in between wins.
+  bool get _mayAskHeatmapConsent {
+    final heatmap = widget.globalRideHeatmap;
+    return heatmap != null &&
+        _mapRouteResolved &&
+        shouldAskHeatmapConsent(
+          consentAnswered: heatmap.consentAnswered,
+          hasActiveRide: widget.controller.hasActiveRide,
+          restoring: widget.onRetryRestoration != null,
+          // A route on the map, or one on its way there from a group ride the
+          // rider has just left, is navigation.
+          navigating: _routeOnMap != null || _freeRoamRoute != null,
+          arrangingRide:
+              widget.controller.busy || _planningDestination || _searching,
+        );
+  }
+
+  /// Asks installs that never stored a choice whether to contribute to the
+  /// global heatmap, once, from the home map and nowhere else (#957). Until the
+  /// rider answers, nothing is contributed.
+  void _scheduleHeatmapConsentAsk() {
+    if (!_mayAskHeatmapConsent) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final heatmap = widget.globalRideHeatmap;
+      if (!mounted ||
+          heatmap == null ||
+          !_mayAskHeatmapConsent ||
+          // Another route is over the map: a sheet, Settings, the update
+          // screen. Wait for the next opportunity rather than stack on it.
+          ModalRoute.of(context)?.isCurrent != true) {
+        return;
+      }
+      unawaited(HeatmapConsentDialog.show(context, heatmap));
+    });
   }
 
   /// A route a rider is riding on with alone, handed back by the group ride
   /// they left (#847). Free roam navigates it as it is: it was confirmed
   /// already, and the rider is probably moving.
   void _takeRouteFromGroup() {
-    final route = widget.sharedRoutes.takeFreeRoamRoute();
-    if (route == null) return;
-    _freeRoamRoute = PendingInAppRoute(route: route, reviewed: true);
+    // With the group ride it carries on from, so the two are one ride in My
+    // rides (#896).
+    final handover = widget.sharedRoutes.takeFreeRoamHandover();
+    if (handover == null) return;
+    _freeRoamRoute = handover;
     _freeRoamRouteToken = Object();
   }
 
@@ -296,6 +353,8 @@ class _HomeScreenState extends State<HomeScreen> {
       riderProfile: widget.riderProfile,
       route: route,
       startNow: route != null,
+      // The navigation under way and the group ride are one ride (#896).
+      continuesRideId: route == null ? null : _personalNavigationRideId,
     );
     if (route == null ||
         !controller.hasActiveRide ||
@@ -331,6 +390,7 @@ class _HomeScreenState extends State<HomeScreen> {
     if (widget.sharedRoutes.pendingFreeRoamRoute != null) {
       setState(_takeRouteFromGroup);
     }
+    _scheduleHeatmapConsentAsk();
   }
 
   void _onUpdateGateChanged() {
@@ -400,6 +460,7 @@ class _HomeScreenState extends State<HomeScreen> {
     // with the map and a client it lends to the geocoder.
     _position.removeListener(_publishHomeCarPlayState);
     _position.removeListener(_observeAutomaticUnits);
+    _fuelPreference?.removeListener(_onFuelPreferenceChanged);
     widget.updateGate?.removeListener(_onUpdateGateChanged);
     unawaited(_carPlayBridge.dispose());
     _position.dispose();
@@ -433,6 +494,13 @@ class _HomeScreenState extends State<HomeScreen> {
   /// Bumped to reopen the free-roam route on the plan surface (#847). The map
   /// owns the route and the surface, so Home only asks.
   Object? _editRouteRequestToken;
+
+  /// Bumped to find a fuel stop or charger (#951). The map owns the route the
+  /// stop goes on and the plan surface it is confirmed on, so Home only asks.
+  Object? _fuelStopRequestToken;
+
+  /// The free-roam navigation being recorded, if any (#896).
+  String? _personalNavigationRideId;
 
   /// The route the free-roam map is following, if any.
   ///
@@ -683,6 +751,7 @@ class _HomeScreenState extends State<HomeScreen> {
           HomeMapBackdrop(
             mapStyleMode: widget.mapStyleMode,
             speedLimitDisplay: widget.speedLimitDisplay,
+            speedAdaptiveZoom: widget.speedAdaptiveZoom,
             spokenGuidance: widget.spokenGuidance,
             rideDiagnostics: widget.rideDiagnostics,
             distanceUnit: widget.distanceUnits.value,
@@ -709,11 +778,23 @@ class _HomeScreenState extends State<HomeScreen> {
             onEditRouteRequestHandled: () => setState(() {
               _editRouteRequestToken = null;
             }),
+            fuelStopRequestToken: _fuelStopRequestToken,
+            onFuelStopRequestHandled: () => setState(() {
+              _fuelStopRequestToken = null;
+            }),
             navigating: _routeOnMap != null,
             localDisplayName: widget.riderProfile.displayName,
             onNavigationArchived: (ride) =>
                 unawaited(_showSavedNavigation(ride)),
-            onRouteChanged: (route) => setState(() => _routeOnMap = route),
+            onRouteChanged: (route) {
+              setState(() {
+                _routeOnMap = route;
+                _mapRouteResolved = true;
+              });
+              _scheduleHeatmapConsentAsk();
+            },
+            onPersonalNavigationChanged: (rideId) =>
+                _personalNavigationRideId = rideId,
             // The search field and these two actions used to be painted on
             // top of the map's own AppBar, in the same corner of the same
             // safe area, from this widget tree rather than the map's. Both
@@ -734,6 +815,18 @@ class _HomeScreenState extends State<HomeScreen> {
                     icon: Icons.edit_road_outlined,
                     onSelected: () =>
                         setState(() => _editRouteRequestToken = Object()),
+                  ),
+                // The search field is off the navigation canvas, so a rider
+                // following a route asks for fuel from here (#951).
+                if (_routeOnMap != null)
+                  HostMapMenuAction(
+                    id: 'home-navigate-to-fuel',
+                    label: _fuelSearchPreference.searchLabel,
+                    icon: _fuelSearchPreference.isElectric
+                        ? Icons.ev_station_outlined
+                        : Icons.local_gas_station_outlined,
+                    onSelected: () =>
+                        setState(() => _fuelStopRequestToken = Object()),
                   ),
                 HostMapMenuAction(
                   id: 'home-create-ride',
@@ -935,6 +1028,7 @@ class _HomeScreenState extends State<HomeScreen> {
     speedLimitDisplay: widget.speedLimitDisplay,
     routeProgressDisplay: widget.routeProgressDisplay,
     miniMapDisplay: widget.miniMapDisplay,
+    speedAdaptiveZoom: widget.speedAdaptiveZoom,
     testControl: widget.testControl,
     spokenGuidance: widget.spokenGuidance,
     rideDiagnostics: widget.rideDiagnostics,
@@ -965,6 +1059,7 @@ class _HomeScreenState extends State<HomeScreen> {
       context,
       searchService: _destinationPlanner.searchService,
       hasPosition: _position.value != null,
+      fuelSearchLabel: _fuelSearchPreference.searchLabel,
     );
     if (outcome == null || !mounted) return;
     switch (outcome) {
@@ -984,7 +1079,32 @@ class _HomeScreenState extends State<HomeScreen> {
             await _openRideLibrary(context);
           case HomeSearchHandoffKind.circularRide:
             setState(() => _circularRideRequestToken = Object());
+          case HomeSearchHandoffKind.fuelStop:
+            setState(() => _fuelStopRequestToken = Object());
         }
+    }
+  }
+
+  /// The rider's saved fuel, which words the search's fuel action (#951).
+  /// Read once in the background; until then, and if it cannot be read, the
+  /// action says "Navigate to fuel".
+  FuelPreferenceController? _fuelPreference;
+
+  void _onFuelPreferenceChanged() {
+    if (mounted) setState(() {});
+  }
+
+  FuelPreference get _fuelSearchPreference =>
+      _fuelPreference?.value ?? FuelPreferenceController.defaultPreference;
+
+  Future<void> _readFuelPreference() async {
+    try {
+      final preference = await FuelPreferenceController.shared();
+      if (!mounted) return;
+      _fuelPreference = preference;
+      preference.addListener(_onFuelPreferenceChanged);
+    } on Object {
+      // The default wording stands.
     }
   }
 

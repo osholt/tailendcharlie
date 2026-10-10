@@ -27,6 +27,7 @@ class GlobalRideHeatmapController extends ChangeNotifier {
     this._client,
     this._visible,
     this._consent,
+    this._consentAnswered,
     this._trimMeters,
     this._snapshot,
   );
@@ -43,6 +44,7 @@ class GlobalRideHeatmapController extends ChangeNotifier {
   final GlobalHeatmapClient _client;
   bool _visible;
   HeatmapContributionConsent _consent;
+  bool _consentAnswered;
   int _trimMeters;
   GlobalHeatmapSnapshot _snapshot;
   GlobalHeatmapStatus _status = GlobalHeatmapStatus.idle;
@@ -54,11 +56,13 @@ class GlobalRideHeatmapController extends ChangeNotifier {
     HeatmapCredentialStore credentials = const SecureHeatmapCredentialStore(),
   }) async {
     final preferences = await SharedPreferences.getInstance();
-    final consent =
-        HeatmapContributionConsent.values
-            .where((value) => value.name == preferences.getString(consentKey))
-            .firstOrNull ??
-        HeatmapContributionConsent.always;
+    // Nothing stored means the rider has not been asked, and a rider who has
+    // not been asked has not agreed: they contribute nothing (#957). This used
+    // to fall back to `always`, which sent a stranger's ride coverage on a
+    // default they never saw. Only an answer the rider gave is ever read back.
+    final storedConsent = HeatmapContributionConsent.values
+        .where((value) => value.name == preferences.getString(consentKey))
+        .firstOrNull;
     final rawCache = preferences.getString(cacheKey);
     var snapshot = GlobalHeatmapSnapshot.empty;
     if (rawCache != null) {
@@ -75,14 +79,23 @@ class GlobalRideHeatmapController extends ChangeNotifier {
       credentials,
       client,
       preferences.getBool(visibleKey) ?? false,
-      consent,
+      storedConsent ?? HeatmapContributionConsent.never,
+      storedConsent != null,
       preferences.getInt(trimKey) ?? 1000,
       snapshot,
     );
   }
 
   bool get visible => _visible;
+
+  /// What the rider agreed to share. [HeatmapContributionConsent.never] until
+  /// they answer, so read [consentAnswered] to tell "said no" from "not asked".
   HeatmapContributionConsent get consent => _consent;
+
+  /// Whether the rider has ever chosen, in setup, in Settings or in the
+  /// one-time question on the home map. False on an install that predates the
+  /// question and has never stored a choice (#957): that rider is asked once.
+  bool get consentAnswered => _consentAnswered;
   int get trimMeters => _trimMeters;
   GlobalHeatmapSnapshot get snapshot => _snapshot;
   GlobalHeatmapStatus get status => _status;
@@ -96,8 +109,13 @@ class GlobalRideHeatmapController extends ChangeNotifier {
   }
 
   Future<void> setConsent(HeatmapContributionConsent value) async {
-    if (_consent == value) return;
+    // Recording "never" for a rider who was never asked is still a change: it
+    // turns an unanswered question into an answered one, which is what stops
+    // the one-time ask from coming back. So the guard compares the answer as
+    // well as the value.
+    if (_consent == value && _consentAnswered) return;
     _consent = value;
+    _consentAnswered = true;
     await _preferences.setString(consentKey, value.name);
     notifyListeners();
   }

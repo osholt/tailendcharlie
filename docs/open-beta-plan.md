@@ -46,6 +46,29 @@ them on.
 | OSM Nominatim | Destination search | At most 1 request/s **per application** (all users combined), caching required, no autocomplete |
 | OpenFreeMap | Map tiles | Free, fair use, donation-funded |
 
+## Launch status (10 October 2026)
+
+The operator decided the open questions on #861 and asked for the beta to be
+launched. What is built and what is open, by gate. The day-of procedure, the
+store answers and the rollback are in [open-beta-launch.md](./open-beta-launch.md).
+**Built** means it exists in the repository and is tested; none of it has touched
+a store. **Open** gates block the link.
+
+| Gate | Status | Built | Still open |
+| --- | --- | --- | --- |
+| G1 Field quality | **Open** | The #855 evidence instrument is in; the listing says Bluetooth sharing is unverified and not to rely on it, so the "or do not imply it works" alternative is met. | Build 102 ridden by a mixed iOS and Android group: #839, #851, #853, #856, #616 and #859 are ready for validation, not validated. #855 and #268 need the airplane-mode check on real phones. Crash-free sessions of 99.5% or better from TestFlight and Play vitals: no data yet. |
+| G2 Infrastructure | **Open** | Self-hosted routing stack and runbook (#926), app and web endpoint resolution (#927, #929) under #917. `build_number` is required and checked against both stores before any build (#630). The compatibility gate, screen and tests exist (#37). | Cut-over and smoke test of the routing service (#917); the remaining OSRM calls (#930). Relay hardening: load test on the real VM, backup and restore, an alert that reaches the operator's phone, ride-size and event-rate caps (#273); per-device authentication (#337) before the code space is exposed to strangers. #37 needs a real old TestFlight and Play build to have shown the screen against pre-production. #398, #421 and #352 are still open. |
+| G3 Privacy, safety, legal | **Partly built** | Privacy policy and terms say beta, minimum age 17, push-notification tokens, and beta support; the terms say the emergency-stop alert reaches only the group, navigation is advisory and the phone is not to be handled while riding. Data safety, content rating, foreground-service and App Privacy answers drafted. | DPIA and retention decision (#338). Sharing stops after a group disperses (#859, ready for validation). The policy and terms still name the public routing services until cut-over. An in-app "leave and delete" action is not built; deletion is by email and expiry. The operator files the Play and App Store answers. |
+| G4 Usable without the operator | **Open** | Onboarding (#42) and menu consolidation (#306) are ready for validation. **Email beta support** on About & build and **Beta support** in Settings send the build identity to the support address. The listing text cannot drift into Nearby, CarPlay or Android Auto claims (`tools/testflight/test_beta_listing.py`). | Planning-flow phase 1 (#847, in progress) and phases 2 to 6 (#891 to #899). Invitations end to end from `join.html` without the WhatsApp group. Wording drift (#626). Nothing attaches ride diagnostics to a support email automatically; a rider shares them from Settings. |
+| G5 Platform reviews | **Built, awaiting reviews** | Android: the open-testing release needs a typed confirmation, refuses an Android Auto bundle, reads the track back, and builds without Android Auto (an explicit `-PandroidAuto=true` switch is off everywhere; no track has carried Android Auto since build 88). iOS: reviewer notes drafted; the `TestFlight public link` workflow opens, verifies and closes the link. | The Play Console check that **Android Auto is not opted in** (per app, not per track), and Play's own review of the open-testing release. Beta App Review of the build. #698 (CarPlay) and #703 (Android Auto) stay open and nothing claims either. |
+| G6 Support | **Mostly built** | One address, **testing@tailendcharlie.app**, in the app, the website, the privacy policy, the terms and every listing. | A public known-issues page generated from `tester-release-notes.md`; a written triage routine (the 48-hour rule is in the launch doc). Neither has a ticket. |
+
+Decisions recorded on #861 (9 and 10 October): self-hosted routing, a phase 1 cap
+of 100, support at `testing@tailendcharlie.app`, minimum age 17, and Android
+Auto left out of the open-testing build. The "Decisions needed" list below is
+therefore answered except for two scale questions the stores force: Apple has no
+17+ tier and Play's age bands are 16 to 17 and 18 and over.
+
 ## Gates: all must be true before the link goes public
 
 ### G1 Field quality: build 102 proven on a ride
@@ -101,6 +124,10 @@ them on.
   beta actually does: live location sharing and its retention, relay storage
   and deletion, opt-in heatmap and ETA contributions, diagnostics, and Nearby.
 - The DPIA and retention decision is complete (#338).
+- Global heatmap contribution is opt-in and asked at setup (#957, operator
+  decision of 10 October 2026). A rider who has not chosen contributes nothing;
+  riders from before the question existed are asked once on the home map. The
+  Data safety answer for approximate location says so.
 - No phone keeps sharing for hours after a group disperses (#859).
 - Terms with clear safety wording:
   - the app is not an emergency service;

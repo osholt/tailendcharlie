@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ride_relay/features/settings/about_build_sheet.dart';
@@ -32,6 +34,32 @@ void main() {
     expect(find.byKey(const Key('about-last-relay-sync')), findsOneWidget);
     expect(find.textContaining('30 min ago'), findsOneWidget);
   });
+
+  testWidgets('names the beta support address and offers to email it', (
+    tester,
+  ) async {
+    await tester.pumpWidget(wrap(const AboutBuildSheet(identity: identity)));
+
+    expect(find.textContaining('testing@tailendcharlie.app'), findsOneWidget);
+    expect(find.byKey(const Key('email-beta-support')), findsOneWidget);
+    expect(find.text('Email beta support'), findsOneWidget);
+    expect(find.textContaining('not an emergency service'), findsOneWidget);
+  });
+
+  test(
+    'Settings carries a Beta support button that opens the same message',
+    () {
+      // Opening the whole Settings sheet needs a whole app (see
+      // settings_reachability_test), and what could regress is the button
+      // disappearing or being wired to something other than the shared action.
+      final source = File(
+        'lib/features/settings/unit_settings_sheet.dart',
+      ).readAsStringSync();
+
+      expect(source, contains("Key('open-beta-support')"));
+      expect(source, contains('emailBetaSupport('));
+    },
+  );
 
   testWidgets('never renders a full relay URL, only the host', (tester) async {
     await tester.pumpWidget(wrap(const AboutBuildSheet(identity: identity)));

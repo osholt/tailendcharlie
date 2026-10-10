@@ -179,6 +179,14 @@ void main() {
     expect(controller.pending, isNull);
     expect(controller.takeFreeRoamRoute(), same(route));
     expect(controller.takeFreeRoamRoute(), isNull);
+
+    // With the ride it is ridden on from, taken once (#896).
+    controller.stageFreeRoamRoute(route, continuesRideId: 'group-ride');
+    final handover = controller.takeFreeRoamHandover();
+    expect(handover?.route, same(route));
+    expect(handover?.reviewed, isTrue);
+    expect(handover?.continuesRideId, 'group-ride');
+    expect(controller.takeFreeRoamHandover(), isNull);
   });
 
   test(
