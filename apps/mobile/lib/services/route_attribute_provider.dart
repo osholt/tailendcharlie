@@ -6,6 +6,7 @@ import 'package:http/http.dart' as http;
 import '../domain/imported_route.dart';
 import 'road_routing.dart';
 import 'route_verification.dart';
+import 'routing_service_endpoints.dart';
 
 /// A planned route looked up edge by edge: what each stretch of it is.
 class RouteTrace {
@@ -96,6 +97,7 @@ class ValhallaRouteAttributeProvider implements RouteAttributeProvider {
     'content-type': 'application/json',
     'user-agent':
         'TailEndCharlie/1.0 (https://github.com/osholt/tailendcharlie)',
+    'x-client-id': routingClientId,
   };
 
   /// What is asked for and nothing else. `shape` is the matched line, which the

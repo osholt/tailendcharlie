@@ -32,6 +32,7 @@ import 'package:ride_relay/internet/plan_directory.dart';
 import 'package:ride_relay/services/nearby_bridge.dart';
 import 'package:ride_relay/services/place_memory.dart';
 import 'package:ride_relay/services/road_routing.dart';
+import 'package:ride_relay/services/route_preferences_memory.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 /// Every way into the app, by the words a rider can read (#306).
@@ -478,6 +479,40 @@ void main() {
       expect(rideController.hasActiveRide, isFalse);
     },
   );
+
+  testWidgets('a new plan starts with the last confirmed route options', (
+    tester,
+  ) async {
+    final routing = _RecordingRoadRoutingService();
+    final planner = DestinationRoutePlanner(
+      searchService: const _BathDestinationSearch(),
+      routingService: routing,
+    );
+    await const RoutePreferencesMemory().remember(
+      const RoutePreferences(avoidMotorways: true),
+    );
+    await pumpHome(tester, destinationPlanner: planner);
+    tester
+        .widget<HomeMapBackdrop>(find.byType(HomeMapBackdrop))
+        .position!
+        .value = const GeoPoint(
+      latitude: 51.45,
+      longitude: -2.59,
+    );
+    await tester.pump();
+
+    await tester.tap(find.byKey(const Key('home-search-bar')));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const Key('home-search-field')), 'bath');
+    await tester.tap(find.byKey(const Key('home-search-submit')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Bath, Somerset'));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('ride-plan-itinerary')), findsOneWidget);
+    // Routed with them from the first request, without opening the options.
+    expect(routing.preferences?.avoidMotorways, isTrue);
+  });
 
   // #937: a place chosen from the search is there next time, and Home is one
   // tap from the empty search, going onto the plan under the name Home.
