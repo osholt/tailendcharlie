@@ -227,6 +227,46 @@ change-route sheet), below Edit route.
   once #839 lands).
 - Imported GPX shaping points are classified the same way by `RidePlan.fromRoute`.
 
+### 2.8 Saved places and history (#937, build 103)
+
+> I would like for the search box to show a history of where I have searched
+> before, and allow common destinations 'home', 'work' or other custom saved
+> locations to be available too.
+
+Where to? and the plan surface's place picker (start, stop, destination and the
+circular ride's start) share one panel, `PlaceMemoryPanel`:
+
+- **Saved places** at the top of the empty search: Home, Work, then places the
+  rider named (twelve at most). Home and Work are offered as "Add Home" and "Add
+  Work" until set. Each saved place has a menu: change place, rename (a rider's
+  own only; Home and Work keep their names) and delete.
+- **Recent** under them: places chosen from a result, newest first, de-duplicated
+  (the same words, or the same spot within 30 m), ten at most, with **Clear**
+  after a confirmation. A typed search that was never chosen from is not kept,
+  and neither is "Your location", a saved place or a place picked to *be* a saved
+  place.
+- **Setting a place**: from a search result (the bookmark on a result), from a
+  recent place's menu, from "Your location" when a fix is known (the picker that
+  chooses where a saved place points offers it), or from a pin dropped on the
+  plan: each row on the plan has a bookmark that saves that stop, start or
+  destination, a "Dropped pin" included.
+- **Typing** narrows both lists locally and sends nothing (`docs/geocoder-
+  decision.md`). Submitting still searches.
+- A saved or recent place goes onto the plan named as the rider named it ("Home")
+  with its address as the description; a dropped pin or "Your location" keeps no
+  address.
+
+The lists are one JSON document in the phone's `SharedPreferences`
+(`lib/services/place_memory.dart`). They are not a journal event, so no other
+rider and no relay sees them; they are not in diagnostics or a ride library
+backup. `test/services/place_memory_privacy_test.dart` fails if any other module
+starts to mention them. Using a saved place as a start, stop or destination
+sends its coordinates to the routing service like any other place, and the
+privacy page says so.
+
+CarPlay and Android Auto have their own search surfaces and do not show these
+lists; that is a separate piece of work under #690-#703.
+
 ## 3. Disposition of every entry point
 
 | # | Entry point | Disposition | Phase |
