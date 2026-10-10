@@ -128,14 +128,23 @@ const guidanceStaleDistanceCapMeters = 400.0;
 /// the phrase and just before it plays, and compares the answer with what was
 /// rendered: a different answer discards the render.
 ///
-/// - **Null** when the stage is no longer due: the junction has been passed or
-///   the rider has moved into a later stage, which the next fix will announce.
+/// Both callers return null themselves once the guidance has moved on to
+/// another junction, so a passed junction never reaches this.
+///
+/// - **Null** when the rider has moved into a later stage, which the next fix
+///   will announce.
 /// - **The issued phrase** when it is still right: the same stage of the same
 ///   junction, with the same words, and the rider has covered no more than
 ///   [guidanceStaleDistanceFraction] of the distance (and
 ///   [guidanceStaleDistanceCapMeters]). Without this the render was thrown away
 ///   whenever the rounded distance ticked over during synthesis, and the prompt
 ///   was said in the system voice instead, for 8 of 30 prompts on one ride (#616).
+/// - **The issued phrase** also when [refreshed] is null, under the same limit.
+///   A stage fires at a time to the junction converted through the rider's
+///   speed, so a rider who slows while the voice renders leaves the stage "not
+///   due yet" a few metres closer than where it was due. Nothing newer is due,
+///   so the prompt already rendered is still the one to say. Reading that null
+///   as "passed" dropped three prompts in silence on one ride (#942).
 /// - **The refreshed phrase** otherwise, which differs from what was rendered,
 ///   so the render is discarded and the stage is announced again from the next
 ///   fix with the distance it has now.
@@ -145,13 +154,14 @@ String? currentGuidancePhrase({
   required GuidanceAnnouncement? refreshed,
   required double currentDistanceMeters,
 }) {
-  if (refreshed == null || refreshed.key != issued.key) return null;
-  if (refreshed.phrase == issued.phrase) return issued.phrase;
   final moved = (issuedDistanceMeters - currentDistanceMeters).abs();
   final tolerated = issuedDistanceMeters * guidanceStaleDistanceFraction;
   final allowed = tolerated < guidanceStaleDistanceCapMeters
       ? tolerated
       : guidanceStaleDistanceCapMeters;
+  if (refreshed == null) return moved <= allowed ? issued.phrase : null;
+  if (refreshed.key != issued.key) return null;
+  if (refreshed.phrase == issued.phrase) return issued.phrase;
   if (refreshed.subject == issued.subject && moved <= allowed) {
     return issued.phrase;
   }
