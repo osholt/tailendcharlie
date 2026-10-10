@@ -56,6 +56,25 @@ configured retention period. The static website's `admin-suggestions.html`
 provides the corresponding no-index review UI and keeps the administrator token
 in memory only.
 
+## Fuel prices
+
+`GET /api/v1/fuel/prices?west=&south=&east=&north=` answers a small bounding box
+(at most 0.5° by 0.8°, 600 stations) with priced fuel stations from an
+in-memory snapshot. Phones never call the government sources; the relay
+refreshes them in the background every 15 minutes:
+
+- the statutory UK **Fuel Finder** API, when `RIDE_RELAY_FUEL_FINDER_CLIENT_ID`
+  and `RIDE_RELAY_FUEL_FINDER_CLIENT_SECRET` are both set;
+- France's open **prix-carburants** feed, when
+  `RIDE_RELAY_FUEL_PRICES_FRANCE_ENABLED=true`.
+
+With neither, the endpoint answers 503 `fuel_prices_unconfigured` and
+`fuel-prices-v1` is absent from `/api/v1/compatibility`, which is what keeps
+prices out of the app. Each response carries every source's attribution, the
+time the relay last confirmed it, and each price's own source timestamps,
+unaltered. The sources, terms and the operator's registration steps are in
+[`docs/fuel-and-charging-data-decision.md`](../../docs/fuel-and-charging-data-decision.md).
+
 ## Live UK traffic incidents
 
 `GET /api/v1/traffic/incidents` is a bounded UK-only relay for current TomTom
