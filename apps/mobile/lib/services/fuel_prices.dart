@@ -700,3 +700,33 @@ List<FuelStopOption> attachFuelPrices({
   }
   return [...options.values, ...extra];
 }
+
+/// The short label under a map pin: the price and how old it is, or nothing.
+///
+/// "142.9p · 14:05" while current, the time being the relay's confirmation;
+/// "142.9p · 3 Oct" once stale, which the map draws dimmed. A price whose own
+/// report is over a month old is not put on the map at all: the pin's detail
+/// says when it was last reported instead.
+({String text, bool current})? fuelPinLabel(
+  FuelStopOption option,
+  DateTime now,
+) {
+  final quote = option.quote;
+  final source = option.source;
+  final fetchedAt = option.fetchedAt;
+  if (quote == null || source == null || fetchedAt == null) return null;
+  final price = formatFuelPrice(quote.minorPerLitre, source.currency);
+  switch (option.freshness(now)) {
+    case FuelPriceFreshness.current:
+      return (text: '$price · ${_clock(source.checkedAt!)}', current: true);
+    case FuelPriceFreshness.stale:
+      final checked = source.checkedAt;
+      final asOf = checked == null || fetchedAt.isBefore(checked)
+          ? fetchedAt
+          : checked;
+      return (text: '$price · ${_day(asOf)}', current: false);
+    case FuelPriceFreshness.unconfirmed:
+    case null:
+      return null;
+  }
+}
