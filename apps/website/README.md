@@ -6,7 +6,12 @@ This is the static marketing site and browser ride planner for
 The site uses no analytics, web fonts, cookies, or tracking storage.
 `planner.html` uses pinned MapLibre GL JS, OpenFreeMap tiles, OSRM road routing,
 Valhalla motorcycle routing for motorway, major-road, toll, and ferry
-preferences, and user-triggered Nominatim searches. It includes a default-on,
+preferences, and user-triggered place searches. The routing and search services
+are the ones the relay advertises in `/api/v1/compatibility` `serviceUrls`
+(the self-hosted Valhalla and Photon of
+[`docs/routing-service.md`](../../docs/routing-service.md)), resolved by
+`planner-services.mjs`; with none advertised, or the relay unreachable, the
+planner uses the public OSRM, Valhalla and Nominatim instances. It includes a default-on,
 toggleable catalogue containing the authorised Bike + Brew Passport 2026 Google
 My Maps export plus locally maintained common starts. Exported venues are
 retained only while they also appear on the event's current directory map, so
