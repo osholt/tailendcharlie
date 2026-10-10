@@ -1,0 +1,9 @@
+[
+  {
+    "node_id": "0001aaaa",
+    "trading_name": "Example Services North",
+    "fuel_prices": [
+      {"fuel_type": "E10", "price": 141.9, "price_last_updated": "2026-10-10T08:05:00.000Z", "price_change_effective_timestamp": "2026-10-10T07:50:00.000Z"}
+    ]
+  }
+]

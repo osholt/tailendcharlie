@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="ISO-8859-1" standalone="yes"?>
+<pdv_liste>
+  <pdv id="89100001" latitude="4818300" longitude="330900" cp="89100" pop="R">
+    <adresse>84 ROUTE DE MAILLOT</adresse>
+    <ville>SENS</ville>
+    <horaires automate-24-24="">
+      <jour id="1" nom="Lundi" ferme=""/>
+      <jour id="2" nom="Mardi" ferme=""/>
+      <jour id="3" nom="Mercredi" ferme=""/>
+      <jour id="4" nom="Jeudi" ferme=""/>
+      <jour id="5" nom="Vendredi" ferme=""/>
+      <jour id="6" nom="Samedi" ferme=""/>
+      <jour id="7" nom="Dimanche" ferme=""/>
+    </horaires>
+    <services>
+      <service>Toilettes publiques</service>
+      <service>Location de véhicule</service>
+      <service>Vente de gaz domestique (Butane, Propane)</service>
+      <service>Wifi</service>
+      <service>DAB (Distributeur automatique de billets)</service>
+    </services>
+    <prix nom="Gazole" id="1" maj="2026-10-06 14:40:28" valeur="2.389"/>
+    <prix nom="E85" id="3" maj="2026-10-05 12:16:34" valeur="0.909"/>
+    <prix nom="E10" id="5" maj="2026-09-28 11:45:27" valeur="2.209"/>
+    <prix nom="SP98" id="6" maj="2026-09-28 11:42:00" valeur="2.289"/>
+  </pdv>
+  <pdv id="80570001" latitude="5004475" longitude="152562" cp="80570" pop="R">
+    <adresse>Rue Joliot Curie</adresse>
+    <ville>Dargnies</ville>
+    <horaires automate-24-24="">
+      <jour id="1" nom="Lundi" ferme=""/>
+      <jour id="2" nom="Mardi" ferme=""/>
+      <jour id="3" nom="Mercredi" ferme=""/>
+      <jour id="4" nom="Jeudi" ferme=""/>
+      <jour id="5" nom="Vendredi" ferme=""/>
+      <jour id="6" nom="Samedi" ferme=""/>
+      <jour id="7" nom="Dimanche" ferme=""/>
+    </horaires>
+    <services>
+      <service>Boutique alimentaire</service>
+      <service>Vente de gaz domestique (Butane, Propane)</service>
+      <service>DAB (Distributeur automatique de billets)</service>
+    </services>
+    <prix nom="Gazole" id="1" maj="2026-09-18 06:30:48" valeur="2.419"/>
+    <prix nom="SP95" id="2" maj="2026-09-25 06:48:02" valeur="2.249"/>
+    <prix nom="SP98" id="6" maj="2026-09-25 06:48:02" valeur="2.309"/>
+  </pdv>
+  <pdv id="58240003" latitude="4675351.71497" longitude="314069.121289" cp="58240" pop="R">
+    <adresse>ROUTE NATIONALE 7 - LES BOULAISES</adresse>
+    <ville>Chantenay-Saint-Imbert</ville>
+    <horaires automate-24-24="">
+      <jour id="1" nom="Lundi" ferme=""/>
+      <jour id="2" nom="Mardi" ferme=""/>
+      <jour id="3" nom="Mercredi" ferme=""/>
+      <jour id="4" nom="Jeudi" ferme=""/>
+      <jour id="5" nom="Vendredi" ferme=""/>
+      <jour id="6" nom="Samedi" ferme=""/>
+      <jour id="7" nom="Dimanche" ferme=""/>
+    </horaires>
+    <services/>
+  </pdv>
+</pdv_liste>
