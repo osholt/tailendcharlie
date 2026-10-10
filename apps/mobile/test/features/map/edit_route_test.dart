@@ -224,6 +224,45 @@ void main() {
     expect(find.text(remembered.summary), findsOneWidget);
   });
 
+  testWidgets('editing an imported track keeps its line until a change', (
+    tester,
+  ) async {
+    final track = ImportedRoute(
+      id: 'imported-track',
+      name: 'Scouted loop',
+      importedAt: DateTime.utc(2026, 10, 4),
+      sourceFileName: 'scouted.gpx',
+      paths: const [
+        RoutePath(
+          kind: RoutePathKind.track,
+          points: [
+            _start,
+            GeoPoint(latitude: 52.07, longitude: -1.04),
+            GeoPoint(latitude: 52.18, longitude: -0.97),
+            _town,
+          ],
+        ),
+      ],
+      waypoints: const [],
+    );
+    final store = await pumpMap(
+      tester,
+      route: track,
+      editRouteRequestToken: Object(),
+    );
+
+    expect(find.byKey(const Key('ride-plan-itinerary')), findsOneWidget);
+    expect(
+      find.byKey(const Key('ride-plan-original-line-note')),
+      findsOneWidget,
+    );
+    await tester.tap(find.byKey(const Key('confirm-reviewed-route')));
+    await tester.pumpAndSettle();
+
+    final saved = await store.loadActiveRoute();
+    expect(saved?.paths.single.points, track.paths.single.points);
+  });
+
   testWidgets('replacing the route offers editing it first', (tester) async {
     await pumpMap(
       tester,

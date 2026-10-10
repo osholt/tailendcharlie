@@ -185,7 +185,7 @@ never per keystroke, and a test enforces that.
 | Map's Where to? field, Plan a destination, Enter destination (in a ride) | A place search, then the same |
 | Café or discovery pin "add to route" | The current plan with that place inserted as a stop; a new plan to it when there is no route |
 | Circular planner | Unchanged generator, now with a start row; its loop reviews on the same screen |
-| GPX import, Ride Library, previous rides, web-planner code | The existing review (track matching, tidied/raw, reverse), in free roam without first creating a ride; **Edit route** afterwards turns it into a plan |
+| GPX import, Ride Library, previous rides, web-planner code | The existing choices first (Add turn directions?, tidied/raw, reverse), then the Plan surface with the route's line kept exactly until the first edit (#892); the itinerary says that an edit re-plans it on roads between the listed places. In free roam without first creating a ride |
 | Edit route | `RidePlan.fromRoute(current route)` |
 
 ### 2.5 Solo and group

@@ -422,6 +422,76 @@ void main() {
     );
   });
 
+  testWidgets('an imported track keeps its exact line until it is edited', (
+    tester,
+  ) async {
+    final harness = _Harness(location: _here);
+    final imported = _importedTrack();
+
+    await harness.open(
+      tester,
+      RidePlan.fromRoute(imported),
+      route: imported,
+      keepRouteUntilEdited: true,
+    );
+
+    // Nothing is re-planned on opening, and the surface says what an edit
+    // will do before one is made (#892).
+    expect(harness.routing.calls, isEmpty);
+    await _scrollTo(
+      tester,
+      find.byKey(const Key('ride-plan-original-line-note')),
+    );
+    expect(
+      find.byKey(const Key('ride-plan-original-line-note')),
+      findsOneWidget,
+    );
+    expect(_confirmButton(tester).onPressed, isNotNull);
+
+    await harness.confirm(tester);
+
+    final confirmed = harness.outcome!.route;
+    expect(confirmed.id, imported.id);
+    expect(
+      confirmed.paths.single.points,
+      imported.paths.single.points,
+      reason: 'the line as it came, not a re-plan of it',
+    );
+  });
+
+  testWidgets('the first edit to an imported track re-plans it on roads', (
+    tester,
+  ) async {
+    final harness = _Harness(location: _here);
+    final imported = _importedTrack();
+    await harness.open(
+      tester,
+      RidePlan.fromRoute(imported),
+      route: imported,
+      keepRouteUntilEdited: true,
+    );
+
+    await harness.choosePlace(
+      tester,
+      rowButton: const Key('ride-plan-add-stop'),
+      query: 'cafe',
+      result: 'Cafe, Shire',
+    );
+
+    expect(harness.routing.calls.single, [
+      imported.paths.single.points.first,
+      _cafe,
+      imported.paths.single.points.last,
+    ]);
+    expect(find.byKey(const Key('ride-plan-original-line-note')), findsNothing);
+    await harness.confirm(tester);
+    expect(harness.outcome!.route.id, imported.id);
+    expect(
+      harness.outcome!.route.paths.single.points,
+      isNot(imported.paths.single.points),
+    );
+  });
+
   testWidgets('a confirmed route reopens with its stops and can change', (
     tester,
   ) async {
@@ -495,6 +565,27 @@ Future<void> _dragStop(
   await tester.pumpAndSettle();
 }
 
+/// A recorded track with no route points: a line, not a list of places.
+ImportedRoute _importedTrack() => ImportedRoute(
+  id: 'imported-track',
+  name: 'Scouted loop',
+  importedAt: DateTime.utc(2026, 10, 4),
+  sourceFileName: 'scouted.gpx',
+  paths: const [
+    RoutePath(
+      kind: RoutePathKind.track,
+      points: [
+        GeoPoint(latitude: 52.00, longitude: -1.00),
+        GeoPoint(latitude: 52.04, longitude: -1.03),
+        GeoPoint(latitude: 52.09, longitude: -0.98),
+        GeoPoint(latitude: 52.15, longitude: -1.04),
+        GeoPoint(latitude: 52.30, longitude: -1.00),
+      ],
+    ),
+  ],
+  waypoints: const [],
+);
+
 Future<void> _tapVisible(WidgetTester tester, Finder finder) async {
   await _scrollTo(tester, finder);
   await tester.tap(finder);
@@ -566,6 +657,7 @@ class _Harness {
     BasemapConfiguration basemapConfiguration = const BasemapConfiguration(),
     NavigationExportCoordinator exportCoordinator =
         const NavigationExportCoordinator(),
+    bool keepRouteUntilEdited = false,
   }) async {
     final router = RidePlanRouter(routingService: routing);
     await tester.pumpWidget(
@@ -592,6 +684,7 @@ class _Harness {
                     },
                     offerCoordinationChoice: offerCoordinationChoice,
                     exportCoordinator: exportCoordinator,
+                    keepRouteUntilEdited: keepRouteUntilEdited,
                     confirmLabel: (plan) =>
                         confirmLabel ??
                         (plan.isGroup ? 'Create group ride' : 'Start'),
