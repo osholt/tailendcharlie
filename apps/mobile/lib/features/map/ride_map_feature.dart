@@ -82,6 +82,7 @@ import '../../services/rider_trail_recorder.dart';
 import '../../services/road_routing.dart';
 import '../../services/route_geometry_enricher.dart';
 import '../../services/route_importer.dart';
+import '../../services/fuel_stop_finder.dart';
 import '../../services/route_marker_plan.dart';
 import '../../services/route_journey_progress.dart';
 import '../../services/route_progress.dart';
@@ -96,6 +97,8 @@ import '../../services/trail_direction_arrows.dart';
 import 'place_search_sheet.dart';
 import 'circular_ride_sheet.dart';
 import 'discovery_layer_visibility.dart';
+import 'fuel_stop_flow.dart';
+import 'fuel_stop_sheet.dart';
 import 'discovery_road_sheet.dart';
 import 'hazard_map_symbol.dart';
 import 'leader_broadcast_sheet.dart';
@@ -509,6 +512,8 @@ class RideMapFeature extends StatefulWidget {
     this.onCircularRideRequestHandled,
     this.editRouteRequestToken,
     this.onEditRouteRequestHandled,
+    this.fuelStopRequestToken,
+    this.onFuelStopRequestHandled,
     this.pendingSharedGpxFile,
     this.pendingInAppRoute,
     this.acquireCurrentPosition,
@@ -587,6 +592,8 @@ class RideMapFeature extends StatefulWidget {
     VoidCallback? onCircularRideRequestHandled,
     Object? editRouteRequestToken,
     VoidCallback? onEditRouteRequestHandled,
+    Object? fuelStopRequestToken,
+    VoidCallback? onFuelStopRequestHandled,
     PickedGpxFile? pendingSharedGpxFile,
     PendingInAppRoute? pendingInAppRoute,
     Future<GeoPoint?> Function()? acquireCurrentPosition,
@@ -659,6 +666,8 @@ class RideMapFeature extends StatefulWidget {
     onCircularRideRequestHandled: onCircularRideRequestHandled,
     editRouteRequestToken: editRouteRequestToken,
     onEditRouteRequestHandled: onEditRouteRequestHandled,
+    fuelStopRequestToken: fuelStopRequestToken,
+    onFuelStopRequestHandled: onFuelStopRequestHandled,
     pendingSharedGpxFile: pendingSharedGpxFile,
     pendingInAppRoute: pendingInAppRoute,
     acquireCurrentPosition: acquireCurrentPosition,
@@ -775,6 +784,10 @@ class RideMapFeature extends StatefulWidget {
   /// once per token, like the route-change and circular-ride requests.
   final Object? editRouteRequestToken;
   final VoidCallback? onEditRouteRequestHandled;
+
+  /// Bumped by the host to find a fuel stop or charger (#951).
+  final Object? fuelStopRequestToken;
+  final VoidCallback? onFuelStopRequestHandled;
   final PickedGpxFile? pendingSharedGpxFile;
   final PendingInAppRoute? pendingInAppRoute;
   final Future<GeoPoint?> Function()? acquireCurrentPosition;
@@ -987,6 +1000,8 @@ class _RideMapFeatureState extends State<RideMapFeature> {
         onCircularRideRequestHandled: widget.onCircularRideRequestHandled,
         editRouteRequestToken: widget.editRouteRequestToken,
         onEditRouteRequestHandled: widget.onEditRouteRequestHandled,
+        fuelStopRequestToken: widget.fuelStopRequestToken,
+        onFuelStopRequestHandled: widget.onFuelStopRequestHandled,
         pendingSharedGpxFile: widget.pendingSharedGpxFile,
         pendingInAppRoute: widget.pendingInAppRoute,
         acquireCurrentPosition: widget.acquireCurrentPosition,
@@ -1088,6 +1103,8 @@ class RideMapScreen extends StatefulWidget {
     this.onCircularRideRequestHandled,
     this.editRouteRequestToken,
     this.onEditRouteRequestHandled,
+    this.fuelStopRequestToken,
+    this.onFuelStopRequestHandled,
     this.pendingSharedGpxFile,
     this.pendingInAppRoute,
     this.acquireCurrentPosition,
@@ -1246,6 +1263,10 @@ class RideMapScreen extends StatefulWidget {
   /// once per token, like the route-change and circular-ride requests.
   final Object? editRouteRequestToken;
   final VoidCallback? onEditRouteRequestHandled;
+
+  /// Bumped by the host to find a fuel stop or charger (#951).
+  final Object? fuelStopRequestToken;
+  final VoidCallback? onFuelStopRequestHandled;
   final PickedGpxFile? pendingSharedGpxFile;
   final PendingInAppRoute? pendingInAppRoute;
   final Future<GeoPoint?> Function()? acquireCurrentPosition;
@@ -1895,6 +1916,7 @@ class _RideMapScreenState extends State<RideMapScreen>
     _maybeHandleChangeRouteRequest();
     _maybeHandleCircularRideRequest();
     _maybeHandleEditRouteRequest();
+    _maybeHandleFuelStopRequest();
   }
 
   @override
@@ -1908,6 +1930,9 @@ class _RideMapScreenState extends State<RideMapScreen>
     }
     if (oldWidget.editRouteRequestToken != widget.editRouteRequestToken) {
       _maybeHandleEditRouteRequest();
+    }
+    if (oldWidget.fuelStopRequestToken != widget.fuelStopRequestToken) {
+      _maybeHandleFuelStopRequest();
     }
     if (oldWidget.globalRideHeatmap != widget.globalRideHeatmap) {
       oldWidget.globalRideHeatmap?.removeListener(_onGlobalRideHeatmapChanged);
@@ -9001,6 +9026,76 @@ class _RideMapScreenState extends State<RideMapScreen>
       }
       unawaited(_planCircularRide());
     });
+  }
+
+  Object? _handledFuelStopRequestToken;
+
+  /// True while the rider is choosing a fuel stop they asked for. The fuel
+  /// layer is drawn then even while navigating (#951, #846).
+  bool _fuelStopRequested = false;
+
+  /// Finds a fuel stop or charger when the host asks (#951).
+  void _maybeHandleFuelStopRequest() {
+    final token = widget.fuelStopRequestToken;
+    if (token == null || identical(token, _handledFuelStopRequestToken)) {
+      return;
+    }
+    _handledFuelStopRequestToken = token;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      widget.onFuelStopRequestHandled?.call();
+      if (mounted) unawaited(_findFuelStop());
+    });
+  }
+
+  /// "Navigate to fuel" / "Navigate to charger" (#951).
+  ///
+  /// Stations for the rider's fuel, ahead on the route still to ride or around
+  /// the rider without one, ranked by detour and price. The choice becomes a
+  /// stop on the leg nearest it, confirmed on the plan surface like a café
+  /// added from the map, or the destination when there is no route.
+  Future<void> _findFuelStop() async {
+    await _persistedRouteRead.future;
+    if (!mounted || _routing || _fuelStopRequested) return;
+    if (widget.routeAuthority.routeChangeRefusal case final refusal?) {
+      _showMessage(refusal);
+      return;
+    }
+    final route = _route;
+    final query = fuelStopQueryFor(
+      routePath: route == null
+          ? null
+          : RouteMarkerPlanAnalyzer.primaryRiddenPath(route),
+      remainingPaths:
+          widget.isNavigating && _progressGeometry.progressMeters > 0
+          ? _progressGeometry.remainingPaths
+          : null,
+      rider: _effectivePosition,
+    );
+    if (query == null) {
+      _showMessage(
+        'Your location is not known yet, so there is nowhere to search from.',
+      );
+      return;
+    }
+    setState(() => _fuelStopRequested = true);
+    _scheduleMapLibreSync(overlays: true);
+    try {
+      final finder = await FuelStopFinder.shared();
+      if (!mounted) return;
+      final chosen = await FuelStopSheet.show(
+        context,
+        search: finder.find(query),
+        distanceUnit: widget.distanceUnit,
+        actionLabel: route == null ? 'Go' : 'Add stop',
+      );
+      if (chosen == null || !mounted) return;
+      await _addPlaceToPlan(fuelStopPlace(chosen));
+    } finally {
+      if (mounted) {
+        setState(() => _fuelStopRequested = false);
+        _scheduleMapLibreSync(overlays: true);
+      }
+    }
   }
 
   /// Reopens the route on the plan surface when the host asks (#847).
