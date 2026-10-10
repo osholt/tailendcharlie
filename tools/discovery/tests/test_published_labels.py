@@ -39,6 +39,7 @@ ROUTE_PLACES = (
     "apps/mobile/assets/route_places.json",
     "apps/mobile/assets/route_places_fr.json",
 )
+FUEL_STATIONS = "apps/mobile/assets/fuel_stations.json"
 
 
 def looks_like_identifier(text: str) -> bool:
@@ -70,6 +71,13 @@ def biker_place_labels(catalogue: dict) -> Iterator[tuple[str, str]]:
                 yield f"{place['name']}.{key}", value
         for alias in place.get("aliases") or []:
             yield f"{place['name']}.aliases", alias
+
+
+def fuel_station_labels(layer: dict) -> Iterator[tuple[str, str]]:
+    for kind in ("fuel", "charging"):
+        for row in layer[kind]:
+            # [lat_e5, lon_e5, label, mask, mask]
+            yield f"{kind} {row[0]},{row[1]}", row[2]
 
 
 def route_place_labels(index: dict) -> Iterator[tuple[str, str]]:
@@ -161,6 +169,15 @@ class PublishedLabelsTest(unittest.TestCase):
                 self.assert_no_identifiers(
                     relative, route_place_labels(index), at_least=len(index["places"])
                 )
+
+    def test_fuel_stations_and_chargers_carry_no_identifier(self) -> None:
+        # The field report behind #860 was a charger, so this layer most of all.
+        layer = load(FUEL_STATIONS)
+        self.assert_no_identifiers(
+            FUEL_STATIONS,
+            fuel_station_labels(layer),
+            at_least=len(layer["fuel"]) + len(layer["charging"]),
+        )
 
     def test_the_two_discovery_copies_are_the_same_catalogue(self) -> None:
         # Both are scanned above; if they ever diverge the scan covers neither
