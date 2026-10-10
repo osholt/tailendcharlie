@@ -262,7 +262,15 @@ already has both. Charger OCPI aggregation, if it ever happens, belongs there.
   or electric with the connectors the bike takes.
 - **Map layer**, bundled and offline, drawn under the discovery layers'
   visibility rule (#846): shown while browsing and planning, hidden while
-  navigating, **except** after the rider has asked for fuel.
+  navigating, **except** while the rider is choosing a fuel stop they asked
+  for. It has its own switch in the layer menu (on by default), shows only
+  stations for the rider's fuel, from zoom 10, at most 40 at a time on a
+  budget separate from the café and road pins. Each pin carries the price and
+  the time it was confirmed ("142.9p · 14:05"), dimmed with its date once
+  stale, and nothing once unconfirmed; the pin's sheet has the full wording,
+  the source's own report time, the credits and "Report a wrong price".
+  Forecourts that Fuel Finder lists and OpenStreetMap does not are offered by
+  Navigate to fuel but not drawn as pins.
 - **Prices** only when the relay advertises `fuel-prices-v1`. That capability is
   the feature flag: the operator turns prices on and off from the relay.
 - **Navigate to fuel / Navigate to charger** in Where to? and on the Plan
@@ -283,27 +291,45 @@ The source's own timestamp is shown unaltered in the station detail.
 ### Navigate to fuel
 
 Candidates come from the bundled layer (plus relay-only priced stations), for
-the rider's fuel. A station whose tags do not say which fuels it sells is kept;
-one tagged as not selling the rider's fuel is dropped. A charger with none of
-the rider's connectors is dropped; one with no connector tags is kept and
-marked.
+the rider's fuel. A station tagged as not selling the rider's fuel, a charger
+with none of the rider's connectors, and a forecourt Fuel Finder lists as
+closed are never offered. A station whose grades or connectors are not mapped
+is kept. For unleaded (E10) and diesel, which nearly every forecourt sells, it
+is treated as selling them; for super unleaded and for chargers it is marked
+"not recorded" and ranked as if a kilometre further away.
 
 - **With a route:** stations within 3 km of the route line and up to 80 km
-  ahead of the rider's position along it.
+  ahead of the rider along it. Navigating, that is the route still to ride;
+  planning, it is the route from the rider if they are on it, or from its
+  start. A route that passes a station twice uses the first pass.
 - **Without a route:** stations within 25 km of the rider.
 
 Each candidate's cost, in metres, is:
 
 ```
-distance to reach it  (along the route, or straight-line × 1.3 without one)
-+ 2 × detour          (twice the distance off the route line, × 1.3)
+distance to reach it        (along the route, or straight-line × 1.3 without one)
++ 2 × detour                (there and back off the route line: 2 × offset × 1.3)
 + 500 m per penny per litre above the cheapest current price among candidates
++ 1 km if super unleaded or the connector is not recorded
 ```
 
 The penny-to-distance rate means a station 4p a litre cheaper is worth 2 km
-more riding. Stale prices count as unknown and add nothing. The top five are
-offered; one tap adds the choice as the next stop on the route, or, with no
-route, starts free-roam navigation to it.
+more riding. Stale and unconfirmed prices count as unknown and add nothing.
+Brand is never an input. The top five are offered.
+
+Where the rider finds it:
+
+- **Where to?** on Home: "Navigate to fuel" or "Navigate to charger", worded
+  from the preference.
+- **Free-roam map menu** while following a route, with the same wording,
+  because the search field is off the navigation canvas.
+- **Plan surface:** the same button below the route options.
+
+Choosing a station adds it as a stop on the leg nearest it, through the plan
+surface like a café added from the map, so the changed route is seen before it
+is used. With no route, it becomes the destination. A group ride that has
+started has no search on its map; its leader can add a fuel stop by editing the
+route on the plan surface.
 
 ## Coverage
 

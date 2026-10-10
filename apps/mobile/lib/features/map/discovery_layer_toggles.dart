@@ -6,6 +6,12 @@ import '../../services/discovery_layer_preferences.dart';
 import '../../services/motorcycle_discovery.dart';
 import 'sheet_close_button.dart';
 
+/// The fuel layer's pin colour, shared by the toggle and both map renderers.
+const fuelStationLayerColour = Color(0xFF7BD389);
+
+/// The charger pins' colour.
+const chargerLayerColour = Color(0xFF4DD0E1);
+
 /// Which optional map layers are drawn.
 ///
 /// Shared between the map's overflow menu and Settings, because the map's menu
@@ -81,6 +87,25 @@ class _DiscoveryLayerTogglesState extends State<DiscoveryLayerToggles> {
               ? null
               : (enabled) async {
                   await preferences.setBikerCafesVisible(enabled ?? false);
+                  if (!mounted) return;
+                  setState(() {});
+                  widget.onChanged?.call();
+                },
+        ),
+        CheckboxListTile(
+          key: const Key('fuel-stations-layer-toggle'),
+          value: preferences?.fuelStationsVisible ?? false,
+          secondary: const Icon(
+            Icons.local_gas_station,
+            color: fuelStationLayerColour,
+          ),
+          title: const Text('Fuel stations and chargers'),
+          subtitle: const Text('For the fuel set in Settings'),
+          contentPadding: EdgeInsets.zero,
+          onChanged: preferences == null
+              ? null
+              : (enabled) async {
+                  await preferences.setFuelStationsVisible(enabled ?? false);
                   if (!mounted) return;
                   setState(() {});
                   widget.onChanged?.call();
