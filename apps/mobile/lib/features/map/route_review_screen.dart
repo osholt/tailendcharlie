@@ -1600,6 +1600,10 @@ class _RouteReviewScreenState extends State<RouteReviewScreen> {
                             ),
                           if (reviewWaypoints.isNotEmpty)
                             MarkerLayer(
+                              key: const Key('route-review-waypoints'),
+                              // Upright however the map is turned; the number
+                              // inside the pin must stay readable (#935).
+                              rotate: true,
                               markers: reviewWaypoints.indexed
                                   .map(
                                     (entry) => Marker(

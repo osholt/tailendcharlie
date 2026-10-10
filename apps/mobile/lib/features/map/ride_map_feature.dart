@@ -4169,6 +4169,9 @@ class _RideMapScreenState extends State<RideMapScreen>
         if (route != null && route.waypoints.isNotEmpty)
           MarkerLayer(
             key: const Key('ride-route-waypoint-layer'),
+            // Pins stay upright on screen as the map turns under them. Left
+            // to turn with the tiles a pin is upside down heading south (#935).
+            rotate: true,
             markers: () {
               // The same decision the MapLibre layer makes, from the same
               // function, so the two renderers cannot drift apart (#574).
@@ -5155,6 +5158,10 @@ class _RideMapScreenState extends State<RideMapScreen>
 
   NavigationGuidanceAssessment _assessNavigationGuidance(GeoPoint? position) {
     final navigationRoute = _rejoinRoute ?? _route;
+    // The course and speed belong to the fix, so they are only used when the
+    // position being judged is that fix (#941).
+    final fix = _navigationFix;
+    final fixAtPosition = fix != null && identical(fix.point, position);
     return _navigationGuidancePlanner.assess(
       route: navigationRoute,
       position: position,
@@ -5162,6 +5169,8 @@ class _RideMapScreenState extends State<RideMapScreen>
       minimumManeuverProgressMeters: _rejoinRoute == null
           ? _mainRouteGuidanceFloorMeters
           : null,
+      headingDegrees: fixAtPosition ? fix.headingDegrees : null,
+      speedMetersPerSecond: fixAtPosition ? fix.speedMetersPerSecond : null,
     );
   }
 
@@ -6204,6 +6213,10 @@ class _RideMapScreenState extends State<RideMapScreen>
           circleStrokeWidth: 2,
           circleStrokeColor: '#10151C',
           circleStrokeOpacity: ['get', 'opacity'],
+          // A circle has no heading to lose, but it can be flattened into an
+          // ellipse lying on a tilted map. Stated rather than left to the
+          // default: these are the route's start, stops and end (#935).
+          circlePitchAlignment: 'viewport',
         ),
       );
       await controller.addGeoJsonSource(

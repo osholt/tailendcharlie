@@ -7,7 +7,11 @@ without requiring several phones or physical travel.
 
 1. Leave any active ride.
 2. Select **Try a simulated ride** on the start screen.
-3. Use **Map** to watch the ride or **Ride Lab** to control it.
+3. Press **Start ride** in the slim bar above the map. It is the only control
+   a simulated ride shows before the start: no ride code, roster or route
+   panel (those stay on a real ride's pre-start screen). It is the same height
+   in portrait and landscape, so the map keeps over four fifths of the screen.
+4. Use **Map** to watch the ride or **Ride Lab** to control it.
 
 The bundled 17.9 km GPX from Argentat-sur-Dordogne to Saint-Privat is loaded
 automatically. Its 466-point track is an excerpt of the supplied Day 3 route to

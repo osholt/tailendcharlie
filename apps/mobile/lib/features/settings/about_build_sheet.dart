@@ -112,6 +112,28 @@ class AboutBuildSheet extends StatelessWidget {
           ),
           const SizedBox(height: 22),
           Text(
+            'BETA SUPPORT',
+            style: Theme.of(context).textTheme.labelLarge?.copyWith(
+              color: const Color(0xFF8D98A7),
+              letterSpacing: 1.1,
+            ),
+          ),
+          const SizedBox(height: 8),
+          const Text(
+            'Questions, bugs or feedback: ${BuildIdentity.betaSupportEmail}. '
+            'This is a beta, not an emergency service.',
+            key: Key('about-beta-support'),
+            style: TextStyle(color: Color(0xFF98A3B1)),
+          ),
+          const SizedBox(height: 10),
+          OutlinedButton.icon(
+            key: const Key('email-beta-support'),
+            onPressed: () => unawaited(emailBetaSupport(context, identity)),
+            icon: const Icon(Icons.mail_outline),
+            label: const Text('Email beta support'),
+          ),
+          const SizedBox(height: 22),
+          Text(
             'TESTER UPDATES',
             style: Theme.of(context).textTheme.labelLarge?.copyWith(
               color: const Color(0xFF8D98A7),
@@ -365,6 +387,33 @@ class _BuildDetail extends StatelessWidget {
           ),
         ),
       ],
+    ),
+  );
+}
+
+/// Opens a message to beta support with [identity] in the body. Falls back to
+/// saying the address when no mail app can be opened, so the tester is never
+/// left with a button that does nothing.
+Future<void> emailBetaSupport(
+  BuildContext context,
+  BuildIdentity identity,
+) async {
+  var opened = false;
+  try {
+    opened = await launchUrl(
+      identity.supportEmailUri,
+      mode: LaunchMode.externalApplication,
+    );
+  } on Exception {
+    opened = false;
+  }
+  if (opened || !context.mounted) return;
+  ScaffoldMessenger.of(context).showSnackBar(
+    const SnackBar(
+      content: Text(
+        'Could not open an email app. Write to '
+        '${BuildIdentity.betaSupportEmail}.',
+      ),
     ),
   );
 }

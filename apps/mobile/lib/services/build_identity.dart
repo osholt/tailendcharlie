@@ -24,8 +24,10 @@ enum DistributionTrack {
   /// Google Play closed testing, `alpha` track - where the tester group is.
   playClosedAlpha('Play closed testing (alpha)'),
 
-  /// Google Play closed testing, `beta` track.
-  playClosedBeta('Play closed testing (beta)'),
+  /// Google Play **open** testing, `beta` track: public, anyone may join. It is
+  /// not closed testing, whatever the name `beta` suggests, and the About screen
+  /// and the relay header must not say it is.
+  playOpenBeta('Play open testing (beta)'),
 
   /// Apple TestFlight.
   testFlight('TestFlight');
@@ -34,24 +36,26 @@ enum DistributionTrack {
 
   final String label;
 
-  /// True for the Play tracks a tester reaches through the closed-testing
-  /// opt-in page rather than the public store listing.
-  bool get isPlayClosedTesting =>
-      this == playClosedAlpha || this == playClosedBeta;
+  /// True only for the closed `alpha` track.
+  bool get isPlayClosedTesting => this == playClosedAlpha;
 
-  static DistributionTrack parse(String value) => switch (value
-      .trim()
-      .toLowerCase()) {
-    'internal' || 'play-internal' || 'play_internal' => playInternal,
-    'alpha' ||
-    'closed-alpha' ||
-    'closed_alpha' ||
-    'play-alpha' => playClosedAlpha,
-    'beta' || 'closed-beta' || 'closed_beta' || 'play-beta' => playClosedBeta,
-    'testflight' || 'test-flight' => testFlight,
-    'ci' || 'continuous-integration' => continuousIntegration,
-    _ => local,
-  };
+  /// True for the Play testing tracks a tester reaches through the testing
+  /// opt-in page rather than the store listing: closed `alpha` and open `beta`.
+  bool get usesPlayTestingPage =>
+      this == playClosedAlpha || this == playOpenBeta;
+
+  static DistributionTrack parse(String value) =>
+      switch (value.trim().toLowerCase()) {
+        'internal' || 'play-internal' || 'play_internal' => playInternal,
+        'alpha' ||
+        'closed-alpha' ||
+        'closed_alpha' ||
+        'play-alpha' => playClosedAlpha,
+        'beta' || 'open-beta' || 'open_beta' || 'play-beta' => playOpenBeta,
+        'testflight' || 'test-flight' => testFlight,
+        'ci' || 'continuous-integration' => continuousIntegration,
+        _ => local,
+      };
 }
 
 /// How stale the running tester build looks.
@@ -144,6 +148,12 @@ class BuildIdentity {
   static const playClosedTestingOptInUrl =
       'https://play.google.com/apps/testing/app.tailendcharlie';
 
+  /// The one address testers write to for help, bugs and feedback during the
+  /// beta. It forwards to the operator. The same address is in the store
+  /// listings, the website and the privacy policy, so a tester who finds it in
+  /// any of them reaches the same inbox.
+  static const betaSupportEmail = 'testing@tailendcharlie.app';
+
   /// TestFlight's own landing page. A build-specific TestFlight invitation link
   /// can only be issued from App Store Connect, so it is supplied per build
   /// through `RIDE_RELAY_TESTER_UPDATE_URL` when one exists.
@@ -181,7 +191,7 @@ class BuildIdentity {
     DistributionTrack track,
   ) => switch (platform) {
     TargetPlatform.android => Uri.parse(
-      track.isPlayClosedTesting ? playClosedTestingOptInUrl : playListingUrl,
+      track.usesPlayTestingPage ? playClosedTestingOptInUrl : playListingUrl,
     ),
     TargetPlatform.iOS => Uri.parse(testFlightUrl),
     _ => null,
@@ -212,6 +222,28 @@ class BuildIdentity {
       'Tail End Charlie ${reportsVersion ? '$appVersion+$appBuild' : 'unstamped build (version not reported)'} · '
       '${track.label} · ${platform.name}';
 
+  /// A `mailto:` link that opens a message to [betaSupportEmail] with the build
+  /// identity already in the body, so the first reply does not have to ask which
+  /// build it is about.
+  ///
+  /// The body carries [bugReportLine] and nothing else: no relay host, no
+  /// location, no ride code. The query is encoded by hand because
+  /// [Uri.queryParameters] writes a space as `+`, which mail apps show literally.
+  Uri get supportEmailUri {
+    String encode(String value) => Uri.encodeComponent(value);
+    final subject = reportsVersion
+        ? 'Tail End Charlie beta feedback (build $appBuild)'
+        : 'Tail End Charlie beta feedback';
+    final body =
+        '\n\nPlease describe what happened above this line.\n---\n'
+        '$bugReportLine';
+    return Uri(
+      scheme: 'mailto',
+      path: betaSupportEmail,
+      query: 'subject=${encode(subject)}&body=${encode(body)}',
+    );
+  }
+
   bool get hasRelayEndpoint => relayHost.isNotEmpty;
 
   /// Play internal testing and TestFlight never force an update, so a tester
@@ -236,6 +268,10 @@ class BuildIdentity {
 
   /// How a tester gets the newer build on this platform and track.
   String get updateInstruction => switch (platform) {
+    TargetPlatform.android when track == DistributionTrack.playOpenBeta =>
+      'Open the testing page with the Google account you test with, then '
+          'follow "Download it on Google Play" and choose Update. Play can '
+          'take a few minutes to offer a new beta build.',
     TargetPlatform.android when track.isPlayClosedTesting =>
       'Open the closed-testing opt-in page with the Google account you test '
           'with, then follow "Download it on Google Play" and choose Update. '
@@ -254,6 +290,8 @@ class BuildIdentity {
   /// opt-in page by a button that says "Google Play listing".
   String get updateActionLabel => switch (platform) {
     TargetPlatform.iOS => 'Open TestFlight',
+    TargetPlatform.android when track == DistributionTrack.playOpenBeta =>
+      'Open beta testing page',
     TargetPlatform.android when track.isPlayClosedTesting =>
       'Open closed testing page',
     _ => 'Open Google Play listing',

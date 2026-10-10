@@ -673,6 +673,35 @@ def test_the_background_refresh_runs_only_configured_sources_and_stops_cleanly(s
     assert unconfigured.refreshes == 0
 
 
+def test_an_unexpected_source_failure_does_not_end_the_refresh_loop(settings):
+    class _Broken(_StaticSource):
+        async def refresh(self, snapshot: SourceSnapshot) -> SourceSnapshot:
+            self.refreshes += 1
+            raise KeyError("an unanticipated shape")
+
+    broken = _Broken([])
+    sleeps: list[float] = []
+    second_round = asyncio.Event()
+
+    async def sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+        if len(sleeps) >= 2:
+            second_round.set()
+            await asyncio.Event().wait()
+
+    async def scenario() -> None:
+        service = FuelPriceService(settings, sources=[broken], sleep=sleep)
+        service.start()
+        await asyncio.wait_for(second_round.wait(), timeout=5)
+        await service.close()
+
+    asyncio.run(scenario())
+
+    assert broken.refreshes == 2
+    # Retried on the shorter failure interval, not the normal cadence.
+    assert sleeps == [300, 300]
+
+
 def test_a_relay_with_no_source_starts_no_background_task(settings):
     async def scenario() -> FuelPriceService:
         service = FuelPriceService(settings)
