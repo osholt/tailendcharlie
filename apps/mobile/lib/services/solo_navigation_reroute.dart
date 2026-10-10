@@ -83,6 +83,7 @@ class SoloNavigationReroute {
   List<GeoPoint> _path = const [];
   List<awareness.GeoPoint> _awarenessPath = const [];
   RouteDeviationDetector? _detector;
+  bool _joined = false;
   bool _offRoute = false;
   DateTime? _offRouteSince;
   RouteRejoinPlan? _lastPlan;
@@ -106,6 +107,7 @@ class SoloNavigationReroute {
     _routeFingerprint = fingerprint;
     _generation += 1;
     _planner.reset();
+    _joined = false;
     _offRoute = false;
     _offRouteSince = null;
     _lastPlan = null;
@@ -172,6 +174,20 @@ class SoloNavigationReroute {
       now,
       headingAcrossRoute: travel == RouteTravel.across,
     );
+
+    // Nothing to leave until the rider has been on the route. A rider still on
+    // the way to a route that starts somewhere else is not off it; "Navigate to
+    // start" covers that, and a rejoin would skip the start.
+    if (!_joined) {
+      final distance = assessment.distanceFromRouteMeters;
+      final onIt =
+          assessment.state == RouteTrackingState.onRoute &&
+          distance != null &&
+          distance <= detector.config.exitOffRouteMeters &&
+          travel != RouteTravel.across;
+      if (!onIt) return const SoloRerouteUpdate();
+      _joined = true;
+    }
 
     var leftRoute = false;
     Duration? backOnRouteAfter;

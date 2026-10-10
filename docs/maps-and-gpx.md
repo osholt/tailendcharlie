@@ -1031,8 +1031,10 @@ ride a Where To rider was off route for four minutes and then eight, and heard
 nothing. `SoloNavigationReroute` (`lib/services/solo_navigation_reroute.dart`)
 works like this:
 
-- After three fixes more than 120 m from the route, the rider is off route.
-  "Off route. Recalculating directions." is said once.
+- Once the rider has been on the route, three fixes more than 120 m from it
+  put them off route. "Off route. Recalculating directions." is said once. A
+  rider still on the way to a route that starts elsewhere is not off it;
+  Navigate to start covers that.
 - The group planner then routes from the rider's position and heading back to
   a point ahead on the planned route. The map navigates by that route and draws
   it in the rejoin colour.

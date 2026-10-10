@@ -104,6 +104,31 @@ void main() {
     },
   );
 
+  test('a rider on the way to the route is not off it', () async {
+    // A route that starts somewhere else: "Navigate to start" gets the rider
+    // there, and a rejoin would skip the start.
+    final approach = [
+      await ride(300, 900, heading: 180),
+      await ride(300, 750, heading: 180),
+      await ride(300, 600, heading: 180),
+      await ride(300, 450, heading: 180),
+    ];
+    expect(approach.any((update) => update.leftRoute), isFalse);
+    expect(routing.originBearings, isEmpty);
+    expect(reroute.route.value, isNull);
+
+    // Once on it, leaving it is leaving it.
+    await ride(300, 5, heading: 90, after: const Duration(seconds: 30));
+    await ride(400, 5, heading: 90);
+    final left = [
+      await ride(420, 150, heading: 0),
+      await ride(430, 300, heading: 0),
+      await ride(440, 450, heading: 0),
+    ];
+    expect(left.last.leftRoute, isTrue);
+    expect(reroute.route.value, isNotNull);
+  });
+
   test('a long detour on your own still gets a way back', () async {
     await leaveTheRoute();
     // Two kilometres off and eleven minutes in: past both of the group
