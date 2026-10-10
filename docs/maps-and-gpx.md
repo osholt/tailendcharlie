@@ -18,6 +18,27 @@ small enough to retain street-level detail without rendering every GPS fix.
 Global opt-in coverage remains a separate feature and data boundary, with its
 coarser privacy-oriented z17 contribution cells.
 
+## Replaying a finished ride (#305, first slice)
+
+A ride in the ride library with a timed track of its own offers **Replay this
+ride**: play, pause, a scrubber, and 10x, 30x, 60x or 120x speed (60x by
+default; rides are hours long, so even the slowest is faster than real time).
+A dot moves along the recorded track on the same map as the ride's detail view.
+It needs nothing but what is already on the phone: the archived ride's
+`traveledRoute` keeps a `recordedAt` on every fix, so it works offline and
+sends nothing anywhere.
+
+It is **one rider's ride, not the group's**. When a ride is archived its event
+journal is deleted, so the other riders' positions are not kept, and there is
+no per-rider switching. The screen says so. A recording gap of more than two
+minutes (the recorder splits the track there) is skipped rather than played as
+a long stand-still; the screen says how many it skipped. A ride whose fixes
+carry no times, or that is too short to have a pace, shows no replay button.
+
+Replaying the whole group needs each rider's timed track stored at archive time
+or kept by the relay, and the visibility decision #305 asks for first (who may
+open a group replay, and for how long). Neither exists yet.
+
 The daytime map has two saved settings: **Restrained** applies Tail End
 Charlie's quieter road-first repaint to OpenFreeMap Liberty, while **Original**
 keeps the provider's daytime colours and labels, with deeper and wider road
