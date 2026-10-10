@@ -7194,6 +7194,7 @@ class _RideMapScreenState extends State<RideMapScreen>
       context,
       searchService: _destinationRoutePlanner.searchService,
       title: 'Where to?',
+      currentPoint: _effectivePosition,
     );
     if (choice is! PlaceSearchPlace || !mounted) return;
     await _planOnSurface(RidePlan.toDestination(choice.place));

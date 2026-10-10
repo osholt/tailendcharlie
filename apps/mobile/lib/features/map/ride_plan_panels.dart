@@ -23,6 +23,7 @@ class RidePlanItinerary extends StatelessWidget {
     required this.onAddStop,
     required this.onMoveStop,
     required this.onRemoveStop,
+    this.onSavePlace,
   });
 
   final RidePlan plan;
@@ -36,6 +37,18 @@ class RidePlanItinerary extends StatelessWidget {
   final VoidCallback onAddStop;
   final void Function(int from, int to) onMoveStop;
   final ValueChanged<int> onRemoveStop;
+
+  /// Saves a place on the plan as Home, Work or a name of the rider's own
+  /// (#937). Null hides the button, as it does where a plan cannot be saved to.
+  final ValueChanged<RidePlanPlace>? onSavePlace;
+
+  Widget _saveButton(Key key, RidePlanPlace place) => IconButton(
+    key: key,
+    tooltip: 'Save this place',
+    visualDensity: VisualDensity.compact,
+    onPressed: busy ? null : () => onSavePlace!(place),
+    icon: const Icon(Icons.bookmark_add_outlined),
+  );
 
   @override
   Widget build(BuildContext context) {
@@ -68,10 +81,17 @@ class RidePlanItinerary extends StatelessWidget {
                     : 'Start',
                 style: muted,
               ),
-              trailing: TextButton(
-                key: const Key('ride-plan-change-start'),
-                onPressed: busy ? null : onChangeStart,
-                child: const Text('Change'),
+              trailing: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (onSavePlace != null && start is PlaceStart)
+                    _saveButton(const Key('ride-plan-save-start'), start.place),
+                  TextButton(
+                    key: const Key('ride-plan-change-start'),
+                    onPressed: busy ? null : onChangeStart,
+                    child: const Text('Change'),
+                  ),
+                ],
               ),
             ),
             // Dragged by the handle, as in Google Maps (#891). The list adds
@@ -102,6 +122,8 @@ class RidePlanItinerary extends StatelessWidget {
                   trailing: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
+                      if (onSavePlace != null)
+                        _saveButton(Key('ride-plan-save-stop-$index'), stop),
                       IconButton(
                         key: Key('ride-plan-remove-stop-$index'),
                         tooltip: 'Remove stop',
@@ -136,10 +158,20 @@ class RidePlanItinerary extends StatelessWidget {
               leading: const Icon(Icons.place, color: Color(0xFFFF7A5C)),
               title: Text(destination?.label ?? 'Choose a destination'),
               subtitle: const Text('Destination', style: muted),
-              trailing: TextButton(
-                key: const Key('ride-plan-change-destination'),
-                onPressed: busy ? null : onChangeDestination,
-                child: const Text('Change'),
+              trailing: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (onSavePlace != null && destination != null)
+                    _saveButton(
+                      const Key('ride-plan-save-destination'),
+                      destination,
+                    ),
+                  TextButton(
+                    key: const Key('ride-plan-change-destination'),
+                    onPressed: busy ? null : onChangeDestination,
+                    child: const Text('Change'),
+                  ),
+                ],
               ),
             ),
             Padding(

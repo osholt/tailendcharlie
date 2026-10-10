@@ -69,6 +69,18 @@ contract, which is why this is a written decision rather than a task.
   app's `User-Agent`. Worth knowing, and worth saying to a rider if the wording of
   the search surface is ever revisited.
 
+## Saved places and history do not change this (#937)
+
+Where to? and the plan surface's pickers now show the places a rider chose before
+and the places they saved (Home, Work, their own), and typing filters those rows
+as it goes. That is a filter over a list held on the phone, **not a search**: it
+sends nothing and does not go near Nominatim, so submit-only search still holds.
+`test/features/home/home_search_memory_test.dart` and
+`test/features/map/place_search_memory_test.dart` each type four characters and
+assert the search service was never called, then submit and assert it was called
+once. Nothing is ever chosen or saved on the strength of a typed query alone: a
+place is remembered only when the rider chooses it from a result.
+
 ## Reconsideration gate
 
 Revisit when **all** of these hold:

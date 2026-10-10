@@ -969,6 +969,7 @@ class _HomeScreenState extends State<HomeScreen> {
       context,
       searchService: _destinationPlanner.searchService,
       hasPosition: _position.value != null,
+      currentPoint: _position.value,
     );
     if (outcome == null || !mounted) return;
     switch (outcome) {
@@ -1009,10 +1010,11 @@ class _HomeScreenState extends State<HomeScreen> {
       context,
       planning: RidePlanEditing(
         plan: RidePlan.toDestination(
-          RidePlanPlace.fromSearchResult(
-            label: choice.label,
-            point: choice.point,
-          ),
+          choice.place ??
+              RidePlanPlace.fromSearchResult(
+                label: choice.label,
+                point: choice.point,
+              ),
         ),
         route: (plan, location) => _planRouter.route(
           plan,

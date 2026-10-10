@@ -18,6 +18,7 @@ import 'package:ride_relay/data/ride_diagnostics_log_store.dart';
 import 'package:ride_relay/domain/completed_ride.dart';
 import 'package:ride_relay/domain/completed_ride_store.dart';
 import 'package:ride_relay/domain/imported_route.dart';
+import 'package:ride_relay/domain/ride_plan.dart';
 import 'package:ride_relay/domain/rider_color.dart';
 import 'package:ride_relay/domain/recorded_route_store.dart';
 import 'package:ride_relay/domain/route_store.dart';
@@ -29,6 +30,7 @@ import 'package:ride_relay/features/map/motorcycle_icon.dart';
 import 'package:ride_relay/internet/internet_relay_client.dart';
 import 'package:ride_relay/internet/plan_directory.dart';
 import 'package:ride_relay/services/nearby_bridge.dart';
+import 'package:ride_relay/services/place_memory.dart';
 import 'package:ride_relay/services/road_routing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -476,6 +478,81 @@ void main() {
       expect(rideController.hasActiveRide, isFalse);
     },
   );
+
+  // #937: a place chosen from the search is there next time, and Home is one
+  // tap from the empty search, going onto the plan under the name Home.
+  testWidgets('a chosen destination is remembered, and Home opens the plan '
+      'named Home', (tester) async {
+    final routing = _RecordingRoadRoutingService();
+    final planner = DestinationRoutePlanner(
+      searchService: const _BathDestinationSearch(),
+      routingService: routing,
+    );
+    final seeded = await PlaceMemory.open();
+    await seeded.setHome(
+      const RidePlanPlace(
+        point: GeoPoint(latitude: 51.40, longitude: -2.50),
+        label: '12 Example Road',
+        description: '12 Example Road, Shire, England',
+      ),
+    );
+    seeded.dispose();
+    await pumpHome(tester, destinationPlanner: planner);
+    tester
+        .widget<HomeMapBackdrop>(find.byType(HomeMapBackdrop))
+        .position!
+        .value = const GeoPoint(
+      latitude: 51.45,
+      longitude: -2.59,
+    );
+    await tester.pump();
+
+    // A search, and a result chosen from it.
+    await tester.tap(find.byKey(const Key('home-search-bar')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('home-search-saved-home')), findsOneWidget);
+    await tester.enterText(find.byKey(const Key('home-search-field')), 'bath');
+    await tester.tap(find.byKey(const Key('home-search-submit')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Bath, Somerset'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('ride-plan-itinerary')), findsOneWidget);
+
+    final afterSearch = await PlaceMemory.open();
+    expect(afterSearch.recents.map((recent) => recent.label), ['Bath']);
+    afterSearch.dispose();
+
+    // Back out of the plan, and Home is one tap from the empty search.
+    tester.state<NavigatorState>(find.byType(Navigator).first).pop();
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('home-search-bar')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('home-search-recent-0')), findsOneWidget);
+    await tester.tap(find.byKey(const Key('home-search-saved-home')));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.descendant(
+        of: find.byKey(const Key('ride-plan-destination')),
+        matching: find.text('Home'),
+      ),
+      findsOneWidget,
+    );
+    expect(routing.waypoints.last.latitude, 51.40);
+    expect(routing.waypoints.first.latitude, 51.45);
+
+    // Confirmed, the route's last place is Home and still says where Home is.
+    await tester.tap(find.byKey(const Key('confirm-reviewed-route')));
+    await tester.pumpAndSettle();
+    final destination = tester
+        .widget<HomeMapBackdrop>(find.byType(HomeMapBackdrop))
+        .pendingInAppRoute!
+        .route
+        .waypoints
+        .last;
+    expect(destination.name, 'Home');
+    expect(destination.description, '12 Example Road, Shire, England');
+  });
 
   testWidgets('a plan made as a group creates the ride with its route', (
     tester,
