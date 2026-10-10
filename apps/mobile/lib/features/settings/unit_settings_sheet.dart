@@ -661,6 +661,16 @@ class UnitSettingsSheet extends StatelessWidget {
                         unawaited(_openLegalPage(context, 'terms.html')),
                     child: const Text('Terms of Use'),
                   ),
+                  TextButton(
+                    key: const Key('open-beta-support'),
+                    onPressed: () => unawaited(
+                      emailBetaSupport(
+                        context,
+                        buildIdentity ?? BuildIdentity.fromEnvironment(),
+                      ),
+                    ),
+                    child: const Text('Beta support'),
+                  ),
                 ],
               ),
             ),

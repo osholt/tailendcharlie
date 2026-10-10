@@ -52,6 +52,35 @@ test("an un-ended ride is kept from the last synchronisation, not from creation"
   assert.doesNotMatch(text, /72 hours from creation/);
 });
 
+test("the age rule is 17 and says so on the page", () => {
+  assert.match(text, /Tail End Charlie is for riders aged 17 or over/);
+  assert.match(text, /not directed at, or intended for use by, anyone under 17/);
+  assert.doesNotMatch(text, /under 16/);
+});
+
+test("the page says it is a beta and gives beta support its own address", () => {
+  assert.match(text, /Beta notice: Tail End Charlie is in an open beta/);
+  assert.match(text, /Beta support, bug reports and feedback: testing@tailendcharlie\.app/);
+  // Data requests keep their own address, so support mail cannot swallow them.
+  assert.match(text, /For data requests use the privacy address above/);
+  assert.match(privacy, /mailto:privacy@tailendcharlie\.app/);
+  assert.match(privacy, /href="mailto:testing@tailendcharlie\.app"/);
+});
+
+test("push notification tokens are described as the relay holds them", () => {
+  assert.match(text, /Apple's push service \(iOS\) or Google's Firebase Cloud Messaging \(Android\)/);
+  assert.match(text, /encrypted on the relay, tied to your random device identifier for one ride, and revoked when you leave or the ride ends/);
+  assert.match(text, /no name, position or emergency-contact details/);
+  assert.match(text, /You can refuse notifications and still use the app/);
+});
+
+test("the effective date moves with this change", () => {
+  const match = text.match(/Effective (\d{1,2}) (\w+) (\d{4}) ·/);
+  assert.ok(match);
+  const effective = new Date(`${match[1]} ${match[2]} ${match[3]} 00:00:00 UTC`);
+  assert.ok(effective >= new Date("2026-10-10T00:00:00Z"), match[0]);
+});
+
 test("global heatmap contribution is opt-in, asked at setup, and nothing is shared until chosen (#957)", () => {
   // The operator decided on 10 October 2026: "at setup ask about contributing
   // to the global heat map". The page must not call contribution a default.
@@ -59,8 +88,4 @@ test("global heatmap contribution is opt-in, asked at setup, and nothing is shar
   assert.match(text, /First setup asks, with no option pre-selected, and skipping it means Never/);
   assert.match(text, /asked once on the home map and shares nothing until you answer/);
   assert.doesNotMatch(text, /Contribution of completed rides is on by default/);
-  const match = text.match(/Effective (\d{1,2}) (\w+) (\d{4}) ·/);
-  assert.ok(match, "the page states an effective date");
-  const effective = new Date(`${match[1]} ${match[2]} ${match[3]} 00:00:00 UTC`);
-  assert.ok(effective >= new Date("2026-10-10T00:00:00Z"), match[0]);
 });

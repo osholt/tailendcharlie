@@ -5080,6 +5080,10 @@ class _RideMapScreenState extends State<RideMapScreen>
 
   NavigationGuidanceAssessment _assessNavigationGuidance(GeoPoint? position) {
     final navigationRoute = _rejoinRoute ?? _route;
+    // The course and speed belong to the fix, so they are only used when the
+    // position being judged is that fix (#941).
+    final fix = _navigationFix;
+    final fixAtPosition = fix != null && identical(fix.point, position);
     return _navigationGuidancePlanner.assess(
       route: navigationRoute,
       position: position,
@@ -5087,6 +5091,8 @@ class _RideMapScreenState extends State<RideMapScreen>
       minimumManeuverProgressMeters: _rejoinRoute == null
           ? _mainRouteGuidanceFloorMeters
           : null,
+      headingDegrees: fixAtPosition ? fix.headingDegrees : null,
+      speedMetersPerSecond: fixAtPosition ? fix.speedMetersPerSecond : null,
     );
   }
 
