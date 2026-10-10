@@ -1,0 +1,11 @@
+[
+  {
+    "node_id": "0004dddd",
+    "trading_name": "Example Village Garage",
+    "brand_name": null,
+    "temporary_closure": false,
+    "permanent_closure": false,
+    "location": {"postcode": "ZZ2 1ZZ", "latitude": 52.4, "longitude": -1.5},
+    "fuel_types": ["E10", "E5", "B7_Standard", "B7_Premium"]
+  }
+]

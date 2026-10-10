@@ -56,6 +56,7 @@ import '../map/stored_route_picker.dart';
 import '../ride/previous_rides_screen.dart';
 import '../ride/route_recorder_screen.dart';
 import '../settings/unit_settings_sheet.dart';
+import '../../services/fuel_preference.dart';
 import '../settings/about_build_sheet.dart';
 import '../settings/heatmap_consent_prompt.dart';
 import '../update/update_required_screen.dart';
@@ -257,6 +258,7 @@ class _HomeScreenState extends State<HomeScreen> {
     );
     _position.addListener(_publishHomeCarPlayState);
     _position.addListener(_observeAutomaticUnits);
+    unawaited(_readFuelPreference());
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) _publishHomeCarPlayState();
     });
@@ -458,6 +460,7 @@ class _HomeScreenState extends State<HomeScreen> {
     // with the map and a client it lends to the geocoder.
     _position.removeListener(_publishHomeCarPlayState);
     _position.removeListener(_observeAutomaticUnits);
+    _fuelPreference?.removeListener(_onFuelPreferenceChanged);
     widget.updateGate?.removeListener(_onUpdateGateChanged);
     unawaited(_carPlayBridge.dispose());
     _position.dispose();
@@ -491,6 +494,10 @@ class _HomeScreenState extends State<HomeScreen> {
   /// Bumped to reopen the free-roam route on the plan surface (#847). The map
   /// owns the route and the surface, so Home only asks.
   Object? _editRouteRequestToken;
+
+  /// Bumped to find a fuel stop or charger (#951). The map owns the route the
+  /// stop goes on and the plan surface it is confirmed on, so Home only asks.
+  Object? _fuelStopRequestToken;
 
   /// The free-roam navigation being recorded, if any (#896).
   String? _personalNavigationRideId;
@@ -771,6 +778,10 @@ class _HomeScreenState extends State<HomeScreen> {
             onEditRouteRequestHandled: () => setState(() {
               _editRouteRequestToken = null;
             }),
+            fuelStopRequestToken: _fuelStopRequestToken,
+            onFuelStopRequestHandled: () => setState(() {
+              _fuelStopRequestToken = null;
+            }),
             navigating: _routeOnMap != null,
             localDisplayName: widget.riderProfile.displayName,
             onNavigationArchived: (ride) =>
@@ -804,6 +815,18 @@ class _HomeScreenState extends State<HomeScreen> {
                     icon: Icons.edit_road_outlined,
                     onSelected: () =>
                         setState(() => _editRouteRequestToken = Object()),
+                  ),
+                // The search field is off the navigation canvas, so a rider
+                // following a route asks for fuel from here (#951).
+                if (_routeOnMap != null)
+                  HostMapMenuAction(
+                    id: 'home-navigate-to-fuel',
+                    label: _fuelSearchPreference.searchLabel,
+                    icon: _fuelSearchPreference.isElectric
+                        ? Icons.ev_station_outlined
+                        : Icons.local_gas_station_outlined,
+                    onSelected: () =>
+                        setState(() => _fuelStopRequestToken = Object()),
                   ),
                 HostMapMenuAction(
                   id: 'home-create-ride',
@@ -1037,6 +1060,7 @@ class _HomeScreenState extends State<HomeScreen> {
       searchService: _destinationPlanner.searchService,
       hasPosition: _position.value != null,
       currentPoint: _position.value,
+      fuelSearchLabel: _fuelSearchPreference.searchLabel,
     );
     if (outcome == null || !mounted) return;
     switch (outcome) {
@@ -1056,7 +1080,32 @@ class _HomeScreenState extends State<HomeScreen> {
             await _openRideLibrary(context);
           case HomeSearchHandoffKind.circularRide:
             setState(() => _circularRideRequestToken = Object());
+          case HomeSearchHandoffKind.fuelStop:
+            setState(() => _fuelStopRequestToken = Object());
         }
+    }
+  }
+
+  /// The rider's saved fuel, which words the search's fuel action (#951).
+  /// Read once in the background; until then, and if it cannot be read, the
+  /// action says "Navigate to fuel".
+  FuelPreferenceController? _fuelPreference;
+
+  void _onFuelPreferenceChanged() {
+    if (mounted) setState(() {});
+  }
+
+  FuelPreference get _fuelSearchPreference =>
+      _fuelPreference?.value ?? FuelPreferenceController.defaultPreference;
+
+  Future<void> _readFuelPreference() async {
+    try {
+      final preference = await FuelPreferenceController.shared();
+      if (!mounted) return;
+      _fuelPreference = preference;
+      preference.addListener(_onFuelPreferenceChanged);
+    } on Object {
+      // The default wording stands.
     }
   }
 

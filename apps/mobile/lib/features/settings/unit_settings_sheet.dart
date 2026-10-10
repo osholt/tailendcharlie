@@ -16,6 +16,7 @@ import '../../controllers/ride_diagnostics_controller.dart';
 import '../../controllers/spoken_guidance_controller.dart';
 import '../../controllers/test_control_controller.dart';
 import '../map/discovery_layer_toggles.dart';
+import 'fuel_preference_settings.dart';
 import '../../domain/completed_ride_store.dart';
 import '../../domain/distance_unit.dart';
 import '../../domain/map_style_mode.dart';
@@ -479,6 +480,9 @@ class UnitSettingsSheet extends StatelessWidget {
                 unawaited(DiscoveryLayersScreen.show(appContext));
               },
             ),
+            // What the bike takes, for Navigate to fuel and the prices on the
+            // map (#951).
+            const FuelPreferenceTile(),
             const SizedBox(height: 16),
             Text(
               'MAP DATA',

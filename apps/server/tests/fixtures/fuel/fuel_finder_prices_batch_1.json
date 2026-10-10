@@ -1,0 +1,34 @@
+{
+  "success": true,
+  "data": {
+    "success": true,
+    "data": [
+      {
+        "node_id": "0001aaaa",
+        "public_phone_number": null,
+        "trading_name": "Example Services North",
+        "fuel_prices": [
+          {"fuel_type": "E10", "price": 142.9, "price_last_updated": "2026-10-09T07:15:00.000Z", "price_change_effective_timestamp": "2026-10-09T07:00:00.000Z"},
+          {"fuel_type": "E5", "price": 158.9, "price_last_updated": "2026-10-01T06:00:00.000Z", "price_change_effective_timestamp": "2026-10-01T05:45:00.000Z"},
+          {"fuel_type": "B7_Standard", "price": 1.499, "price_last_updated": "2026-10-09T07:15:00.000Z", "price_change_effective_timestamp": "2026-10-09T07:00:00.000Z"},
+          {"fuel_type": "HVO", "price": 189.9, "price_last_updated": "2026-10-09T07:15:00.000Z", "price_change_effective_timestamp": "2026-10-09T07:00:00.000Z"}
+        ]
+      },
+      {
+        "node_id": "0002bbbb",
+        "trading_name": "Example Supermarket Fuel",
+        "fuel_prices": [
+          {"fuel_type": "E10", "price": 135.7, "price_last_updated": "2026-10-08T18:30:00.000Z", "price_change_effective_timestamp": "2026-10-08T18:10:00.000Z"},
+          {"fuel_type": "B7_Standard", "price": 144.7, "price_last_updated": "2026-10-08T18:30:00.000Z", "price_change_effective_timestamp": "2026-10-08T18:10:00.000Z"}
+        ]
+      },
+      {
+        "node_id": "9999zzzz",
+        "trading_name": "Forecourt Missing From The Station List",
+        "fuel_prices": [
+          {"fuel_type": "E10", "price": 139.9, "price_last_updated": "2026-10-09T07:15:00.000Z", "price_change_effective_timestamp": "2026-10-09T07:00:00.000Z"}
+        ]
+      }
+    ]
+  }
+}

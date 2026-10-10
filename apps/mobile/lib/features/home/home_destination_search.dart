@@ -124,6 +124,9 @@ enum HomeSearchHandoffKind {
 
   /// Ride something already on the phone.
   storedRoute,
+
+  /// The nearest sensible fuel station or charger for the rider's fuel (#951).
+  fuelStop,
 }
 
 /// The search surface: a field, its results, and the other ways in.
@@ -134,6 +137,7 @@ class HomeDestinationSearchSheet extends StatefulWidget {
     this.hasPosition = true,
     this.currentPoint,
     this.memory,
+    this.fuelSearchLabel,
   });
 
   final DestinationSearchService searchService;
@@ -144,6 +148,9 @@ class HomeDestinationSearchSheet extends StatefulWidget {
 
   /// Injected by tests; otherwise the phone's own is opened.
   final PlaceMemory? memory;
+  /// "Navigate to fuel" or "Navigate to charger", from the rider's fuel
+  /// preference (#951). Null offers neither.
+  final String? fuelSearchLabel;
 
   /// False when the app has no position yet. Said in the sheet, but it no
   /// longer stops anything: a destination can be chosen without a fix, and the
@@ -156,6 +163,7 @@ class HomeDestinationSearchSheet extends StatefulWidget {
     bool hasPosition = true,
     GeoPoint? currentPoint,
     PlaceMemory? memory,
+    String? fuelSearchLabel,
   }) => showModalBottomSheet<HomeSearchOutcome>(
     context: context,
     isScrollControlled: true,
@@ -166,6 +174,7 @@ class HomeDestinationSearchSheet extends StatefulWidget {
       hasPosition: hasPosition,
       currentPoint: currentPoint,
       memory: memory,
+      fuelSearchLabel: fuelSearchLabel,
     ),
   );
 
@@ -400,6 +409,25 @@ class _HomeDestinationSearchSheetState
                     },
                   ),
                 const Divider(height: 12),
+                // Searching for "petrol" would ask the geocoder for a place
+                // called that. This asks the bundled station map instead, for
+                // the rider's own fuel, ranked by distance and price (#951).
+                if (widget.fuelSearchLabel case final label?)
+                  ListTile(
+                    key: const Key('home-search-fuel-stop'),
+                    leading: Icon(
+                      label == 'Navigate to charger'
+                          ? Icons.ev_station_outlined
+                          : Icons.local_gas_station_outlined,
+                    ),
+                    title: Text(label),
+                    subtitle: const Text(
+                      'Nearby, or ahead on the route you are riding',
+                    ),
+                    onTap: () => Navigator.of(context).pop(
+                      const HomeSearchHandoff(HomeSearchHandoffKind.fuelStop),
+                    ),
+                  ),
                 ListTile(
                   key: const Key('home-search-circular-ride'),
                   leading: const Icon(Icons.roundabout_right_outlined),
