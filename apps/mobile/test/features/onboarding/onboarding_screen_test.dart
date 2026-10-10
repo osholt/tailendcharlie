@@ -157,41 +157,169 @@ void main() {
     );
   });
 
-  testWidgets('global contribution defaults on and can be disabled in setup', (
-    tester,
-  ) async {
-    final profile = await RiderProfileController.load();
-    final heatmap = await GlobalRideHeatmapController.load(
-      client: GlobalHeatmapClient(
-        baseUri: Uri.parse('https://relay.example/api/'),
-        client: MockClient((_) async => http.Response('{}', 200)),
-      ),
-      credentials: _MemoryCredentials(),
-    );
-    addTearDown(heatmap.dispose);
-    await tester.pumpWidget(_app(profile, globalRideHeatmap: heatmap));
+  group('global heatmap choice in setup (#957)', () {
+    Future<GlobalRideHeatmapController> loadHeatmap() async {
+      final heatmap = await GlobalRideHeatmapController.load(
+        client: GlobalHeatmapClient(
+          baseUri: Uri.parse('https://relay.example/api/'),
+          client: MockClient((_) async => http.Response('{}', 200)),
+        ),
+        credentials: _MemoryCredentials(),
+      );
+      addTearDown(heatmap.dispose);
+      return heatmap;
+    }
 
-    await tester.tap(find.byKey(const Key('onboarding-continue')));
-    await tester.pumpAndSettle();
-    await tester.enterText(
-      find.byKey(const Key('onboarding-name-field')),
-      'Oliver',
-    );
-    await tester.tap(find.byKey(const Key('skip-onboarding-tour')));
-    await tester.pumpAndSettle();
+    /// Opens setup on the heatmap step, as a first-run rider reaches it.
+    Future<RiderProfileController> openHeatmapStep(
+      WidgetTester tester,
+      GlobalRideHeatmapController heatmap,
+    ) async {
+      final profile = await RiderProfileController.load();
+      await tester.pumpWidget(_app(profile, globalRideHeatmap: heatmap));
+      await tester.tap(find.byKey(const Key('onboarding-continue')));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byKey(const Key('onboarding-name-field')),
+        'Oliver',
+      );
+      await tester.tap(find.byKey(const Key('skip-onboarding-tour')));
+      await tester.pumpAndSettle();
+      expect(find.text('Help build better riding maps'), findsOneWidget);
+      return profile;
+    }
 
-    final contribution = find.byKey(
-      const Key('onboarding-global-heatmap-contribution'),
-    );
-    expect(tester.widget<SwitchListTile>(contribution).value, isTrue);
-    await tester.tap(contribution);
-    await tester.pump();
-    await tester.tap(find.byKey(const Key('onboarding-continue')));
-    await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const Key('onboarding-free-roam')));
-    await tester.pumpAndSettle();
+    HeatmapContributionConsent? selected(WidgetTester tester) => tester
+        .widget<RadioGroup<HeatmapContributionConsent>>(
+          find.byType(RadioGroup<HeatmapContributionConsent>),
+        )
+        .groupValue;
 
-    expect(heatmap.consent, HeatmapContributionConsent.never);
+    Future<void> finish(WidgetTester tester) async {
+      await tester.tap(find.byKey(const Key('onboarding-continue')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('onboarding-free-roam')));
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets('offers all three choices with none selected, and says what '
+        'is shared', (tester) async {
+      final heatmap = await loadHeatmap();
+      await openHeatmapStep(tester, heatmap);
+
+      for (final choice in HeatmapContributionConsent.values) {
+        expect(
+          find.byKey(Key('onboarding-heatmap-${choice.name}')),
+          findsOneWidget,
+          reason: choice.name,
+        );
+      }
+      expect(selected(tester), isNull);
+      expect(heatmap.consentAnswered, isFalse);
+      expect(
+        find.byKey(const Key('onboarding-heatmap-nothing-selected')),
+        findsOneWidget,
+      );
+      final summary = find.byKey(const Key('heatmap-sharing-summary'));
+      await tester.ensureVisible(summary);
+      expect(
+        find.descendant(
+          of: summary,
+          matching: find.textContaining('unordered, coarse map cells'),
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(
+          of: summary,
+          matching: find.textContaining('Never your track'),
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(
+          of: summary,
+          matching: find.textContaining('at least three separate contributors'),
+        ),
+        findsOneWidget,
+      );
+    });
+
+    for (final choice in HeatmapContributionConsent.values) {
+      testWidgets('choosing ${choice.name} is stored when setup finishes', (
+        tester,
+      ) async {
+        final heatmap = await loadHeatmap();
+        await openHeatmapStep(tester, heatmap);
+
+        final option = find.byKey(Key('onboarding-heatmap-${choice.name}'));
+        await tester.ensureVisible(option);
+        await tester.tap(option);
+        await tester.pump();
+        expect(selected(tester), choice);
+        // Nothing is stored until setup is finished.
+        expect(heatmap.consentAnswered, isFalse);
+        await finish(tester);
+
+        expect(heatmap.consent, choice);
+        expect(heatmap.consentAnswered, isTrue);
+        final stored = await SharedPreferences.getInstance();
+        expect(
+          stored.getString(GlobalRideHeatmapController.consentKey),
+          choice.name,
+        );
+      });
+    }
+
+    testWidgets('skipping the step means never, and is recorded', (
+      tester,
+    ) async {
+      final heatmap = await loadHeatmap();
+      await openHeatmapStep(tester, heatmap);
+
+      await tester.tap(find.byKey(const Key('skip-heatmap-choice')));
+      await tester.pumpAndSettle();
+      expect(find.text('You are ready to ride'), findsOneWidget);
+      await tester.tap(find.byKey(const Key('onboarding-free-roam')));
+      await tester.pumpAndSettle();
+
+      expect(heatmap.consent, HeatmapContributionConsent.never);
+      expect(heatmap.consentAnswered, isTrue);
+      final stored = await SharedPreferences.getInstance();
+      expect(stored.getString(GlobalRideHeatmapController.consentKey), 'never');
+    });
+
+    testWidgets('continuing without choosing also means never', (tester) async {
+      final heatmap = await loadHeatmap();
+      await openHeatmapStep(tester, heatmap);
+
+      await finish(tester);
+
+      expect(heatmap.consent, HeatmapContributionConsent.never);
+      expect(heatmap.consentAnswered, isTrue);
+    });
+
+    testWidgets('a rider replaying setup keeps what they chose before', (
+      tester,
+    ) async {
+      SharedPreferences.setMockInitialValues({
+        GlobalRideHeatmapController.consentKey:
+            HeatmapContributionConsent.askAfterEachRide.name,
+      });
+      final heatmap = await loadHeatmap();
+      await openHeatmapStep(tester, heatmap);
+
+      // Their own earlier answer is shown, so it is not a pre-selected default.
+      expect(selected(tester), HeatmapContributionConsent.askAfterEachRide);
+
+      // Skipping the question does not overturn it.
+      await tester.tap(find.byKey(const Key('skip-heatmap-choice')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('onboarding-free-roam')));
+      await tester.pumpAndSettle();
+
+      expect(heatmap.consent, HeatmapContributionConsent.askAfterEachRide);
+    });
   });
 }
 

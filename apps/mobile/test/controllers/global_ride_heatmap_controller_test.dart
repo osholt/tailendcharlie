@@ -13,17 +13,113 @@ import 'package:shared_preferences/shared_preferences.dart';
 void main() {
   setUp(() => SharedPreferences.setMockInitialValues(const {}));
 
-  test('viewing is off and contribution is on by default', () async {
+  test(
+    'viewing is off and nothing is contributed until the rider answers',
+    () async {
+      var requests = 0;
+      final credentials = _MemoryCredentials();
+      final controller = await GlobalRideHeatmapController.load(
+        client: _client((_) async {
+          requests += 1;
+          return http.Response('{}', 500);
+        }),
+        credentials: credentials,
+      );
+      addTearDown(controller.dispose);
+
+      expect(controller.visible, isFalse);
+      expect(controller.consent, HeatmapContributionConsent.never);
+      expect(controller.consentAnswered, isFalse);
+      await controller.setVisible(true);
+      expect(controller.consent, HeatmapContributionConsent.never);
+      expect(controller.consentAnswered, isFalse);
+
+      // The fallback is "never", so neither a finished ride nor a bulk share
+      // reaches the network, and no contributor credential is created.
+      expect(await controller.contribute(_ride()), isFalse);
+      final history = await controller.contributeHistory([_ride()]);
+      expect(history.rideCount, 0);
+      expect(requests, 0);
+      expect(credentials.value, isNull);
+    },
+  );
+
+  test(
+    'a stored choice is read back unchanged and counts as answered',
+    () async {
+      for (final choice in HeatmapContributionConsent.values) {
+        SharedPreferences.setMockInitialValues({
+          GlobalRideHeatmapController.consentKey: choice.name,
+        });
+        final controller = await GlobalRideHeatmapController.load(
+          client: _client((_) async => http.Response('{}', 500)),
+          credentials: _MemoryCredentials(),
+        );
+        addTearDown(controller.dispose);
+
+        expect(controller.consent, choice, reason: choice.name);
+        expect(controller.consentAnswered, isTrue, reason: choice.name);
+      }
+    },
+  );
+
+  test('an unreadable stored value is treated as not asked', () async {
+    SharedPreferences.setMockInitialValues({
+      GlobalRideHeatmapController.consentKey: 'sometimes',
+    });
     final controller = await GlobalRideHeatmapController.load(
       client: _client((_) async => http.Response('{}', 500)),
       credentials: _MemoryCredentials(),
     );
     addTearDown(controller.dispose);
 
-    expect(controller.visible, isFalse);
-    expect(controller.consent, HeatmapContributionConsent.always);
-    await controller.setVisible(true);
-    expect(controller.consent, HeatmapContributionConsent.always);
+    expect(controller.consent, HeatmapContributionConsent.never);
+    expect(controller.consentAnswered, isFalse);
+  });
+
+  test('answering never is stored, so the rider is not asked again', () async {
+    final client = _client((_) async => http.Response('{}', 500));
+    final controller = await GlobalRideHeatmapController.load(
+      client: client,
+      credentials: _MemoryCredentials(),
+    );
+    addTearDown(controller.dispose);
+    expect(controller.consentAnswered, isFalse);
+
+    // The fallback is already "never"; recording it must still count.
+    await controller.setConsent(HeatmapContributionConsent.never);
+
+    expect(controller.consentAnswered, isTrue);
+    final reloaded = await GlobalRideHeatmapController.load(
+      client: client,
+      credentials: _MemoryCredentials(),
+    );
+    addTearDown(reloaded.dispose);
+    expect(reloaded.consent, HeatmapContributionConsent.never);
+    expect(reloaded.consentAnswered, isTrue);
+  });
+
+  test('an explicit always still contributes', () async {
+    var contributions = 0;
+    SharedPreferences.setMockInitialValues({
+      GlobalRideHeatmapController.consentKey:
+          HeatmapContributionConsent.always.name,
+      GlobalRideHeatmapController.trimKey: 0,
+    });
+    final controller = await GlobalRideHeatmapController.load(
+      client: _client((request) async {
+        if (request.url.path.endsWith('/contributors')) {
+          return http.Response('{}', 201);
+        }
+        contributions += 1;
+        return http.Response('{"accepted":true}', 200);
+      }),
+      credentials: _MemoryCredentials(),
+    );
+    addTearDown(controller.dispose);
+
+    expect(await controller.contribute(_ride()), isTrue);
+    expect(contributions, 1);
   });
 
   test(
@@ -124,6 +220,8 @@ void main() {
       credentials: _MemoryCredentials(),
     );
     addTearDown(controller.dispose);
+    // Sharing needs a choice (#957); this rider has made it.
+    await controller.setConsent(HeatmapContributionConsent.always);
     await controller.setTrimMeters(0);
 
     final result = await controller.contributeHistory([
