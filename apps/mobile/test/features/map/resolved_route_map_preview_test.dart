@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter/material.dart';
@@ -60,6 +61,43 @@ void main() {
       );
     },
   );
+
+  test('a drawing drag takes the nearest handle or draggable stop (#891)', () {
+    const here = GeoPoint(latitude: 52, longitude: -1);
+    const fixed = RoutePreviewPin(point: here, kind: 'waypoint');
+    const stop = RoutePreviewPin(
+      id: 'plan-place-1',
+      point: here,
+      kind: 'waypoint',
+      draggable: true,
+    );
+    const shape = RoutePreviewPin(id: 'shape', point: here, kind: 'shape');
+    const pins = [fixed, stop, shape];
+    const screens = [
+      Point<double>(0, 0),
+      Point<double>(40, 0),
+      Point<double>(80, 0),
+    ];
+
+    // A pin that cannot be dragged is never taken, however close.
+    expect(
+      grabbedRoutePreviewPin(pins, screens, const Point(12, 0), radius: 32),
+      stop,
+    );
+    expect(
+      grabbedRoutePreviewPin(pins, screens, const Point(45, 0), radius: 32),
+      stop,
+    );
+    expect(
+      grabbedRoutePreviewPin(pins, screens, const Point(70, 0), radius: 32),
+      shape,
+    );
+    // Too far from both: the drag belongs to the line, if it is on it.
+    expect(
+      grabbedRoutePreviewPin(pins, screens, const Point(40, 50), radius: 32),
+      isNull,
+    );
+  });
 
   final originalMapLibrePlatformFactory = ml.MapLibrePlatform.createInstance;
 

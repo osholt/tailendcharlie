@@ -157,9 +157,13 @@ turns. Plan mode adds four things:
 
 1. **Itinerary**, replacing the read-only "Route points" list: a start row
    ("Your location" by default, **Change** opens a place search with "Your
-   location" at the top), one row per named stop (up, down, remove), a
-   destination row (**Change**), and **Add stop**. Shaping points never appear
-   here; they stay on the map and in the "Route adjustments (not stops)" chips.
+   location" at the top), one row per named stop (a drag handle to reorder,
+   and remove), a destination row (**Change**), and **Add stop**. Shaping
+   points never appear here; they stay on the map and in the "Route
+   adjustments (not stops)" chips. While drawing, the start, a stop or the
+   destination can also be dragged by its pin on the map (#891): the places
+   keep their order, so every shaping point stays on its leg. A nudge of up to
+   150 m keeps the place's name; a longer drag makes it a "Dropped pin".
 2. **Route options**: the preferences that used to live in the destination
    form, applied immediately by re-routing.
 3. **Who's riding**, where the host allows it: Solo or Group, and for a group
@@ -206,7 +210,7 @@ search field.
 | --- | --- | --- |
 | Solo (free roam) | Map menu, and the ride-menu button on the navigation canvas: **Edit route** | Plan surface; Update route replaces the free-roam route in place. Navigation continues. |
 | Leader, before the start | Pre-start panel **Change**; Ride tab **Edit route** | Plan surface; Use route publishes a new revision. |
-| Leader, during the ride | Ride tab **Edit route** | Plan surface; Update route publishes a new revision. Riders behind a moved start are guided back by the existing off-route rejoin (#102). |
+| Leader, during the ride | Ride tab **Edit route** | Plan surface on what is left of the ride (#893): the start is the leader's position, and the stops and adjustments already behind the leader (measured on the navigation progress tracker's line, so a loop's finish is not its start) are dropped. Update route publishes a new revision without the ridden part. A leader not yet on the route (no progress, more than 250 m from it) keeps the meeting point. Riders behind the leader are guided back by the existing off-route rejoin (#102). Solo navigation edits the same way. |
 | Follower | none | The route belongs to the leader. Ride on alone gives a follower their own copy to edit. |
 
 The other route sources stay available as **Replace route** (the existing

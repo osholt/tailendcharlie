@@ -85,6 +85,7 @@ def sync_request(
     client_protocol: int | None = None,
     capabilities: list[str] | None = None,
     platform: str | None = None,
+    app_build: str | None = None,
 ):
     body = json.dumps(
         {
@@ -108,6 +109,8 @@ def sync_request(
         headers["x-tailendcharlie-capabilities"] = ",".join(capabilities)
     if platform is not None:
         headers["x-tailendcharlie-platform"] = platform
+    if app_build is not None:
+        headers["x-tailendcharlie-app-build"] = app_build
     return client.post(
         f"/api/v1/rides/{ride_id}/events:sync",
         content=body,

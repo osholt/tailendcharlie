@@ -3879,6 +3879,7 @@ final class CarPlayNavigationViewController: UIViewController,
         subtitle: rider["role"] as? String,
         isLocal: isLocal,
         isTec: (rider["isTec"] as? NSNumber)?.boolValue ?? false,
+        shape: CarPlayRiderMarkerShape(snapshotValue: rider["markerOutline"]),
         needsAttention: (rider["needsAttention"] as? NSNumber)?.boolValue ?? false,
         riderSymbol: rider["riderSymbol"] as? String ?? "motorcycle",
         motorcycleStyle: rider["motorcycleStyle"] as? String ?? "adventureTourer",
@@ -3999,6 +4000,103 @@ final class CarPlayNavigationViewController: UIViewController,
   }
 }
 
+/// The outline a rider's marker is drawn in on the CarPlay map (#912).
+///
+/// The phone decides it with `riderMarkerOutlineFor` and sends it as
+/// `markerOutline`: the leader and the Tail End Charlie the ride resolved are
+/// stars, everyone else is a circle, and a ride of one has neither. Swift does
+/// not repeat that rule from `role` and `isTec`, so there is one rule and this
+/// side does not need to know what a solo ride is.
+enum CarPlayRiderMarkerShape: Equatable {
+  case circle
+  case star
+
+  /// Anything but the exact word `star` is a circle: a snapshot from before the
+  /// field existed, or a value this build does not know, must not turn a marker
+  /// into a shape nobody asked for.
+  init(snapshotValue: Any?) {
+    self = (snapshotValue as? String) == "star" ? .star : .circle
+  }
+}
+
+/// The star, in the phone's `RiderMarkerShapePainter` proportions for a resting
+/// star: five equal points, one straight up, reaching `tipShare` of half the
+/// box, with the valleys between them at `valleyShare`. The phone's circle fills
+/// `circleShare` of the same box, so the star is sized against the circle it
+/// replaces: points reach `tipShare / circleShare` times the circle's radius and
+/// valleys `valleyShare / circleShare`. A star no bigger than the circle would
+/// be the less conspicuous marker, and with points no longer than the body is
+/// wide it reads as a pentagon.
+enum CarPlayStarGeometry {
+  static let circleShare: CGFloat = 0.8
+  static let tipShare: CGFloat = 1.06
+  static let valleyShare: CGFloat = 0.66
+
+  /// The ten vertices: the point straight up first, then clockwise, alternating
+  /// point and valley.
+  static func vertices(center: CGPoint, circleRadius: CGFloat) -> [CGPoint] {
+    (0..<10).map { index in
+      let share = index % 2 == 0 ? tipShare : valleyShare
+      let reach = circleRadius * share / circleShare
+      let angle = -CGFloat.pi / 2 + CGFloat(index) * CGFloat.pi / 5
+      return CGPoint(
+        x: center.x + reach * cos(angle),
+        y: center.y + reach * sin(angle)
+      )
+    }
+  }
+
+  static func path(center: CGPoint, circleRadius: CGFloat) -> UIBezierPath {
+    let path = UIBezierPath()
+    for (index, vertex) in vertices(center: center, circleRadius: circleRadius).enumerated() {
+      if index == 0 { path.move(to: vertex) } else { path.addLine(to: vertex) }
+    }
+    path.close()
+    return path
+  }
+}
+
+/// How a rider's badge is built for a shape, apart from UIKit so it can be
+/// tested: the circle is the view's rounded, bordered background as before; the
+/// star is a path with the view itself clear, and the glyph inside is pulled in
+/// to the star's valleys so it does not spill over the points' gaps.
+struct CarPlayRiderMarkerStyle: Equatable {
+  let shape: CarPlayRiderMarkerShape
+  let cornerRadius: CGFloat
+  let borderWidth: CGFloat
+  let glyphInset: CGFloat
+  let starCircleRadius: CGFloat?
+
+  init(shape: CarPlayRiderMarkerShape, badgeDiameter: CGFloat) {
+    let radius = badgeDiameter / 2
+    self.shape = shape
+    switch shape {
+    case .circle:
+      cornerRadius = radius
+      borderWidth = 2
+      glyphInset = 0
+      starCircleRadius = nil
+    case .star:
+      cornerRadius = 0
+      borderWidth = 0
+      // The glyph has the room inside the valleys: the circle's radius scaled
+      // by how deep they are against how big the circle was.
+      glyphInset = radius * (1 - CarPlayStarGeometry.valleyShare / CarPlayStarGeometry.circleShare)
+      starCircleRadius = radius
+    }
+  }
+
+  var drawsStar: Bool { shape == .star }
+
+  var starPath: UIBezierPath? {
+    guard let radius = starCircleRadius else { return nil }
+    return CarPlayStarGeometry.path(
+      center: CGPoint(x: radius, y: radius),
+      circleRadius: radius
+    )
+  }
+}
+
 private final class CarPlayRiderAnnotation: NSObject, MLNAnnotation {
   @objc dynamic var coordinate: CLLocationCoordinate2D
   let title: String?
@@ -4009,6 +4107,10 @@ private final class CarPlayRiderAnnotation: NSObject, MLNAnnotation {
   /// carry the role in the journal at once (#128); exactly one arrives here
   /// flagged, so the map cannot draw two backs to one group.
   let isTec: Bool
+
+  /// A star for the leader and the resolved Tail End Charlie, a circle for
+  /// everyone else, decided by the phone (#912).
+  let shape: CarPlayRiderMarkerShape
   let needsAttention: Bool
   let riderSymbol: String
   let motorcycleStyle: String
@@ -4020,6 +4122,7 @@ private final class CarPlayRiderAnnotation: NSObject, MLNAnnotation {
     subtitle: String?,
     isLocal: Bool,
     isTec: Bool,
+    shape: CarPlayRiderMarkerShape,
     needsAttention: Bool,
     riderSymbol: String,
     motorcycleStyle: String,
@@ -4030,6 +4133,7 @@ private final class CarPlayRiderAnnotation: NSObject, MLNAnnotation {
     self.subtitle = subtitle
     self.isLocal = isLocal
     self.isTec = isTec
+    self.shape = shape
     self.needsAttention = needsAttention
     self.riderSymbol = riderSymbol
     self.motorcycleStyle = motorcycleStyle
@@ -4047,6 +4151,12 @@ private final class CarPlayRiderAnnotationView: MLNAnnotationView {
   private let label = UILabel()
   private let imageView = UIImageView()
 
+  /// The body of a leader's or Tail End Charlie's marker (#912). A circle is the
+  /// view's own rounded background; a star cannot be, so it is this layer, under
+  /// the glyph and over nothing.
+  private let starLayer = CAShapeLayer()
+  private var glyphInset: CGFloat = 0
+
   init(reuseIdentifier: String) {
     super.init(reuseIdentifier: reuseIdentifier)
     isEnabled = false
@@ -4062,6 +4172,9 @@ private final class CarPlayRiderAnnotationView: MLNAnnotationView {
     label.minimumScaleFactor = 0.45
     imageView.contentMode = .scaleAspectFit
     imageView.tintColor = CarPlayPalette.markerGlyph
+    starLayer.lineJoin = .round
+    starLayer.isHidden = true
+    layer.insertSublayer(starLayer, at: 0)
     addSubview(label)
     addSubview(imageView)
   }
@@ -4071,15 +4184,28 @@ private final class CarPlayRiderAnnotationView: MLNAnnotationView {
 
   override func layoutSubviews() {
     super.layoutSubviews()
-    label.frame = bounds.insetBy(dx: 2.5, dy: 2.5)
-    imageView.frame = bounds.insetBy(dx: 7, dy: 7)
+    label.frame = bounds.insetBy(dx: 2.5 + glyphInset, dy: 2.5 + glyphInset)
+    imageView.frame = bounds.insetBy(dx: 7 + glyphInset, dy: 7 + glyphInset)
   }
 
   func apply(_ rider: CarPlayRiderAnnotation) {
     frame = CGRect(x: 0, y: 0, width: 38, height: 38)
-    layer.cornerRadius = 19
-    backgroundColor = identityColor(named: rider.riderColor)
+    let identity = identityColor(named: rider.riderColor)
+    let style = CarPlayRiderMarkerStyle(shape: rider.shape, badgeDiameter: 38)
+    layer.cornerRadius = style.cornerRadius
+    layer.borderWidth = style.borderWidth
     layer.borderColor = CarPlayPalette.casing.cgColor
+    // The star is the layer's fill and the view stays clear; the circle is the
+    // view's own background, as it always was.
+    backgroundColor = style.drawsStar ? .clear : identity
+    starLayer.isHidden = !style.drawsStar
+    if let path = style.starPath {
+      starLayer.path = path.cgPath
+      starLayer.fillColor = identity.cgColor
+      starLayer.strokeColor = CarPlayPalette.casing.cgColor
+      starLayer.lineWidth = 2
+    }
+    glyphInset = style.glyphInset
     label.text = nil
     label.attributedText = nil
     label.textColor = CarPlayPalette.markerGlyph

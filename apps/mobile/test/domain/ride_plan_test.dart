@@ -237,6 +237,117 @@ void main() {
     });
   });
 
+  group('dragging a place\'s pin on the map (#891)', () {
+    final plan = RidePlan.toDestination(_place(_town, 'Town'))
+        .addStop(
+          const RidePlanPlace(
+            point: _cafe,
+            label: 'Cafe',
+            symbol: 'Restaurant',
+          ),
+        )
+        .withShapingPoints(const [
+          RouteShapingPoint(
+            id: 'first-leg',
+            point: GeoPoint(latitude: 52.05, longitude: -1.02),
+            legIndex: 0,
+          ),
+          RouteShapingPoint(
+            id: 'second-leg',
+            point: GeoPoint(latitude: 52.2, longitude: -1.02),
+            legIndex: 1,
+          ),
+        ]);
+    // About 55 metres north of the cafe, and about 5.5 km east of it.
+    const nudged = GeoPoint(latitude: 52.1005, longitude: -1.00);
+    const faraway = GeoPoint(latitude: 52.10, longitude: -0.92);
+
+    test('a stop nudged onto the right road keeps its name and its legs', () {
+      final moved = plan.withPlaceMoved(1, nudged, currentLocation: _here);
+
+      expect(moved.stops.single.point, nudged);
+      expect(moved.stops.single.label, 'Cafe');
+      expect(moved.stops.single.symbol, 'Restaurant');
+      expect(
+        {for (final point in moved.shapingPoints) point.id: point.legIndex},
+        {'first-leg': 0, 'second-leg': 1},
+      );
+      expect(moved.controls(currentLocation: _here)!.points, [
+        _here,
+        plan.shapingPoints.first.point,
+        nudged,
+        plan.shapingPoints.last.point,
+        _town,
+      ]);
+    });
+
+    test('a stop dragged somewhere else becomes a dropped pin', () {
+      final moved = plan.withPlaceMoved(1, faraway, currentLocation: _here);
+
+      expect(moved.stops.single.point, faraway);
+      expect(moved.stops.single.label, RidePlanPlace.droppedPinLabel);
+      expect(moved.stops.single.symbol, isNull);
+      expect(moved.shapingPoints, plan.shapingPoints);
+    });
+
+    test('dragging "your location" chooses that place as the start', () {
+      final moved = plan.withPlaceMoved(0, nudged, currentLocation: _here);
+
+      expect(moved.startsAtCurrentLocation, isFalse);
+      expect(moved.resolvedStart()!.point, nudged);
+      expect(moved.shapingPoints, plan.shapingPoints);
+    });
+
+    test('the destination moves and every adjustment stays', () {
+      final moved = plan.withPlaceMoved(2, faraway, currentLocation: _here);
+
+      expect(moved.destination!.point, faraway);
+      expect(moved.stops.single.label, 'Cafe');
+      expect(moved.shapingPoints, plan.shapingPoints);
+      expect(() => plan.withPlaceMoved(3, faraway), throwsRangeError);
+    });
+  });
+
+  test(
+    'what is left of a plan starts here and keeps the legs ahead (#893)',
+    () {
+      final plan = RidePlan.toDestination(_place(_town, 'Town'))
+          .withStart(PlaceStart(_place(_here, 'Meeting point')))
+          .addStop(_place(_cafe, 'Cafe'))
+          .addStop(_place(_pass, 'Pass'))
+          .withShapingPoints(const [
+            RouteShapingPoint(
+              id: 'ridden',
+              point: GeoPoint(latitude: 52.05, longitude: -1.02),
+              legIndex: 0,
+            ),
+            RouteShapingPoint(
+              id: 'passed-on-this-leg',
+              point: GeoPoint(latitude: 52.12, longitude: -1.02),
+              legIndex: 1,
+            ),
+            RouteShapingPoint(
+              id: 'ahead',
+              point: GeoPoint(latitude: 52.25, longitude: -1.02),
+              legIndex: 2,
+            ),
+          ]);
+
+      final remaining = plan.remainingFromCurrentLocation(
+        passedStops: 1,
+        passedShapingPointIds: {'passed-on-this-leg'},
+      );
+
+      expect(remaining.startsAtCurrentLocation, isTrue);
+      expect(remaining.stops.map((stop) => stop.label), ['Pass']);
+      expect(remaining.destination!.label, 'Town');
+      expect(
+        {for (final point in remaining.shapingPoints) point.id: point.legIndex},
+        {'ahead': 1},
+      );
+    },
+  );
+
   group('reading a confirmed route back', () {
     test(
       'a start from the rider\'s position is still the rider\'s position',
