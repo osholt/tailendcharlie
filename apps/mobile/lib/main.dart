@@ -17,6 +17,7 @@ import 'controllers/ride_controller.dart';
 import 'controllers/ride_invitation_link_controller.dart';
 import 'controllers/mini_map_display_controller.dart';
 import 'controllers/route_progress_display_controller.dart';
+import 'controllers/speed_adaptive_zoom_controller.dart';
 import 'controllers/rider_profile_controller.dart';
 import 'controllers/road_rating_controller.dart';
 import 'controllers/shared_route_controller.dart';
@@ -73,6 +74,7 @@ Future<void> main() async {
     rideInvitationLinks,
     routeProgressDisplay,
     miniMapDisplay,
+    speedAdaptiveZoom,
   ) = await (
     (
       RiderProfileController.load(),
@@ -92,6 +94,7 @@ Future<void> main() async {
     RideInvitationLinkController.load(),
     RouteProgressDisplayController.load(),
     MiniMapDisplayController.load(),
+    SpeedAdaptiveZoomController.load(),
   ).wait;
 
   final completedRides = await CompletedRidesController.load(
@@ -155,6 +158,7 @@ Future<void> main() async {
         speedLimitDisplay: speedLimitDisplay,
         routeProgressDisplay: routeProgressDisplay,
         miniMapDisplay: miniMapDisplay,
+        speedAdaptiveZoom: speedAdaptiveZoom,
         recordedRoutes: recordedRoutes,
         completedRides: completedRides,
         globalRideHeatmap: globalRideHeatmap,

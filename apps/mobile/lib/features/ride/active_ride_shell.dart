@@ -21,6 +21,7 @@ import '../../controllers/pre_start_presence_controller.dart';
 import '../../controllers/ride_controller.dart';
 import '../../controllers/ride_location_lifecycle_controller.dart';
 import '../../controllers/mini_map_display_controller.dart';
+import '../../controllers/speed_adaptive_zoom_controller.dart';
 import '../../controllers/route_progress_display_controller.dart';
 import '../../controllers/road_rating_controller.dart';
 import '../../controllers/ride_push_notification_controller.dart';
@@ -319,6 +320,7 @@ class ActiveRideShell extends StatefulWidget {
     required this.speedLimitDisplay,
     this.routeProgressDisplay,
     this.miniMapDisplay,
+    this.speedAdaptiveZoom,
     this.completedRideStore,
     this.globalRideHeatmap,
     this.pushTokenSource,
@@ -365,6 +367,7 @@ class ActiveRideShell extends StatefulWidget {
   /// Whether to draw the group mini-map; the rider's own choice, and failing
   /// that their role (#850). Null draws it whenever there is a group to show.
   final MiniMapDisplayController? miniMapDisplay;
+  final SpeedAdaptiveZoomController? speedAdaptiveZoom;
   final CompletedRideStore? completedRideStore;
   final GlobalRideHeatmapController? globalRideHeatmap;
   final PushTokenSource? pushTokenSource;
@@ -4737,6 +4740,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
       ),
       distanceUnit: widget.distanceUnits.value,
       speedLimitDisplay: widget.speedLimitDisplay,
+      speedAdaptiveZoom: widget.speedAdaptiveZoom,
       showRouteProgress: widget.routeProgressDisplay?.enabled ?? true,
       showGroupMiniMap: widget.miniMapDisplay?.visibleFor(_miniMapRole) ?? true,
       ridingDisplaySize: widget.mapStyleMode.ridingDisplaySize,
@@ -6412,6 +6416,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
       speedLimitDisplay: widget.speedLimitDisplay,
       routeProgressDisplay: widget.routeProgressDisplay,
       miniMapDisplay: widget.miniMapDisplay,
+      speedAdaptiveZoom: widget.speedAdaptiveZoom,
       miniMapRole: _miniMapRole,
       currentRideActive: true,
       lastRelaySync: _internetRelayController?.status.lastSuccessfulSync,

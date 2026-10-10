@@ -15,6 +15,7 @@ import '../../controllers/map_style_mode_controller.dart';
 import '../../controllers/ride_code_preference_controller.dart';
 import '../../controllers/ride_controller.dart';
 import '../../controllers/mini_map_display_controller.dart';
+import '../../controllers/speed_adaptive_zoom_controller.dart';
 import '../../controllers/route_progress_display_controller.dart';
 import '../../controllers/rider_profile_controller.dart';
 import '../../controllers/shared_route_controller.dart';
@@ -111,6 +112,7 @@ class HomeScreen extends StatefulWidget {
     required this.speedLimitDisplay,
     this.routeProgressDisplay,
     this.miniMapDisplay,
+    this.speedAdaptiveZoom,
     required this.recordedRoutes,
     required this.completedRides,
     this.globalRideHeatmap,
@@ -138,6 +140,7 @@ class HomeScreen extends StatefulWidget {
   final SpeedLimitDisplayController speedLimitDisplay;
   final RouteProgressDisplayController? routeProgressDisplay;
   final MiniMapDisplayController? miniMapDisplay;
+  final SpeedAdaptiveZoomController? speedAdaptiveZoom;
   final RecordedRouteStore recordedRoutes;
   final CompletedRidesController completedRides;
   final GlobalRideHeatmapController? globalRideHeatmap;
@@ -682,6 +685,7 @@ class _HomeScreenState extends State<HomeScreen> {
           HomeMapBackdrop(
             mapStyleMode: widget.mapStyleMode,
             speedLimitDisplay: widget.speedLimitDisplay,
+            speedAdaptiveZoom: widget.speedAdaptiveZoom,
             spokenGuidance: widget.spokenGuidance,
             rideDiagnostics: widget.rideDiagnostics,
             distanceUnit: widget.distanceUnits.value,
@@ -934,6 +938,7 @@ class _HomeScreenState extends State<HomeScreen> {
     speedLimitDisplay: widget.speedLimitDisplay,
     routeProgressDisplay: widget.routeProgressDisplay,
     miniMapDisplay: widget.miniMapDisplay,
+    speedAdaptiveZoom: widget.speedAdaptiveZoom,
     testControl: widget.testControl,
     spokenGuidance: widget.spokenGuidance,
     rideDiagnostics: widget.rideDiagnostics,

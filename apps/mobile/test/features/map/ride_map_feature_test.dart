@@ -45,6 +45,7 @@ import 'package:ride_relay/services/leader_ride_status.dart';
 import 'package:ride_relay/services/map_style_repository.dart';
 import 'package:ride_relay/services/motorcycle_discovery.dart';
 import 'package:ride_relay/services/navigation_camera.dart';
+import 'package:ride_relay/services/navigation_speed_zoom.dart';
 import 'package:ride_relay/services/offline_tile_cache.dart';
 import 'package:ride_relay/services/received_quick_message.dart';
 import 'package:ride_relay/services/route_importer.dart';
@@ -5947,12 +5948,15 @@ void main() {
     // 0.38 before the ETA strip joined the band (#848), 0.442 with it.
     expect(bottomChromeFraction, lessThan(0.46));
 
+    // The camera zooms with speed, and the map was mounted at 13 m/s (#936).
+    final townZoom = NavigationSpeedZoom.offsetFor(13);
     final plan = NavigationCameraPlanner.plan(
       speedMetersPerSecond: 13,
       landscape: false,
       viewportHeightPixels: size.height,
       latitudeDegrees: 53,
       bottomChromeFraction: bottomChromeFraction,
+      speedZoomOffset: townZoom,
     );
     // Positive bias means the camera is aimed up the road rather than behind the
     // rider, and the marker sits below the centre of the frame where #105 wants
@@ -6000,6 +6004,7 @@ void main() {
         viewportHeightPixels: size.height,
         latitudeDegrees: 53,
         bottomChromeFraction: previousBand / size.height,
+        speedZoomOffset: townZoom,
       );
       expect(
         plan.riderViewportFraction,

@@ -16,6 +16,7 @@ import 'package:maplibre_gl/maplibre_gl.dart' as ml;
 import 'package:url_launcher/url_launcher.dart';
 import 'package:vector_map_tiles/vector_map_tiles.dart' as vmt;
 
+import '../../controllers/speed_adaptive_zoom_controller.dart';
 import '../../controllers/speed_limit_display_controller.dart';
 import '../../controllers/shared_route_controller.dart';
 import '../../controllers/personal_ride_heatmap_controller.dart';
@@ -72,6 +73,7 @@ import '../../services/motorcycle_discovery.dart';
 import '../../services/discovery_marker_selection.dart';
 import '../../services/navigation_export.dart';
 import '../../services/navigation_camera.dart';
+import '../../services/navigation_speed_zoom.dart';
 import '../../services/navigation_heading.dart';
 import '../../services/offline_tile_cache.dart';
 import '../../services/received_quick_message.dart';
@@ -523,6 +525,7 @@ class RideMapFeature extends StatefulWidget {
     this.distanceUnit = DistanceUnit.kilometres,
     this.ridingDisplaySize = RidingDisplaySize.small,
     this.speedLimitDisplay,
+    this.speedAdaptiveZoom,
     this.showRouteProgress = true,
     this.showGroupMiniMap = true,
     this.basemapConfiguration = const BasemapConfiguration(),
@@ -596,6 +599,7 @@ class RideMapFeature extends StatefulWidget {
     DistanceUnit distanceUnit = DistanceUnit.kilometres,
     RidingDisplaySize ridingDisplaySize = RidingDisplaySize.small,
     SpeedLimitDisplayController? speedLimitDisplay,
+    SpeedAdaptiveZoomController? speedAdaptiveZoom,
     bool showRouteProgress = true,
     bool showGroupMiniMap = true,
     bool darkMapStyle = false,
@@ -667,6 +671,7 @@ class RideMapFeature extends StatefulWidget {
     distanceUnit: distanceUnit,
     ridingDisplaySize: ridingDisplaySize,
     speedLimitDisplay: speedLimitDisplay,
+    speedAdaptiveZoom: speedAdaptiveZoom,
     showRouteProgress: showRouteProgress,
     showGroupMiniMap: showGroupMiniMap,
     basemapConfiguration: BasemapConfiguration.fromEnvironment().forBrightness(
@@ -798,6 +803,9 @@ class RideMapFeature extends StatefulWidget {
   final DistanceUnit distanceUnit;
   final RidingDisplaySize ridingDisplaySize;
   final SpeedLimitDisplayController? speedLimitDisplay;
+
+  /// Whether the follow camera zooms with speed (#936). Null is on.
+  final SpeedAdaptiveZoomController? speedAdaptiveZoom;
   final bool showRouteProgress;
 
   /// Whether the group overview may be drawn at all (#850).
@@ -985,6 +993,7 @@ class _RideMapFeatureState extends State<RideMapFeature> {
         distanceUnit: widget.distanceUnit,
         ridingDisplaySize: widget.ridingDisplaySize,
         speedLimitDisplay: widget.speedLimitDisplay,
+        speedAdaptiveZoom: widget.speedAdaptiveZoom,
         showRouteProgress: widget.showRouteProgress,
         showGroupMiniMap: widget.showGroupMiniMap,
         localMotorcycleStyle: widget.localMotorcycleStyle,
@@ -1097,6 +1106,7 @@ class RideMapScreen extends StatefulWidget {
     this.distanceUnit = DistanceUnit.kilometres,
     this.ridingDisplaySize = RidingDisplaySize.small,
     this.speedLimitDisplay,
+    this.speedAdaptiveZoom,
     this.showRouteProgress = true,
     this.showGroupMiniMap = true,
     this.disposeOfflineTileCache = false,
@@ -1268,6 +1278,9 @@ class RideMapScreen extends StatefulWidget {
   final DistanceUnit distanceUnit;
   final RidingDisplaySize ridingDisplaySize;
   final SpeedLimitDisplayController? speedLimitDisplay;
+
+  /// Whether the follow camera zooms with speed (#936). Null is on.
+  final SpeedAdaptiveZoomController? speedAdaptiveZoom;
   final bool showRouteProgress;
 
   /// Whether the group overview may be drawn at all (#850).
@@ -1545,6 +1558,11 @@ class _RideMapScreenState extends State<RideMapScreen>
   final GlobalKey _bottomChromeKey = GlobalKey();
   final GlobalKey _landscapeGuidanceKey = GlobalKey();
   double? _smoothedNavigationSpeedMetersPerSecond;
+
+  /// Decides when the follow camera's zoom may change with speed (#936). Fed the
+  /// raw fix speed, because it filters for itself and more slowly than the
+  /// smoothing above.
+  final _speedZoomGovernor = NavigationZoomGovernor();
   // The speed readout is its own notifier so a new fix repaints the badge
   // without rebuilding the map: MapLibre keeps its platform view mounted and
   // only calls setState when navigation mode changes.
@@ -1831,6 +1849,14 @@ class _RideMapScreenState extends State<RideMapScreen>
         widget.mapLibreOfflineManager ?? _offlineManagerFor(_basemap);
     widget.currentPosition?.addListener(_onPositionChanged);
     widget.navigationPosition?.addListener(_onPositionChanged);
+    // A fix already there when the map mounts is never announced to the
+    // listener, so the zoom would start without its speed (#936).
+    if (_navigationFix case final fix? when fix.speedMetersPerSecond != null) {
+      _speedZoomGovernor.update(
+        speedMetersPerSecond: fix.speedMetersPerSecond!,
+        at: fix.recordedAt,
+      );
+    }
     _recordLocalTrail(_effectivePosition, _navigationFix?.recordedAt);
     if (_effectivePosition case final initialPoint?) {
       _localTravelDirection.update(
@@ -4717,6 +4743,9 @@ class _RideMapScreenState extends State<RideMapScreen>
       leftHandTraffic: _routeUsesLeftHandTraffic,
       occlusions: _navigationOcclusions,
       topInsetPixels: MediaQuery.paddingOf(context).top,
+      speedZoomOffset: (widget.speedAdaptiveZoom?.enabled ?? true)
+          ? _speedZoomGovernor.offset
+          : null,
     );
     // MapLibre is tilted, so the bias is the perspective look-ahead the plan
     // solved. FlutterMap is flat, so it is a straight ground offset at that
@@ -4931,6 +4960,7 @@ class _RideMapScreenState extends State<RideMapScreen>
         _smoothedNavigationSpeedMetersPerSecond = previousSpeed == null
             ? boundedSpeed
             : previousSpeed * 0.72 + boundedSpeed * 0.28;
+        _speedZoomGovernor.update(speedMetersPerSecond: boundedSpeed, at: at);
         _riderSpeedObservedAt = at;
         // Kept past the readout being retired: it is what tells a stop apart
         // from a lost signal when the fixes go quiet (#445).

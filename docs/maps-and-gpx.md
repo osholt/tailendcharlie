@@ -215,6 +215,54 @@ at 30 m/s.
   beats keeping the bias. Landscape chrome is confined to side rails, so
   landscape keeps its full bias.
 
+#### The zoom follows speed, closer around town (#936)
+
+> I think the map zoom should change based on vehicle speed. Around town being
+> more zoomed in would be useful.
+
+The zoom used to move by 0.8 of a level across 0-30 m/s from a speed that fell to
+zero at every stop, so a town ride sat at nearly the scale of an A road. With
+**Settings -> Zoom the map with speed** on, which is the default, the zoom is an
+offset from the resting zoom (14.65 portrait, 14.15 landscape) chosen in
+`lib/services/navigation_speed_zoom.dart`:
+
+| Speed | Offset | Portrait zoom |
+| --- | --- | --- |
+| 15 mph (6.7 m/s) and under | +0.9 | 15.55 |
+| 30 mph | about +0.5 | about 15.2 |
+| 45 mph | about -0.2 | about 14.4 |
+| 60 mph | about -0.75 | about 13.9 |
+| 65 mph (29 m/s) and over | -0.8 | 13.85 |
+
+Between the two ends it is a smoothstep, so nothing snaps at a threshold. The
+camera does not act on that curve directly. `NavigationZoomGovernor`, fed one raw
+fix speed at a time:
+
+1. filters the speed, believing a rider who is speeding up after 4 s and one who
+   is slowing down after 10 s;
+2. holds everything while the rider is stopped (under 1 m/s), including its
+   clocks, so a red light changes nothing;
+3. ignores a want smaller than 0.2 of a level;
+4. makes a want to zoom **in** last 8 s of moving time, and requires the current
+   fix to share it, so a slow-down for a junction is over before the zoom has
+   moved; a want to zoom **out** is not delayed;
+5. moves at no more than 0.15 of a level a second, and carries on to the target
+   once it has started.
+
+Stop-start traffic therefore holds one scale, and leaving a fast road for a town
+comes in after about ten seconds. Tilt and the forward bias still follow the
+original speed curve. Switching the setting off puts back the old 0.8-level
+curve exactly.
+
+A manual zoom is respected by the existing hand-over rather than by anything in
+this feature: a drag, a pinch, a double tap or a scroll takes the camera from
+follow mode, no follow command is issued while it is the rider's, and **Follow
+me** (or the bike stopping and moving off) gives it back, at the zoom the speed
+now calls for. `test/features/map/speed_adaptive_zoom_map_test.dart` drives a
+drag and a pinch through the real map to show it. CarPlay and Android Auto
+receive the commanded viewport, so their zoom follows the phone's while it is
+following; that has not been seen on a head unit.
+
 ### Rotation
 
 `NavigationHeadingSmoother` drives the map bearing. GPS course over ground is
