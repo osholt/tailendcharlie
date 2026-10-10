@@ -1,0 +1,15 @@
+[Unit]
+Description=Rebuild, test and promote Tail End Charlie routing and geocoding data
+Documentation=file://@REPO@/docs/routing-service.md
+After=docker.service network-online.target
+Wants=docker.service network-online.target
+
+[Service]
+Type=oneshot
+User=@USER@
+ExecStart=@REPO@/deploy/routing/routing-data-refresh.sh all
+# Downloads of about 21 GB, a Valhalla build and a Photon import, one after the
+# other, on two cores. Measured times belong in docs/routing-service.md.
+TimeoutStartSec=24h
+Nice=10
+IOSchedulingClass=idle

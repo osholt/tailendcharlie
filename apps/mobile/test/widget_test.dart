@@ -745,6 +745,39 @@ void main() {
     expect(find.text('Navigation map'), findsOneWidget);
   });
 
+  testWidgets('a ride is renamed from the Ride tab (#894)', (tester) async {
+    final controller = await _controller();
+    addTearDown(controller.dispose);
+    await controller.createRide('Oliver', rideName: 'To Town');
+    await tester.pumpWidget(_app(controller));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byIcon(Icons.two_wheeler_outlined));
+    await tester.pumpAndSettle();
+    final rename = find.byKey(const Key('ride-menu-rename'));
+    await tester.ensureVisible(rename);
+    await tester.pumpAndSettle();
+    expect(
+      find.descendant(of: rename, matching: find.text('To Town')),
+      findsOneWidget,
+    );
+
+    await tester.tap(rename);
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const Key('rename-ride-field')),
+      'Coast loop',
+    );
+    await tester.tap(find.byKey(const Key('rename-ride-save')));
+    await tester.pumpAndSettle();
+
+    expect(controller.session?.rideName, 'Coast loop');
+    expect(
+      find.descendant(of: rename, matching: find.text('Coast loop')),
+      findsOneWidget,
+    );
+  });
+
   testWidgets('alerts are a Ride action rather than a primary destination', (
     tester,
   ) async {

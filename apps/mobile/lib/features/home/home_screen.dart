@@ -48,6 +48,7 @@ import '../../services/gpx_import_source.dart';
 import '../../services/ride_plan_router.dart';
 import '../../services/route_importer.dart';
 import '../../services/stored_route_library.dart';
+import '../../services/route_preferences_memory.dart';
 import '../map/ride_map_feature.dart'
     show HostMapChrome, HostMapMenuAction, rideMapToolbarHeight;
 import '../map/route_review_screen.dart';
@@ -199,9 +200,9 @@ class HomeScreen extends StatefulWidget {
     required http.Client client,
     required RoutingConfiguration configuration,
   }) => DestinationRoutePlanner(
-    searchService: NominatimDestinationSearchService(
+    searchService: buildDestinationSearchService(
       client: client,
-      baseUrl: configuration.geocodingBaseUrl,
+      configuration: configuration,
     ),
     routingService: buildPlanningRoutingService(
       client: client,
@@ -1005,6 +1006,9 @@ class _HomeScreenState extends State<HomeScreen> {
   /// the confirmed route as it is, without a second review (#624). Choosing a
   /// group on the plan creates the ride with the route already in it.
   Future<void> _navigateTo(DestinationChoice choice) async {
+    // A new plan starts with the options the rider last confirmed (#894).
+    final preferences = await const RoutePreferencesMemory().load();
+    if (!mounted) return;
     final outcome = await RouteReviewScreen.showPlan(
       context,
       planning: RidePlanEditing(
@@ -1013,6 +1017,7 @@ class _HomeScreenState extends State<HomeScreen> {
             label: choice.label,
             point: choice.point,
           ),
+          preferences: preferences,
         ),
         route: (plan, location) => _planRouter.route(
           plan,

@@ -12,6 +12,7 @@ import 'road_jurisdiction.dart';
 import 'route_origin_bearing.dart';
 import 'route_twistiness.dart';
 import 'route_verification.dart';
+import 'routing_service_endpoints.dart';
 
 class RoutingConfiguration {
   const RoutingConfiguration({
@@ -19,46 +20,35 @@ class RoutingConfiguration {
     required this.geocodingBaseUrl,
     required this.motorcycleRoutingUrl,
     required this.trackMatchingUrl,
+    this.geocoderApi = GeocoderApi.nominatim,
   });
 
-  factory RoutingConfiguration.fromEnvironment() => RoutingConfiguration(
-    routingBaseUrl: Uri.parse(
-      const String.fromEnvironment(
-        'RIDE_RELAY_ROUTING_URL',
-        defaultValue: 'https://router.project-osrm.org',
-      ),
-    ),
-    geocodingBaseUrl: Uri.parse(
-      const String.fromEnvironment(
-        'RIDE_RELAY_GEOCODING_URL',
-        defaultValue: 'https://nominatim.openstreetmap.org',
-      ),
-    ),
+  /// Every endpoint from one resolved set, so map matching, route checks and
+  /// the motorcycle router are always the same Valhalla deployment.
+  factory RoutingConfiguration.fromEndpoints(
+    RoutingServiceEndpoints endpoints,
+  ) => RoutingConfiguration(
+    routingBaseUrl: endpoints.osrmBaseUrl,
+    geocodingBaseUrl: endpoints.geocoderBaseUrl,
+    geocoderApi: endpoints.geocoderApi,
     // The same Valhalla motorcycle service the web planner uses for the
     // exclusions OSRM's driving profile cannot express, so the two surfaces ask
     // the same engine the same question.
-    motorcycleRoutingUrl: Uri.parse(
-      const String.fromEnvironment(
-        'RIDE_RELAY_MOTORCYCLE_ROUTING_URL',
-        defaultValue: 'https://valhalla1.openstreetmap.de/route',
-      ),
-    ),
+    motorcycleRoutingUrl: endpoints.valhallaRouteUrl,
     // Map matching for imported tracks, on the same Valhalla deployment. It is
-    // *not* the OSRM service above: that one's `/match` accepts ten trace
+    // *not* the OSRM service: that one's `/match` accepts ten trace
     // coordinates, so every import ever attempted returned 400 (#575).
-    // Derived from the motorcycle route URL rather than configured separately,
-    // so a self-hosted deployment cannot end up matching on one host and
-    // routing on another.
-    trackMatchingUrl: Uri.parse(
-      const String.fromEnvironment(
-        'RIDE_RELAY_TRACK_MATCHING_URL',
-        defaultValue: 'https://valhalla1.openstreetmap.de/trace_route',
-      ),
-    ),
+    trackMatchingUrl: endpoints.valhallaTraceRouteUrl,
   );
+
+  /// The endpoints in force now: a build-time override, else what the relay
+  /// advertised, else the public services (#917). See [RoutingServices].
+  factory RoutingConfiguration.fromEnvironment() =>
+      RoutingConfiguration.fromEndpoints(RoutingServices.current);
 
   final Uri routingBaseUrl;
   final Uri geocodingBaseUrl;
+  final GeocoderApi geocoderApi;
   final Uri motorcycleRoutingUrl;
 
   /// Valhalla `trace_route`, used to turn an imported GPX track into road
@@ -1760,6 +1750,131 @@ class NominatimDestinationSearchService implements DestinationSearchService {
   }
 }
 
+/// Destination search against Photon, the geocoder the self-hosted routing
+/// service runs (#917). Same contract as [NominatimDestinationSearchService]:
+/// one request per submitted query, five results, coordinates parsed locally,
+/// and an in-memory cache.
+class PhotonDestinationSearchService implements DestinationSearchService {
+  PhotonDestinationSearchService({
+    required this.client,
+    required this.baseUrl,
+    this.timeout = const Duration(seconds: 10),
+  });
+
+  final http.Client client;
+  final Uri baseUrl;
+  final Duration timeout;
+  final Map<String, List<DestinationMatch>> _cache = {};
+
+  @override
+  Future<List<DestinationMatch>> search(String query) async {
+    final trimmed = query.trim();
+    if (trimmed.isEmpty) {
+      throw const FormatException('Enter a destination.');
+    }
+    final coordinates = _parseCoordinates(trimmed);
+    if (coordinates != null) {
+      return [DestinationMatch(label: trimmed, point: coordinates)];
+    }
+    final cacheKey = trimmed.toLowerCase();
+    final cached = _cache[cacheKey];
+    if (cached != null) return cached;
+    _requireHttps(baseUrl, 'Destination search');
+    final uri = baseUrl.replace(
+      path: '${_basePath(baseUrl)}/api',
+      queryParameters: {'q': trimmed, 'limit': '5'},
+    );
+    final response = await client
+        .get(uri, headers: _requestHeaders)
+        .timeout(timeout);
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw FormatException(
+        'Destination search failed (${response.statusCode}).',
+      );
+    }
+    final decoded = jsonDecode(utf8.decode(response.bodyBytes));
+    final features = decoded is Map ? decoded['features'] : null;
+    if (features is! List) {
+      throw const FormatException('Destination search response is invalid.');
+    }
+    final matches = <DestinationMatch>[];
+    for (final feature in features) {
+      if (feature is! Map) continue;
+      final geometry = feature['geometry'];
+      final position = geometry is Map ? geometry['coordinates'] : null;
+      final properties = feature['properties'];
+      if (position is! List ||
+          position.length < 2 ||
+          position[0] is! num ||
+          position[1] is! num ||
+          properties is! Map) {
+        continue;
+      }
+      // GeoJSON order: longitude first.
+      final longitude = (position[0] as num).toDouble();
+      final latitude = (position[1] as num).toDouble();
+      final label = photonLabel(properties);
+      if (label.isEmpty ||
+          latitude.abs() > 90 ||
+          longitude.abs() > 180 ||
+          !latitude.isFinite ||
+          !longitude.isFinite) {
+        continue;
+      }
+      matches.add(
+        DestinationMatch(
+          label: label,
+          point: GeoPoint(latitude: latitude, longitude: longitude),
+        ),
+      );
+    }
+    if (matches.isEmpty) {
+      throw FormatException('No destination matched "$trimmed".');
+    }
+    final result = List<DestinationMatch>.unmodifiable(matches);
+    _cache[cacheKey] = result;
+    return result;
+  }
+
+  /// A one-line label in the shape Nominatim's `display_name` has: the place,
+  /// its street address, then the wider areas, without repeating a part.
+  static String photonLabel(Map<dynamic, dynamic> properties) {
+    String? text(String key) {
+      final value = properties[key];
+      return value is String && value.trim().isNotEmpty ? value.trim() : null;
+    }
+
+    final street = text('street');
+    final number = text('housenumber');
+    final parts = <String>[
+      ?text('name'),
+      if (street != null) number == null ? street : '$number $street',
+      ?text('district'),
+      ?(text('city') ?? text('locality')),
+      ?text('county'),
+      ?text('postcode'),
+      ?text('country'),
+    ];
+    final seen = <String>{};
+    return parts.where((part) => seen.add(part.toLowerCase())).join(', ');
+  }
+}
+
+/// The destination search the resolved geocoder speaks.
+DestinationSearchService buildDestinationSearchService({
+  required http.Client client,
+  required RoutingConfiguration configuration,
+}) => switch (configuration.geocoderApi) {
+  GeocoderApi.photon => PhotonDestinationSearchService(
+    client: client,
+    baseUrl: configuration.geocodingBaseUrl,
+  ),
+  GeocoderApi.nominatim => NominatimDestinationSearchService(
+    client: client,
+    baseUrl: configuration.geocodingBaseUrl,
+  ),
+};
+
 class DestinationRoutePlanner {
   DestinationRoutePlanner({
     required this.searchService,
@@ -2142,6 +2257,7 @@ bool _providerSaysNoRoute(Object? code, String? detail) {
 const _requestHeaders = {
   'Accept': 'application/json',
   'User-Agent': 'TailEndCharlie/1.0 (https://github.com/osholt/tailendcharlie)',
+  'X-Client-Id': routingClientId,
 };
 
 String _basePath(Uri base) {
