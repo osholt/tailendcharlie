@@ -2,6 +2,7 @@ import '../../services/ride_timing_analysis.dart';
 import 'dart:async';
 import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:maplibre_gl/maplibre_gl.dart' as ml;
 
@@ -29,9 +30,11 @@ import '../map/route_trail_style.dart';
 import '../map/resolved_route_map_preview.dart'
     show embeddedMapGestureRecognizers;
 import '../map/stored_route_picker.dart';
+import '../../services/ride_replay.dart';
 import 'ride_alerts_card.dart';
 import 'ride_broadcasts_card.dart';
 import 'ride_recap_screen.dart';
+import 'ride_replay_screen.dart';
 
 class PreviousRidesScreen extends StatelessWidget {
   const PreviousRidesScreen({
@@ -316,6 +319,19 @@ class _PreviousRideDetailScreenState extends State<PreviousRideDetailScreen> {
             icon: const Icon(Icons.route_outlined),
             label: const Text('Ride again'),
           ),
+          // Only a ride with a timed track of its own can be replayed (#305).
+          // One recorded before times were kept, or too short, has none, and
+          // the button is not offered rather than offered and empty.
+          if (RideReplayTimeline.fromRoute(ride.traveledRoute)
+              case final timeline?) ...[
+            const SizedBox(height: 8),
+            OutlinedButton.icon(
+              key: const Key('archived-ride-replay'),
+              onPressed: () => _openReplay(timeline),
+              icon: const Icon(Icons.play_circle_outline),
+              label: const Text('Replay this ride'),
+            ),
+          ],
           if (ride.hasRecordingGaps) ...[
             const SizedBox(height: 10),
             Card(
@@ -864,6 +880,22 @@ class _PreviousRideDetailScreenState extends State<PreviousRideDetailScreen> {
     }
   }
 
+  Future<void> _openReplay(RideReplayTimeline timeline) =>
+      Navigator.of(context).push<void>(
+        MaterialPageRoute(
+          builder: (_) => RideReplayScreen(
+            ride: _ride,
+            timeline: timeline,
+            mapBuilder: (context, position) => ArchivedRideMap(
+              plannedRoute: _ride.comparisonPlan,
+              traveledRoute: _ride.traveledRoute,
+              alerts: _ride.alerts,
+              replayPosition: position,
+            ),
+          ),
+        ),
+      );
+
   Future<void> _openFullScreenMap() => Navigator.of(context).push<void>(
     MaterialPageRoute(
       builder: (_) => Scaffold(
@@ -921,10 +953,15 @@ class ArchivedRideMap extends StatefulWidget {
     this.alerts = const [],
     this.basemapConfiguration,
     this.mapStyleString,
+    this.replayPosition,
   });
 
   final ImportedRoute? plannedRoute;
   final ImportedRoute? traveledRoute;
+
+  /// Where the replay marker is (#305): a dot moved along the track. Null on
+  /// every screen but the replay, which leaves the map exactly as it was.
+  final ValueListenable<GeoPoint?>? replayPosition;
 
   /// The ride's alerts, drawn as labelled markers where each was raised (#849).
   final List<RideAlertRecord> alerts;
@@ -942,10 +979,72 @@ class _ArchivedRideMapState extends State<ArchivedRideMap> {
   static const _alertSource = 'archived-alert-source';
   static const _directionSource = 'archived-direction-source';
   static const _directionImage = 'archived-direction-arrow';
+  static const _replaySource = 'archived-replay-source';
   ml.MapLibreMapController? _controller;
   bool _styleReady = false;
   bool _initialFitComplete = false;
   late final Future<String> _mapStyle = _resolveMapStyle();
+  Timer? _replayThrottle;
+  bool _replayDirty = false;
+
+  @override
+  void initState() {
+    super.initState();
+    widget.replayPosition?.addListener(_onReplayMoved);
+  }
+
+  @override
+  void dispose() {
+    widget.replayPosition?.removeListener(_onReplayMoved);
+    _replayThrottle?.cancel();
+    super.dispose();
+  }
+
+  /// The replay marker moves every frame; the native map is told about it at
+  /// most about fifteen times a second, with a trailing update so it always
+  /// ends where the replay does.
+  void _onReplayMoved() {
+    if (!_styleReady) return;
+    if (_replayThrottle?.isActive ?? false) {
+      _replayDirty = true;
+      return;
+    }
+    unawaited(_pushReplayPosition());
+    _replayThrottle = Timer(const Duration(milliseconds: 66), () {
+      if (!_replayDirty) return;
+      _replayDirty = false;
+      unawaited(_pushReplayPosition());
+    });
+  }
+
+  Map<String, Object?> _replayGeoJson() {
+    final point = widget.replayPosition?.value;
+    return {
+      'type': 'FeatureCollection',
+      'features': [
+        if (point != null)
+          {
+            'type': 'Feature',
+            'properties': const <String, Object?>{},
+            'geometry': {
+              'type': 'Point',
+              'coordinates': [point.longitude, point.latitude],
+            },
+          },
+      ],
+    };
+  }
+
+  Future<void> _pushReplayPosition() async {
+    final controller = _controller;
+    if (controller == null || !mounted) return;
+    try {
+      await controller.setGeoJsonSource(_replaySource, _replayGeoJson());
+    } on Object catch (error) {
+      // A frame dropped from a moving marker costs nothing; the next one lands.
+      if (kDebugMode) debugPrint('Replay marker update failed: $error');
+    }
+  }
 
   ArchivedRideDirectionOverlay? get _directionOverlay =>
       archivedRideDirectionOverlay(
@@ -1204,6 +1303,22 @@ class _ArchivedRideMapState extends State<ArchivedRideMap> {
             textOffset: [0, 1.1],
             textAllowOverlap: true,
             textIgnorePlacement: true,
+          ),
+          enableInteraction: false,
+        );
+      }
+      if (widget.replayPosition != null) {
+        // Last, so the marker sits above the track, the arrows and the alerts.
+        await controller.addGeoJsonSource(_replaySource, _replayGeoJson());
+        await controller.addCircleLayer(
+          _replaySource,
+          'archived-replay-dot',
+          const ml.CircleLayerProperties(
+            circleRadius: 9,
+            circleColor: '#FFC857',
+            circleStrokeColor: '#10151C',
+            circleStrokeWidth: 3,
+            circlePitchAlignment: 'map',
           ),
           enableInteraction: false,
         );
