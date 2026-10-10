@@ -10,6 +10,7 @@ import 'package:ride_relay/services/basemap_configuration.dart';
 import 'package:ride_relay/services/biker_place_catalogue.dart';
 import 'package:ride_relay/services/discovery_layer_preferences.dart';
 import 'package:ride_relay/services/motorcycle_discovery.dart';
+import 'package:ride_relay/services/navigation_export.dart';
 import 'package:ride_relay/services/ride_plan_router.dart';
 import 'package:ride_relay/services/road_routing.dart';
 import 'package:ride_relay/services/route_preferences_memory.dart';
@@ -374,6 +375,123 @@ void main() {
     );
   });
 
+  testWidgets('the plan opens in another app without being confirmed', (
+    tester,
+  ) async {
+    final shares = _RecordingShare();
+    final harness = _Harness(location: _here);
+    await harness.open(
+      tester,
+      RidePlan.toDestination(_townPlace),
+      exportCoordinator: NavigationExportCoordinator(
+        launcher: const _NoLauncher(),
+        shareGateway: shares,
+      ),
+    );
+
+    // Beside the confirm button (#895).
+    await tester.tap(find.byKey(const Key('ride-plan-open-with')));
+    await tester.pumpAndSettle();
+    // The first app offered; with no app to open, its GPX is shared instead.
+    await tester.tap(find.text(NavigationTarget.googleMaps.label));
+    await tester.pumpAndSettle();
+
+    expect(shares.targets, [NavigationTarget.googleMaps]);
+    expect(shares.routes.single.waypoints.map((point) => point.name), [
+      'Start',
+      'Town',
+    ]);
+    // The plan is still open, and still the rider's to confirm or not.
+    expect(find.byKey(const Key('ride-plan-itinerary')), findsOneWidget);
+    expect(harness.outcome, isNull);
+    await harness.confirm(tester);
+    expect(harness.outcome?.route.waypoints.last.name, 'Town');
+  });
+
+  testWidgets('a plan with no route yet has nothing to open elsewhere', (
+    tester,
+  ) async {
+    final harness = _Harness(location: null);
+    await harness.open(tester, RidePlan.toDestination(_townPlace));
+
+    expect(
+      tester
+          .widget<TextButton>(find.byKey(const Key('ride-plan-open-with')))
+          .onPressed,
+      isNull,
+    );
+  });
+
+  testWidgets('an imported track keeps its exact line until it is edited', (
+    tester,
+  ) async {
+    final harness = _Harness(location: _here);
+    final imported = _importedTrack();
+
+    await harness.open(
+      tester,
+      RidePlan.fromRoute(imported),
+      route: imported,
+      keepRouteUntilEdited: true,
+    );
+
+    // Nothing is re-planned on opening, and the surface says what an edit
+    // will do before one is made (#892).
+    expect(harness.routing.calls, isEmpty);
+    await _scrollTo(
+      tester,
+      find.byKey(const Key('ride-plan-original-line-note')),
+    );
+    expect(
+      find.byKey(const Key('ride-plan-original-line-note')),
+      findsOneWidget,
+    );
+    expect(_confirmButton(tester).onPressed, isNotNull);
+
+    await harness.confirm(tester);
+
+    final confirmed = harness.outcome!.route;
+    expect(confirmed.id, imported.id);
+    expect(
+      confirmed.paths.single.points,
+      imported.paths.single.points,
+      reason: 'the line as it came, not a re-plan of it',
+    );
+  });
+
+  testWidgets('the first edit to an imported track re-plans it on roads', (
+    tester,
+  ) async {
+    final harness = _Harness(location: _here);
+    final imported = _importedTrack();
+    await harness.open(
+      tester,
+      RidePlan.fromRoute(imported),
+      route: imported,
+      keepRouteUntilEdited: true,
+    );
+
+    await harness.choosePlace(
+      tester,
+      rowButton: const Key('ride-plan-add-stop'),
+      query: 'cafe',
+      result: 'Cafe, Shire',
+    );
+
+    expect(harness.routing.calls.single, [
+      imported.paths.single.points.first,
+      _cafe,
+      imported.paths.single.points.last,
+    ]);
+    expect(find.byKey(const Key('ride-plan-original-line-note')), findsNothing);
+    await harness.confirm(tester);
+    expect(harness.outcome!.route.id, imported.id);
+    expect(
+      harness.outcome!.route.paths.single.points,
+      isNot(imported.paths.single.points),
+    );
+  });
+
   testWidgets('a confirmed route reopens with its stops and can change', (
     tester,
   ) async {
@@ -447,6 +565,27 @@ Future<void> _dragStop(
   await tester.pumpAndSettle();
 }
 
+/// A recorded track with no route points: a line, not a list of places.
+ImportedRoute _importedTrack() => ImportedRoute(
+  id: 'imported-track',
+  name: 'Scouted loop',
+  importedAt: DateTime.utc(2026, 10, 4),
+  sourceFileName: 'scouted.gpx',
+  paths: const [
+    RoutePath(
+      kind: RoutePathKind.track,
+      points: [
+        GeoPoint(latitude: 52.00, longitude: -1.00),
+        GeoPoint(latitude: 52.04, longitude: -1.03),
+        GeoPoint(latitude: 52.09, longitude: -0.98),
+        GeoPoint(latitude: 52.15, longitude: -1.04),
+        GeoPoint(latitude: 52.30, longitude: -1.00),
+      ],
+    ),
+  ],
+  waypoints: const [],
+);
+
 Future<void> _tapVisible(WidgetTester tester, Finder finder) async {
   await _scrollTo(tester, finder);
   await tester.tap(finder);
@@ -516,6 +655,9 @@ class _Harness {
     ImportedRoute? route,
     String? confirmLabel,
     BasemapConfiguration basemapConfiguration = const BasemapConfiguration(),
+    NavigationExportCoordinator exportCoordinator =
+        const NavigationExportCoordinator(),
+    bool keepRouteUntilEdited = false,
   }) async {
     final router = RidePlanRouter(routingService: routing);
     await tester.pumpWidget(
@@ -541,6 +683,8 @@ class _Harness {
                       return position.value;
                     },
                     offerCoordinationChoice: offerCoordinationChoice,
+                    exportCoordinator: exportCoordinator,
+                    keepRouteUntilEdited: keepRouteUntilEdited,
                     confirmLabel: (plan) =>
                         confirmLabel ??
                         (plan.isGroup ? 'Create group ride' : 'Start'),
@@ -640,4 +784,26 @@ class _FakeSearch implements DestinationSearchService {
     queries.add(query);
     return results[query.toLowerCase()] ?? const [];
   }
+}
+
+class _RecordingShare implements GpxShareGateway {
+  final routes = <ImportedRoute>[];
+  final targets = <NavigationTarget>[];
+
+  @override
+  Future<void> share({
+    required ImportedRoute route,
+    required NavigationTarget target,
+    Rect? sharePositionOrigin,
+  }) async {
+    routes.add(route);
+    targets.add(target);
+  }
+}
+
+class _NoLauncher implements ExternalUriLauncher {
+  const _NoLauncher();
+
+  @override
+  Future<bool> open(Uri uri) async => false;
 }

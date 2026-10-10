@@ -276,9 +276,11 @@ class _HomeScreenState extends State<HomeScreen> {
   /// they left (#847). Free roam navigates it as it is: it was confirmed
   /// already, and the rider is probably moving.
   void _takeRouteFromGroup() {
-    final route = widget.sharedRoutes.takeFreeRoamRoute();
-    if (route == null) return;
-    _freeRoamRoute = PendingInAppRoute(route: route, reviewed: true);
+    // With the group ride it carries on from, so the two are one ride in My
+    // rides (#896).
+    final handover = widget.sharedRoutes.takeFreeRoamHandover();
+    if (handover == null) return;
+    _freeRoamRoute = handover;
     _freeRoamRouteToken = Object();
   }
 
@@ -296,6 +298,8 @@ class _HomeScreenState extends State<HomeScreen> {
       riderProfile: widget.riderProfile,
       route: route,
       startNow: route != null,
+      // The navigation under way and the group ride are one ride (#896).
+      continuesRideId: route == null ? null : _personalNavigationRideId,
     );
     if (route == null ||
         !controller.hasActiveRide ||
@@ -433,6 +437,9 @@ class _HomeScreenState extends State<HomeScreen> {
   /// Bumped to reopen the free-roam route on the plan surface (#847). The map
   /// owns the route and the surface, so Home only asks.
   Object? _editRouteRequestToken;
+
+  /// The free-roam navigation being recorded, if any (#896).
+  String? _personalNavigationRideId;
 
   /// The route the free-roam map is following, if any.
   ///
@@ -714,6 +721,8 @@ class _HomeScreenState extends State<HomeScreen> {
             onNavigationArchived: (ride) =>
                 unawaited(_showSavedNavigation(ride)),
             onRouteChanged: (route) => setState(() => _routeOnMap = route),
+            onPersonalNavigationChanged: (rideId) =>
+                _personalNavigationRideId = rideId,
             // The search field and these two actions used to be painted on
             // top of the map's own AppBar, in the same corner of the same
             // safe area, from this widget tree rather than the map's. Both

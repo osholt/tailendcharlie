@@ -21,6 +21,7 @@ class PendingInAppRoute {
     this.handoffTarget,
     this.reviewed = false,
     this.verification,
+    this.continuesRideId,
   });
 
   final ImportedRoute route;
@@ -38,6 +39,10 @@ class PendingInAppRoute {
   /// What checking the planned route against the rider's preferences found, to
   /// be shown on the route review (#840).
   final RouteVerification? verification;
+
+  /// The group ride this route is being ridden on from, when a rider rode on
+  /// alone: free roam files its navigation with that ride as one (#896).
+  final String? continuesRideId;
 }
 
 /// Tracks a GPX file the platform has handed to the app via "Open in..." /
@@ -73,18 +78,33 @@ class SharedRouteController extends ChangeNotifier with WidgetsBindingObserver {
   /// this one is for no ride at all.
   ImportedRoute? get pendingFreeRoamRoute => _pendingFreeRoamRoute;
   ImportedRoute? _pendingFreeRoamRoute;
+  String? _pendingFreeRoamContinuesRideId;
 
-  /// Hands [route] to free roam, which navigates it as it is.
-  void stageFreeRoamRoute(ImportedRoute route) {
+  /// Hands [route] to free roam, which navigates it as it is. [continuesRideId]
+  /// is the ride it is being ridden on from (#896).
+  void stageFreeRoamRoute(ImportedRoute route, {String? continuesRideId}) {
     _pendingFreeRoamRoute = route;
+    _pendingFreeRoamContinuesRideId = continuesRideId;
     notifyListeners();
   }
 
   /// Takes the route staged for free roam, once.
-  ImportedRoute? takeFreeRoamRoute() {
+  ImportedRoute? takeFreeRoamRoute() => takeFreeRoamHandover()?.route;
+
+  /// Takes the route staged for free roam and the ride it carries on from,
+  /// once.
+  PendingInAppRoute? takeFreeRoamHandover() {
     final route = _pendingFreeRoamRoute;
+    final continues = _pendingFreeRoamContinuesRideId;
     _pendingFreeRoamRoute = null;
-    return route;
+    _pendingFreeRoamContinuesRideId = null;
+    return route == null
+        ? null
+        : PendingInAppRoute(
+            route: route,
+            reviewed: true,
+            continuesRideId: continues,
+          );
   }
 
   PendingInAppRoute? get pendingInAppRoute => _pendingInAppRoute;
