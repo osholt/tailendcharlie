@@ -89,7 +89,9 @@ _MAXIMUM_MINOR_PER_LITRE = 400.0
 # check minus this overlap means none is missed.
 _UK_INCREMENTAL_OVERLAP = timedelta(minutes=45)
 _UK_FULL_PRICE_INTERVAL = timedelta(hours=24)
-_UK_STATION_INTERVAL = timedelta(hours=6)
+# The developer guidelines cache station data for at most an hour; a closure
+# reaches riders within that.
+_UK_STATION_INTERVAL = timedelta(hours=1)
 _UK_MAXIMUM_BATCHES = 80
 
 _GRID_DEGREES = 0.25

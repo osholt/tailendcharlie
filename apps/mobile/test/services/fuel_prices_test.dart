@@ -259,6 +259,12 @@ void main() {
       north: 52.1,
     ).first;
 
+    test('reuses a tile for no more than five minutes', () {
+      // Fuel Finder's Fair Use policy for prices shown to the public.
+      final client = RelayFuelPriceClient(configuration: configuration);
+      expect(client.cacheFor, lessThanOrEqualTo(const Duration(minutes: 5)));
+    });
+
     test('asks for nothing when the relay does not offer prices', () async {
       var requests = 0;
       final client = RelayFuelPriceClient(
@@ -291,9 +297,9 @@ void main() {
       );
 
       final first = await client.fetch([tile]);
-      clock = clock.add(const Duration(minutes: 5));
+      clock = clock.add(const Duration(minutes: 3));
       final second = await client.fetch([tile]);
-      clock = clock.add(const Duration(minutes: 6));
+      clock = clock.add(const Duration(minutes: 2));
       await client.fetch([tile]);
 
       expect(first.availability, FuelPriceAvailability.available);
