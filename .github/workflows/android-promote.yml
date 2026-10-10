@@ -23,13 +23,23 @@ on:
           - alpha
           - beta
       target_track:
-        description: Google Play target track
+        description: >-
+          Google Play target track. beta is OPEN testing, which is public: it
+          also needs confirm_open_testing, and the version code must come from
+          a build made without Android Auto (build 88 or later).
         required: true
         default: alpha
         type: choice
         options:
           - alpha
           - beta
+      confirm_open_testing:
+        description: >-
+          Only for target_track=beta. Type publish-open-testing to confirm a
+          release to the public open-testing track. Ignored otherwise.
+        required: false
+        default: ''
+        type: string
 
 permissions:
   contents: read
@@ -49,6 +59,21 @@ jobs:
     timeout-minutes: 15
     environment: android-internal
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Require confirmation before publishing to open testing
+        # Open testing (beta) is public, and a re-promotion is exactly how a
+        # stale build reached it unnoticed on 27 July 2026. A version code
+        # carries no record of whether it was built with Android Auto, so the
+        # dispatcher asserts it by using a build made without it.
+        env:
+          TARGET_TRACK: ${{ inputs.target_track }}
+          CONFIRM_OPEN_TESTING: ${{ inputs.confirm_open_testing }}
+        run: |
+          set -euo pipefail
+          python3 -m tools.release.play_release_gate gate \
+            --promote-to "$TARGET_TRACK" \
+            --confirm "$CONFIRM_OPEN_TESTING" \
+            --android-auto false
       - name: Install Fastlane
         run: |
           gem install fastlane \

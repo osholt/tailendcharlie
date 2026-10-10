@@ -149,7 +149,7 @@ void main() {
         DistributionTrack.parse('alpha'),
         DistributionTrack.playClosedAlpha,
       );
-      expect(DistributionTrack.parse('beta'), DistributionTrack.playClosedBeta);
+      expect(DistributionTrack.parse('beta'), DistributionTrack.playOpenBeta);
       expect(
         DistributionTrack.parse('TestFlight'),
         DistributionTrack.testFlight,
@@ -167,19 +167,85 @@ void main() {
       expect(DistributionTrack.parse('unknown'), DistributionTrack.local);
     });
 
-    test('separates the closed Play tracks testers are actually on', () {
+    test('separates the closed alpha track from open-testing beta', () {
       expect(DistributionTrack.playClosedAlpha.isPlayClosedTesting, isTrue);
-      expect(DistributionTrack.playClosedBeta.isPlayClosedTesting, isTrue);
+      expect(DistributionTrack.playOpenBeta.isPlayClosedTesting, isFalse);
       expect(DistributionTrack.playInternal.isPlayClosedTesting, isFalse);
+      expect(DistributionTrack.playClosedAlpha.usesPlayTestingPage, isTrue);
+      expect(DistributionTrack.playOpenBeta.usesPlayTestingPage, isTrue);
+      expect(DistributionTrack.playInternal.usesPlayTestingPage, isFalse);
       expect(
         DistributionTrack.playClosedAlpha.label,
         'Play closed testing (alpha)',
       );
-      expect(
-        DistributionTrack.playClosedBeta.label,
-        'Play closed testing (beta)',
-      );
+      // `beta` is Play OPEN testing: public, not a closed group.
+      expect(DistributionTrack.playOpenBeta.label, 'Play open testing (beta)');
+      expect(DistributionTrack.playOpenBeta.label, isNot(contains('closed')));
     });
+  });
+
+  group('beta support', () {
+    const stamped = BuildIdentity(
+      appVersion: '1.0.1',
+      appBuild: '137',
+      track: DistributionTrack.playOpenBeta,
+      platform: TargetPlatform.android,
+      relayHost: 'relay.tailendcharlie.app',
+    );
+
+    test(
+      'the beta support address is the one the listings and website use',
+      () {
+        expect(BuildIdentity.betaSupportEmail, 'testing@tailendcharlie.app');
+      },
+    );
+
+    test(
+      'the support link writes to that address with the build in the body',
+      () {
+        final uri = stamped.supportEmailUri;
+
+        expect(uri.scheme, 'mailto');
+        expect(uri.path, 'testing@tailendcharlie.app');
+        final query = Uri.splitQueryString(uri.query);
+        expect(query['subject'], 'Tail End Charlie beta feedback (build 137)');
+        expect(query['body'], contains(stamped.bugReportLine));
+        expect(query['body'], contains('Play open testing (beta)'));
+      },
+    );
+
+    test(
+      'spaces are percent-encoded, because mail apps show a + literally',
+      () {
+        final uri = stamped.supportEmailUri;
+
+        expect(uri.query, isNot(contains('+')));
+        expect(uri.query, contains('%20'));
+      },
+    );
+
+    test('the message carries no relay host and nothing about the rider', () {
+      final text = Uri.decodeFull(stamped.supportEmailUri.toString());
+
+      expect(text, isNot(contains('relay.tailendcharlie.app')));
+      expect(text, isNot(contains('https://')));
+    });
+
+    test(
+      'an unstamped build still opens a message and says it is unstamped',
+      () {
+        const unstamped = BuildIdentity(
+          appVersion: RelayClientDescriptor.unknownVersion,
+          appBuild: RelayClientDescriptor.unknownVersion,
+          track: DistributionTrack.local,
+          platform: TargetPlatform.android,
+        );
+        final query = Uri.splitQueryString(unstamped.supportEmailUri.query);
+
+        expect(query['subject'], 'Tail End Charlie beta feedback');
+        expect(query['body'], contains('unstamped build'));
+      },
+    );
   });
 
   group('update state', () {
@@ -250,7 +316,7 @@ void main() {
       // delivery investigation found.
       for (final track in [
         DistributionTrack.playClosedAlpha,
-        DistributionTrack.playClosedBeta,
+        DistributionTrack.playOpenBeta,
       ]) {
         final uri = BuildIdentity.defaultUpdateUriFor(
           TargetPlatform.android,
@@ -288,8 +354,20 @@ void main() {
         platform: TargetPlatform.android,
       );
 
+      const openBeta = BuildIdentity(
+        appVersion: '1.0.1',
+        appBuild: '137',
+        track: DistributionTrack.playOpenBeta,
+        platform: TargetPlatform.android,
+      );
+
       expect(closed.updateInstruction, contains('closed-testing opt-in page'));
       expect(closed.updateActionLabel, 'Open closed testing page');
+      // An open-beta tester is not in a closed group and must not be told so.
+      expect(openBeta.updateInstruction, contains('testing page'));
+      expect(openBeta.updateInstruction, isNot(contains('closed')));
+      expect(openBeta.updateActionLabel, 'Open beta testing page');
+      expect(openBeta.updateActionLabel, isNot(contains('closed')));
       expect(internal.updateInstruction, contains('Manage apps & device'));
       expect(internal.updateActionLabel, 'Open Google Play listing');
       expect(

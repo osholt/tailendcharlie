@@ -30,6 +30,24 @@ Record the store evidence on #863. Every issue stays ready for validation until
 it is ridden. #268 needs the airplane-mode Bluetooth check from
 `docs/field-test-plan.md`.
 
+## Open beta launch (#861)
+
+Prepared 10 October 2026; nothing has touched a store. Read
+[open-beta-launch.md](open-beta-launch.md) before any store action: the ordered
+launch-day checklist with a verification per step, the Play and Apple age rating,
+Data safety and App Privacy answers, monitoring and rollback, and the operator-only
+steps. [open-beta-plan.md](open-beta-plan.md) has the gate status.
+
+- `promote_to=beta` is **public** Play open testing. It needs
+  `confirm_open_testing=publish-open-testing`, never carries Android Auto, and
+  `Android internal testing` reads the track back. Android Auto has been absent
+  from every Play bundle since build 88; `-PandroidAuto=true` is an off-by-default
+  switch, not a feature. Only the Console can pause or resume open testing.
+- The TestFlight public link is changed only by the `TestFlight public link`
+  workflow (dry run until `apply`; enabling needs `enable-public-link`). A link may
+  already exist: run `verify` first.
+- Support is `testing@tailendcharlie.app`; minimum age is 17.
+
 ## Build 101 — circular routes and discovery
 
 #833 tracks the authorised tester release; #670 covers circular quality and the
