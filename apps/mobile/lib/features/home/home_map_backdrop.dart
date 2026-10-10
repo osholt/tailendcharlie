@@ -73,6 +73,8 @@ class HomeMapBackdrop extends StatefulWidget {
     this.circularRideRequestToken,
     this.onCircularRideRequestHandled,
     this.editRouteRequestToken,
+    this.fuelStopRequestToken,
+    this.onFuelStopRequestHandled,
     this.onEditRouteRequestHandled,
     this.onRouteChanged,
     this.onPersonalNavigationChanged,
@@ -130,6 +132,10 @@ class HomeMapBackdrop extends StatefulWidget {
 
   /// Asks the map to reopen its route on the plan surface (#847).
   final Object? editRouteRequestToken;
+
+  /// Bumped to find a fuel stop or charger on this map (#951).
+  final Object? fuelStopRequestToken;
+  final VoidCallback? onFuelStopRequestHandled;
   final VoidCallback? onEditRouteRequestHandled;
 
   /// Fires with the route the map is following, or null when there is none —
@@ -741,6 +747,8 @@ class _HomeMapBackdropState extends State<HomeMapBackdrop>
             circularRideRequestToken: widget.circularRideRequestToken,
             onCircularRideRequestHandled: widget.onCircularRideRequestHandled,
             editRouteRequestToken: widget.editRouteRequestToken,
+            fuelStopRequestToken: widget.fuelStopRequestToken,
+            onFuelStopRequestHandled: widget.onFuelStopRequestHandled,
             onEditRouteRequestHandled: widget.onEditRouteRequestHandled,
             onRouteChanged: _onRouteChanged,
             onNavigationGuidanceChanged: _onNavigationGuidanceChanged,

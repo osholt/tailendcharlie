@@ -8,14 +8,20 @@ class DiscoveryLayerPreferences {
     this._preferences,
     this.categories,
     this.bikerCafesVisible,
+    this.fuelStationsVisible,
   );
 
   static const bikerCafesKey = 'map_layer_biker_cafes_visible';
+
+  /// Fuel stations and chargers for the rider's fuel (#951). On by default:
+  /// knowing where the next pump is matters on any ride.
+  static const fuelStationsKey = 'map_layer_fuel_stations_visible';
   static const _categoryPrefix = 'map_layer_discovery_';
 
   final SharedPreferences _preferences;
   final Set<MotorcycleDiscoveryCategory> categories;
   bool bikerCafesVisible;
+  bool fuelStationsVisible;
 
   static Future<DiscoveryLayerPreferences> load() async {
     final preferences = await SharedPreferences.getInstance();
@@ -31,6 +37,7 @@ class DiscoveryLayerPreferences {
       preferences,
       categories,
       preferences.getBool(bikerCafesKey) ?? true,
+      preferences.getBool(fuelStationsKey) ?? true,
     );
   }
 
@@ -49,6 +56,11 @@ class DiscoveryLayerPreferences {
   Future<void> setBikerCafesVisible(bool visible) async {
     bikerCafesVisible = visible;
     await _preferences.setBool(bikerCafesKey, visible);
+  }
+
+  Future<void> setFuelStationsVisible(bool visible) async {
+    fuelStationsVisible = visible;
+    await _preferences.setBool(fuelStationsKey, visible);
   }
 
   static String _key(MotorcycleDiscoveryCategory category) =>
