@@ -31,6 +31,7 @@ class ManagedRouteRejoinPlanner {
     required Uri routingBaseUrl,
     required DistanceUnit distanceUnit,
     http.Client Function()? clientFactory,
+    RouteRejoinThresholds thresholds = const RouteRejoinThresholds(),
   }) {
     final client = clientFactory?.call() ?? http.Client();
     return ManagedRouteRejoinPlanner._(
@@ -40,6 +41,7 @@ class ManagedRouteRejoinPlanner {
           baseUrl: routingBaseUrl,
         ),
         distanceUnit: distanceUnit,
+        thresholds: thresholds,
       ),
       client: client,
     );
@@ -110,6 +112,11 @@ enum RouteRejoinStatus {
   /// The provider returned a first leg opposite the rider's reliable heading.
   /// It is rejected rather than announced as a U-turn or a wrong first turn.
   initialDirectionConflict,
+
+  /// The provider's route reached the planned route facing the other way along
+  /// it. Following it would end in a U-turn onto the route, so it is rejected
+  /// like a route that starts with one (#940).
+  arrivalDirectionConflict,
 }
 
 /// Distance and time thresholds separating "rejoin the route" from "massively
@@ -155,6 +162,18 @@ class RouteRejoinThresholds {
        assert(minimumForwardRejoinMeters > 0),
        assert(candidateSpacingMeters > 0),
        assert(forwardSearchMeters >= candidateSpacingMeters);
+
+  /// For a rider navigating on their own (#940).
+  ///
+  /// "Massively off route" exists so a rejoin never drops a rider into the
+  /// group ahead of the leader, which needs the leader's position. A rider on
+  /// their own has no leader and no group to land in front of, so neither
+  /// distance nor time ever promotes them: a long detour still gets a route
+  /// back instead of "the ride leader's position is unknown".
+  static const solo = RouteRejoinThresholds(
+    massivelyOffRouteMeters: double.infinity,
+    massivelyOffRouteAfter: Duration(days: 36500),
+  );
 
   final double massivelyOffRouteMeters;
   final Duration massivelyOffRouteAfter;
@@ -703,7 +722,7 @@ class RouteRejoinPlanner {
         0;
     Object? routingError;
     StackTrace? routingStackTrace;
-    var sawInitialDirectionConflict = false;
+    RouteRejoinStatus? directionConflict;
 
     // A nearby junction can be unroutable from the rider's current road, or it
     // can require turning around. Try a small number of progressively later
@@ -768,7 +787,19 @@ class RouteRejoinPlanner {
               headingDegrees: originBearing,
               points: result.points,
             )) {
-          sawInitialDirectionConflict = true;
+          directionConflict = RouteRejoinStatus.initialDirectionConflict;
+          searchProgress = candidate.progressMeters;
+          continue;
+        }
+        // Only when the rejoin point is where the route ends: a route that goes
+        // on to a moving target passes through it rather than arriving.
+        if (identical(waypoints.last, candidate.point) &&
+            _arrivesAgainstRoute(
+              points: result.points,
+              plannedRoute: plannedRoute,
+              rejoinProgressMeters: candidate.progressMeters,
+            )) {
+          directionConflict = RouteRejoinStatus.arrivalDirectionConflict;
           searchProgress = candidate.progressMeters;
           continue;
         }
@@ -807,12 +838,17 @@ class RouteRejoinPlanner {
       }
     }
 
-    if (sawInitialDirectionConflict) {
+    if (directionConflict != null) {
       state.consecutiveFailures = 0;
       return degrade(
-        RouteRejoinStatus.initialDirectionConflict,
-        'The available routes back would begin by turning around, so they were '
-        'rejected. Continue safely and directions will retry.',
+        directionConflict,
+        directionConflict == RouteRejoinStatus.initialDirectionConflict
+            ? 'The available routes back would begin by turning around, so '
+                  'they were rejected. Continue safely and directions will '
+                  'retry.'
+            : 'The available routes back would join the route facing the '
+                  'wrong way, so they were rejected. Continue safely and '
+                  'directions will retry.',
       );
     }
     state.consecutiveFailures += 1;
@@ -847,6 +883,48 @@ class RouteRejoinPlanner {
           maximumInitialDirectionDifferenceDegrees;
     }
     return false;
+  }
+
+  /// Whether [points] reach the planned route facing back along it (#940).
+  ///
+  /// The half of a U-turn [_beginsAgainstHeading] cannot see. A rejoin point on
+  /// a two-way road can be reached from either end, and the engine picks the
+  /// cheaper, so the route can arrive on the planned line travelling the wrong
+  /// way. The handoff then hands the rider a route that runs behind them. The
+  /// same probe length and angle as the start check are used, so a route is
+  /// judged the same way at both ends.
+  static bool _arrivesAgainstRoute({
+    required List<route_domain.GeoPoint> points,
+    required List<GeoPoint> plannedRoute,
+    required double rejoinProgressMeters,
+  }) {
+    if (points.length < 2) return false;
+    final end = _fromRouteDomain(points.last);
+    GeoPoint? approach;
+    for (var index = points.length - 2; index >= 0; index -= 1) {
+      final candidate = _fromRouteDomain(points[index]);
+      if (GeoCalculations.distanceMeters(candidate, end) >=
+          initialDirectionProbeMeters) {
+        approach = candidate;
+        break;
+      }
+    }
+    if (approach == null) return false;
+    final total = RouteRejoinGeometry.totalLengthMeters(plannedRoute);
+    final before = RouteRejoinGeometry.pointAtProgress(
+      plannedRoute,
+      math.max(0, rejoinProgressMeters - initialDirectionProbeMeters),
+    );
+    final after = RouteRejoinGeometry.pointAtProgress(
+      plannedRoute,
+      math.min(total, rejoinProgressMeters + initialDirectionProbeMeters),
+    );
+    if (GeoCalculations.distanceMeters(before, after) < 1) return false;
+    return GeoCalculations.bearingDifferenceDegrees(
+          GeoCalculations.bearingDegrees(approach, end),
+          GeoCalculations.bearingDegrees(before, after),
+        ) >
+        maximumInitialDirectionDifferenceDegrees;
   }
 
   /// Bands a rider by distance from the planned route and time off it. Either

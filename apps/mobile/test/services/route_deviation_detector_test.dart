@@ -20,6 +20,27 @@ void main() {
     expect(distance, closeTo(111.2, 1));
   });
 
+  test('a rider heading across the route near it has not recovered (#940)', () {
+    final detector = RouteDeviationDetector(route);
+    var now = DateTime.utc(2026, 10, 10, 10);
+    RouteTrackingState next(double latitude, {bool across = false}) {
+      now = now.add(const Duration(seconds: 2));
+      return detector
+          .evaluate(_sample(latitude, now), now, headingAcrossRoute: across)
+          .state;
+    }
+
+    for (var index = 0; index < 3; index += 1) {
+      next(51.003);
+    }
+    expect(next(51.003), RouteTrackingState.offRoute);
+    // Near enough to recover on distance alone, but on a road crossing it.
+    expect(next(51.0002, across: true), RouteTrackingState.offRoute);
+    expect(next(51.0002, across: true), RouteTrackingState.offRoute);
+    expect(next(51.0002), RouteTrackingState.recovering);
+    expect(next(51.0002), RouteTrackingState.onRoute);
+  });
+
   test('requires repeated outside samples and repeated recovery samples', () {
     final detector = RouteDeviationDetector(
       route,
