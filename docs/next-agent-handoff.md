@@ -1,6 +1,46 @@
 # Next-agent handoff
 
-Updated: 2026-10-05
+Updated: 2026-10-10
+
+## Build 103 — open beta candidate
+
+#963 tracks the release. Its build is the first one the open beta (#861)
+distributes. See [build 103 validation](build-103-validation.md) and the tester
+notes. The issue PRs merged into `claude/build-103`, and then into `main` as one
+combined PR.
+
+The 10 October decisions are recorded so they are not re-argued:
+
+- There is no Android Auto in the open beta. The Play bundle switch stays off.
+- The open beta is UK only.
+- Age ratings match Waze's: App Store 16+ and Play Everyone. The terms set a
+  minimum age of 17.
+- Beta support goes to `testing@tailendcharlie.app`, which forwards to the
+  operator.
+- Global heatmap contribution is asked at setup and stays off until the rider
+  chooses.
+
+Release order:
+
+1. Merge the combined PR after every protected-main check passes. Server code
+   changed, so the push deploys the relay. Verify `serverBuildCommit`.
+2. Confirm the website shows the opt-in heatmap wording and the fuel-price
+   paragraph.
+3. Submit the Play Data safety form. Its draft is saved at Preview.
+4. Dispatch build 103 only on the operator's "go": the workflows from
+   `docs/open-beta-launch.md`, with an explicit `build_number`.
+
+Operator steps outside the repository:
+
+- Register with Fuel Finder; prices stay off until then.
+- Bring up the routing VM from `docs/routing-service.md`. Then set
+  `RIDE_RELAY_SERVICE_VALHALLA_URL` and `RIDE_RELAY_SERVICE_PHOTON_URL`.
+- Complete App Store Connect: beta information, age rating and the public link
+  with a cap of 100.
+- Resume the Play open-testing track on launch day.
+
+Two Play Console attempts to remove the inactive Android Auto form factor
+failed. Retry the removal in the Console.
 
 ## Build 102 — 4 October ride feedback
 

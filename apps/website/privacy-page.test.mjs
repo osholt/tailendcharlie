@@ -107,3 +107,9 @@ test("global heatmap contribution is opt-in, asked at setup, and nothing is shar
   assert.match(text, /asked once on the home map and shares nothing until you answer/);
   assert.doesNotMatch(text, /Contribution of completed rides is on by default/);
 });
+
+test("fuel prices are requested by coarse map area with no rider identifier (#951)", () => {
+  assert.match(text, /as boxes on a fixed grid of about 55 by 50 kilometres/);
+  assert.match(text, /no rider, ride or device identifier, and the relay does not store it/);
+  assert.match(text, /neither receives anything from your phone/);
+});
