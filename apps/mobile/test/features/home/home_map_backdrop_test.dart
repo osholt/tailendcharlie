@@ -24,6 +24,7 @@ import 'package:ride_relay/domain/imported_route.dart'
 import 'package:ride_relay/domain/rider_location.dart';
 import 'package:ride_relay/features/home/home_map_backdrop.dart';
 import 'package:ride_relay/features/map/ride_map_feature.dart';
+import 'package:ride_relay/domain/ride_role.dart';
 import 'package:ride_relay/domain/route_authority.dart';
 import 'package:ride_relay/data/ride_diagnostics_log_store.dart';
 import 'package:ride_relay/services/device_location_source.dart';
@@ -339,6 +340,106 @@ void main() {
     } else {
       expect(logs, isEmpty);
     }
+  });
+
+  testWidgets('riding on alone is filed as one ride with the group ride', (
+    tester,
+  ) async {
+    final platform = _RecordingLocationPlatform(
+      granted: DeviceLocationPermission.always,
+    );
+    addTearDown(platform.closeStreams);
+    final location = ForegroundLocationController(
+      DeviceLocationSource(platform),
+      (_) async {},
+    );
+    addTearDown(location.dispose);
+    final archive = InMemoryCompletedRideStore();
+    final groupStart = DateTime.utc(2026, 10, 4, 9);
+    await archive.save(
+      CompletedRide(
+        rideId: 'group-ride',
+        rideCode: '123456',
+        rideName: 'To the cafe',
+        localDisplayName: 'Oliver',
+        localRole: RideRole.rider,
+        startedAt: groupStart,
+        endedAt: groupStart.add(const Duration(hours: 1)),
+        archivedAt: groupStart.add(const Duration(hours: 1)),
+        riderCount: 4,
+        eventCount: 40,
+        totalDistanceMeters: 30000,
+        markerSessions: const [],
+        plannedRoute: null,
+        traveledRoute: null,
+      ),
+    );
+    final route = ImportedRoute(
+      id: 'group-route',
+      name: 'To the cafe',
+      importedAt: DateTime.utc(2026, 10, 4),
+      sourceFileName: 'group-route.gpx',
+      paths: const [
+        RoutePath(
+          kind: RoutePathKind.track,
+          points: [
+            GeoPoint(latitude: 52.0, longitude: -1.0),
+            GeoPoint(latitude: 52.3, longitude: -1.0),
+          ],
+        ),
+      ],
+      waypoints: const [],
+    );
+    final reported = <String?>[];
+    var navigating = false;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: StatefulBuilder(
+          builder: (context, setState) => HomeMapBackdrop(
+            mapStyleMode: mapStyleMode,
+            speedLimitDisplay: speedLimitDisplay,
+            distanceUnit: DistanceUnit.kilometres,
+            locationController: location,
+            completedRideStore: archive,
+            localDisplayName: 'Oliver',
+            navigating: navigating,
+            // Handed over by the group ride the rider left (#896).
+            pendingInAppRoute: PendingInAppRoute(
+              route: route,
+              reviewed: true,
+              continuesRideId: 'group-ride',
+            ),
+            onRouteChanged: (route) =>
+                setState(() => navigating = route != null),
+            onPersonalNavigationChanged: reported.add,
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    tester
+        .widget<RideMapFeature>(find.byKey(const Key('home-map')))
+        .onRouteChanged!(route);
+    await tester.pump();
+    expect(reported.single, startsWith('free-roam-'));
+
+    tester
+        .widget<RideMapFeature>(find.byKey(const Key('home-map')))
+        .onRouteChanged!(null);
+    await tester.pump(const Duration(seconds: 1));
+
+    expect(reported.last, isNull);
+    final stored = await archive.list();
+    expect(stored, hasLength(1));
+    expect(stored.single.rideId, reported.first);
+    expect(stored.single.legs.map((leg) => leg.rideId), [
+      'group-ride',
+      reported.first,
+    ]);
+    expect(stored.single.startedAt, groupStart);
+    expect(stored.single.riderCount, 4);
   });
 
   testWidgets(

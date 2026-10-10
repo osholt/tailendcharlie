@@ -131,7 +131,9 @@ the same release use the same number.
 - `alpha`/`beta`: the App Bundle is uploaded to `internal`, then promoted with
   `fastlane supply --track internal --track_promote_to <track>`. The build is
   also *stamped* with that track, so the About screen and the relay headers name
-  the track testers install from.
+  the track testers install from. **`beta` is Google Play open testing and is
+  public**, so it has its own rules: see
+  [Open testing (`beta`)](#open-testing-beta-the-public-track).
 - `none`: upload only. Nothing reaches a closed tester, and the run summary says
   so rather than reporting a bare success.
 
@@ -416,6 +418,91 @@ The email itself has never been sent from this repository. The first real send
 is a maintainer decision: configure the variables, run once with
 `notification_mode: dry-run`, read the rendered mail in the run summary, and only
 then switch to `auto`.
+
+## Open testing (`beta`): the public track
+
+`beta` is open testing: anyone with the opt-in link, or who finds the listing,
+may install. Releasing to it is a deliberate act, and the pipeline makes it one:
+
+```bash
+gh workflow run "Android internal testing" --ref <ref> \
+  --field build_number=<next unused number> \
+  --field promote_to=beta \
+  --field confirm_open_testing=publish-open-testing \
+  --field android_auto=false
+```
+
+- **Confirmation.** `promote_to=beta` fails in its first step unless
+  `confirm_open_testing` is exactly `publish-open-testing`
+  (`tools/release/play_release_gate.py`, tested in `tools/release/tests`). The
+  same gate is in `Promote Android testing release` for `target_track=beta`. Any
+  other destination ignores the phrase. This exists because the app reached this
+  track unnoticed on 27 July 2026.
+- **No Android Auto, ever, on `beta`.** The gate also refuses `android_auto=true`
+  with `promote_to=beta`. Open testing has a *blocking* Android for Cars quality
+  review when the bundle is opted in to Android Auto, so a car-capable bundle
+  would hold the whole open release behind that review (open-beta plan, G5).
+- **No tester email.** The closed-group mail goes to `alpha` only. The open
+  audience is not the closed group, and mailing them "Play closed testing (beta)"
+  would be wrong on both counts.
+- **Read-back.** After promotion the run reads `beta` back through a throwaway
+  edit and fails unless it holds the version code with status `completed`. That
+  proves the API state, not that the track is *unpaused*: see below.
+- **The About screen** on these builds says `Play open testing (beta)`.
+
+### What the Console must say before the first open release
+
+None of this is visible from the repository; the operator checks it by hand.
+
+1. **Advanced settings → Form factors → Android Auto must not be opted in.** The
+   opt-in is per *app*, not per track, so it cannot be switched on for `alpha` and
+   off for `beta`. If it shows as added, stop: open testing would be under the
+   blocking Android for Cars review. Either remove it if the Console allows, or
+   hold the open track. No shipped bundle has declared Android Auto since build
+   88, so removing the opt-in loses nothing that is in testers' hands.
+2. **Open testing → Countries / regions: United Kingdom only** for phase 1.
+3. **Open testing → Testers: the feedback email or URL** is set to
+   `testing@tailendcharlie.app`, and the store listing's contact details match.
+4. **The track is paused until launch.** Releasing to a paused track uploads it
+   but serves nobody. Unpausing is a Console action (Testing → Open testing →
+   Resume track); so is pausing. The API cannot do either and cannot tell you the
+   state (see "A paused track is invisible to the API" below).
+5. **Managed publishing is still off.** If it is on, the promotion sits in the
+   Console's publishing queue until someone clicks Publish, and the run still
+   reports success.
+6. **Production access** has been earned (personal accounts created after
+   13 November 2023 need a 12-tester, 14-day closed test), so open testing is
+   offered at all.
+
+### The Android Auto switch
+
+Android Auto is **off in every build** unless `-PandroidAuto=true` reaches
+Gradle (`includeAndroidAuto` in `apps/mobile/android/app/build.gradle.kts`). A
+Flutter build does not forward `-P` flags, so use the environment form, which is
+what the workflow does:
+
+```bash
+ORG_GRADLE_PROJECT_androidAuto=true flutter build appbundle --release
+```
+
+| | Default (every Play build today) | `androidAuto=true` |
+| --- | --- | --- |
+| `src/androidAuto/AndroidManifest.xml` | not merged | merged into the **release** manifest |
+| Car App Library | `compileOnly`, not packaged | `implementation`, packaged |
+| Merged manifest | no car permission, service, category or intent | declares them all |
+| Workflow check | `assert-android-auto-disabled.py` fails if any declaration is present | `assert-android-auto-disabled.py --expect enabled` fails if any is missing |
+| Allowed on | every track | `alpha` and `none` only; refused for `beta` |
+
+Release only: the debug and profile source sets already carry their own
+manifests and a source set takes one. Use a release build with the debug key to
+try Android Auto locally.
+
+The `Android internal testing` input `android_auto` (default `false`) sets it. It
+is a build capability, not a claim: nothing here is Android Auto support, which
+still needs the head-unit evidence of #698 and #703, and turning it on for
+`alpha` is a separate release decision. **As of 10 October 2026 no track carries
+it.** The brief for the open beta assumed `alpha` did; it has not since build 88
+(5 September), when Android Auto was removed from every Play bundle.
 
 ## Managed publishing will silently strand testers
 

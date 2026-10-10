@@ -21,6 +21,7 @@ import '../../controllers/pre_start_presence_controller.dart';
 import '../../controllers/ride_controller.dart';
 import '../../controllers/ride_location_lifecycle_controller.dart';
 import '../../controllers/mini_map_display_controller.dart';
+import '../../controllers/speed_adaptive_zoom_controller.dart';
 import '../../controllers/route_progress_display_controller.dart';
 import '../../controllers/road_rating_controller.dart';
 import '../../controllers/ride_push_notification_controller.dart';
@@ -319,6 +320,7 @@ class ActiveRideShell extends StatefulWidget {
     required this.speedLimitDisplay,
     this.routeProgressDisplay,
     this.miniMapDisplay,
+    this.speedAdaptiveZoom,
     this.completedRideStore,
     this.globalRideHeatmap,
     this.pushTokenSource,
@@ -365,6 +367,7 @@ class ActiveRideShell extends StatefulWidget {
   /// Whether to draw the group mini-map; the rider's own choice, and failing
   /// that their role (#850). Null draws it whenever there is a group to show.
   final MiniMapDisplayController? miniMapDisplay;
+  final SpeedAdaptiveZoomController? speedAdaptiveZoom;
   final CompletedRideStore? completedRideStore;
   final GlobalRideHeatmapController? globalRideHeatmap;
   final PushTokenSource? pushTokenSource;
@@ -877,6 +880,7 @@ class _PreStartRidePanel extends StatelessWidget {
     required this.onStartRide,
     required this.onChooseRoute,
     this.onJoinGroup,
+    this.compact = false,
   });
 
   final String rideCode;
@@ -889,8 +893,47 @@ class _PreStartRidePanel extends StatelessWidget {
   final VoidCallback onChooseRoute;
   final VoidCallback? onJoinGroup;
 
+  /// One slim strip carrying only **Start ride** (#933).
+  ///
+  /// For a Ride Lab demo, which has no code to read out, no roster to wait on
+  /// and a route that was chosen for it. The full panel there took about a third
+  /// of a portrait phone and half of a landscape one before the map began. A
+  /// real ride never sets this: its code, route and roster are what a leader
+  /// checks before setting off, so they stay as they were.
+  final bool compact;
+
   @override
-  Widget build(BuildContext context) => Material(
+  Widget build(BuildContext context) =>
+      compact ? _buildCompact() : _buildFull();
+
+  Widget _buildCompact() => Material(
+    key: const Key('pre-start-compact-bar'),
+    color: const Color(0xFF17212B),
+    child: SafeArea(
+      bottom: false,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        child: Center(
+          // Full width on a phone held upright; on a wide landscape strip a
+          // button that long is a target nobody needs.
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 420),
+            child: SizedBox(
+              width: double.infinity,
+              child: FilledButton.icon(
+                key: const Key('start-ride-button'),
+                onPressed: busy ? null : onStartRide,
+                icon: const Icon(Icons.play_arrow),
+                label: const Text('Start ride'),
+              ),
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
+
+  Widget _buildFull() => Material(
     color: const Color(0xFF17212B),
     child: SafeArea(
       bottom: false,
@@ -4509,6 +4552,8 @@ class _ActiveRideShellState extends State<ActiveRideShell>
                 onJoinGroup: widget.onJoinGroupRequested == null
                     ? null
                     : _joinGroupBeforeStart,
+                // A demo needs one button and the map, not a lobby (#933).
+                compact: _isSimulation,
               ),
               Expanded(
                 child: MediaQuery.removePadding(
@@ -4809,6 +4854,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
       ),
       distanceUnit: widget.distanceUnits.value,
       speedLimitDisplay: widget.speedLimitDisplay,
+      speedAdaptiveZoom: widget.speedAdaptiveZoom,
       showRouteProgress: widget.routeProgressDisplay?.enabled ?? true,
       showGroupMiniMap: widget.miniMapDisplay?.visibleFor(_miniMapRole) ?? true,
       ridingDisplaySize: widget.mapStyleMode.ridingDisplaySize,
@@ -6502,6 +6548,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
       speedLimitDisplay: widget.speedLimitDisplay,
       routeProgressDisplay: widget.routeProgressDisplay,
       miniMapDisplay: widget.miniMapDisplay,
+      speedAdaptiveZoom: widget.speedAdaptiveZoom,
       miniMapRole: _miniMapRole,
       currentRideActive: true,
       lastRelaySync: _internetRelayController?.status.lastSuccessfulSync,
@@ -6692,7 +6739,13 @@ class _ActiveRideShellState extends State<ActiveRideShell>
     }
     final route = _currentRoute;
     final sharedRoutes = widget.sharedRoutes;
-    if (route != null) sharedRoutes.stageFreeRoamRoute(route);
+    // With this ride's id, so riding on alone files as one ride with it (#896).
+    if (route != null) {
+      sharedRoutes.stageFreeRoamRoute(
+        route,
+        continuesRideId: controller.session?.rideId,
+      );
+    }
     switch (decision) {
       case RideOnAloneDecision.leave:
         await _leaveRide();

@@ -147,6 +147,27 @@ void main() {
     },
   );
 
+  test('a rider who slows while the voice renders still hears the prompt '
+      '(#942)', () async {
+    // The 10 October ride: "In 2.0 mi" was due as the early heads-up at
+    // 3271 m only because the rider was doing 27.4 m/s. Two seconds later
+    // they were at 26.3 m/s and the early stage was not due at that speed, so
+    // the re-decision came back empty and the prompt was dropped in silence.
+    backend.onRender = () {
+      ride.distance = 3218;
+      ride.speed = 26.3;
+    };
+    final spoken = speakAt(3271, speed: 27.4);
+    await untilPlaying();
+    expect(player.played, hasLength(1), reason: 'not dropped');
+    expect(backend.rendered.last, startsWith('In 2.0 miles'));
+    expect(fallback.spoken, isEmpty);
+    player.finish();
+    expect(await spoken, isTrue);
+    expect(outputs, [SpokenGuidanceOutput.natural]);
+    expect(ride.delivered, contains('junction|early'));
+  });
+
   test(
     'a prompt whose distance is really out of date is dropped, not spoken '
     'by the system voice, and announced again from where the rider is',

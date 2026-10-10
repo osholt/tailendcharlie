@@ -6,6 +6,7 @@ import '../../domain/rider_color.dart';
 import '../../services/global_ride_heatmap.dart';
 import '../map/motorcycle_icon.dart';
 import '../map/rider_symbol_picker.dart';
+import '../settings/heatmap_consent_prompt.dart';
 
 class OnboardingScreen extends StatefulWidget {
   const OnboardingScreen({
@@ -34,8 +35,14 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
   int _step = 0;
   bool _educationSkipped = false;
   bool _permissionsDeferred = false;
-  late bool _shareGlobalHeatmap =
-      widget.globalRideHeatmap?.consent != HeatmapContributionConsent.never;
+  // Nothing is selected for a rider who has never chosen (#957): a sharing
+  // option that is already ticked is a default they did not make. A rider
+  // replaying this guide who answered before sees their own answer, so going
+  // through it again cannot silently change it.
+  late HeatmapContributionConsent? _heatmapChoice =
+      widget.globalRideHeatmap?.consentAnswered == true
+      ? widget.globalRideHeatmap!.consent
+      : null;
   String? _nameError;
   bool _saving = false;
 
@@ -392,36 +399,34 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
       const SizedBox(height: 12),
       const Text(
         'Your personal ride heatmap always stays on this phone. You can also '
-        'contribute privacy-reduced road coverage to the global heatmap so '
-        'riders can discover roads the community actually uses.',
+        'choose to contribute privacy-reduced road coverage to the global '
+        'heatmap, so riders can discover roads the community actually uses.',
         style: TextStyle(color: Color(0xFFBCC5D0), height: 1.5),
       ),
-      const SizedBox(height: 20),
+      const SizedBox(height: 12),
+      const Text(
+        'This is your choice and nothing is selected. If you skip it, '
+        'nothing is shared.',
+        key: Key('onboarding-heatmap-nothing-selected'),
+        style: TextStyle(color: Color(0xFFFFC47A), height: 1.4),
+      ),
+      const SizedBox(height: 8),
       Card(
-        child: SwitchListTile.adaptive(
-          key: const Key('onboarding-global-heatmap-contribution'),
-          value: _shareGlobalHeatmap,
-          onChanged: (value) => setState(() => _shareGlobalHeatmap = value),
-          secondary: const Icon(Icons.local_fire_department_outlined),
-          title: const Text('Contribute completed rides'),
-          subtitle: const Text(
-            'On by default. You can turn this off at any time in Settings.',
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+          child: HeatmapConsentChoices(
+            keyPrefix: 'onboarding-heatmap',
+            selected: _heatmapChoice,
+            onChanged: (value) => setState(() => _heatmapChoice = value),
           ),
         ),
       ),
       const SizedBox(height: 18),
-      const _InfoCard(
-        icon: Icons.privacy_tip_outlined,
-        title: 'Coverage, not ride histories',
-        body:
-            'The first and last 1 km are removed on your phone. The app sends unordered coarse cells with no ride name, route order, time, speed, rider identity or ride code.',
-      ),
-      const SizedBox(height: 12),
-      const _InfoCard(
-        icon: Icons.groups_outlined,
-        title: 'Three contributors before anything appears',
-        body:
-            'A road remains hidden from the public global heatmap until at least three separate contribution credentials overlap there.',
+      const Card(
+        child: Padding(
+          padding: EdgeInsets.all(16),
+          child: HeatmapSharingSummary(),
+        ),
       ),
       const SizedBox(height: 16),
       const Text(
@@ -497,6 +502,12 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
             onPressed: _skipEducation,
             child: const Text('Skip tour'),
           ),
+        if (_step == 4)
+          TextButton(
+            key: const Key('skip-heatmap-choice'),
+            onPressed: _skipHeatmapChoice,
+            child: const Text('Skip: share nothing'),
+          ),
         Row(
           children: [
             if (_step > 0)
@@ -522,6 +533,19 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     setState(() => _step += 1);
   }
 
+  /// Skipping is an answer, and the answer is no (#957). A rider who had
+  /// already answered before keeps that answer; only an unanswered rider is
+  /// recorded as Never.
+  void _skipHeatmapChoice() {
+    final heatmap = widget.globalRideHeatmap;
+    setState(() {
+      _heatmapChoice = heatmap?.consentAnswered == true
+          ? heatmap!.consent
+          : null;
+      _step += 1;
+    });
+  }
+
   void _skipEducation() {
     if (!_validateName()) {
       setState(() => _step = 1);
@@ -529,8 +553,8 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     }
     setState(() {
       _educationSkipped = true;
-      // The product tour is skippable; the default-on data choice is not
-      // hidden behind that shortcut.
+      // The product tour is skippable; the data choice is not hidden behind
+      // that shortcut.
       _step = 4;
     });
   }
@@ -544,10 +568,10 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
   Future<void> _complete(OnboardingRideChoice? choice) async {
     if (!_validateName()) return;
     setState(() => _saving = true);
+    // Never chosen and never skipped-with-an-answer means never: sharing needs
+    // a choice the rider made (#957).
     await widget.globalRideHeatmap?.setConsent(
-      _shareGlobalHeatmap
-          ? HeatmapContributionConsent.always
-          : HeatmapContributionConsent.never,
+      _heatmapChoice ?? HeatmapContributionConsent.never,
     );
     await widget.riderProfile.completeOnboarding(
       displayName: _nameController.text,
