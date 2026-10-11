@@ -70,10 +70,10 @@ and one is a legacy name; the other 57 are network entries. Networks can overlap
 | Outcome | Entries | Interpretation |
 | --- | ---: | --- |
 | `open-and-working` | 7 | Anonymous HTTP 200 with exactly one recognizable Location; no completeness claim |
-| `needs-key` | 15 | Key, login, or access-request route; actual credential type can remain unknown |
+| `needs-key` | 18 | Key, login, or access-request route; actual credential type can remain unknown |
 | `basic-auth` | 1 | Osprey: Basic access reported by OSM; not independently authenticated |
 | `published-but-failing` | 1 | MFG: request timed out on this check |
-| `not-published` | 37 | No verified statutory feed URL found within reviewed sources |
+| `not-published` | 34 | No verified statutory feed URL found within reviewed sources |
 | `published-not-sampled` | 4 | Publication exists, but the bounded check cannot establish a usable sample |
 | **Total** | **65** | |
 
@@ -83,7 +83,8 @@ and unresolved publication links from being misleadingly called failed APIs.
 - **Working samples:** Arnold Clark Charge, char.gy, ChargePlace Scotland, Evolt
   Network, Monta, PoGo Charge and Urban Fox.
 - **Key/access requests:** Allego, Believ, Blink, BP Pulse, ChargePoint CMS, EVYVE,
-  Fastned, GRIDSERVE, InstaVolt, IONITY, Sainsbury's Smart Charge, Shell Recharge /
+  Fastned, GRIDSERVE, InstaVolt, IONITY, Lidl, RAW Charging, EVPoint,
+  Sainsbury's Smart Charge, Shell Recharge /
   ubitricity, Source EV, Weev and Zest. Osprey is separately Basic. Wenea also gets
   a draft asking for a paginated API; its publicly linked ZIP was not downloaded.
 - **Published but not sampled:** Clenergy EV and EV Dot returned HTTP 200 with
@@ -116,13 +117,13 @@ not deduplicated physical sites; Be.EV's 600 is its published lower bound.
 | [Applegreen Electric](https://www.applegreenfastcharge.com/) | — | — | unknown / unknown | unknown | unknown | unknown | unknown | Not found | unknown | 2026-10-11: not-published; No statutory feed URL found in reviewed sources; no feed request | [1](https://www.applegreenfastcharge.com/) |
 | [Arnold Clark Charge](https://www.arnoldclark.com/charge) | [Page](https://www.arnoldclark.com/charge) | [https://api.fuuse.io/opendata/e6397b95-1624-49cd-824d-ab2f9dfe7294/](https://api.fuuse.io/opendata/e6397b95-1624-49cd-824d-ab2f9dfe7294/) | OCPI-shaped JSON / unknown | locations, tariffs | observed | not-observed | none | No feed-specific acceptance shown on publication page | 126 | 2026-10-11: open-and-working; HTTP 200; one-location-observed; X-Total-Count 126; Link present | [1](https://www.arnoldclark.com/charge) |
 | [Be.EV](https://be-ev.co.uk/) | [Page](https://be-ev.co.uk/public-charge-point-regulations/) | — | unknown / unknown | unknown | unknown | unknown | unknown | Not found | 600 | 2026-10-11: not-published; No statutory feed URL found in reviewed sources; no feed request | [1](https://be-ev.co.uk/) [2](https://be-ev.co.uk/public-charge-point-regulations/) |
-| [Believ (Liberty Charge)](https://www.believ.com/) | [Page](https://www.believ.com/open-data/) | [https://api.believ.com/](https://api.believ.com/) | unknown / unknown | unknown | unknown | unknown | unknown | Developer portal registration/login; larger-data request form | unknown | 2026-10-11: needs-key; Access gated; no credentials requested or used | [1](https://www.believ.com/open-data/) [2](https://api.believ.com/) [3](https://www.believ.com/press-releases/liberty-charge-rebrands-to-believ/) |
+| [Believ (Liberty Charge)](https://www.believ.com/) | [Page](https://www.believ.com/open-data/) | [https://api.believ.com/](https://api.believ.com/) | unknown / unknown | unknown | unknown | unknown | unknown | Developer portal registration/login; larger-data request form | unknown | 2026-10-11: needs-key; Access gated; no credentials requested or used | [1](https://www.believ.com/open-data/) [2](https://api.believ.com/) [3](https://www.believ.com/press-releases/liberty-charge-rebrands-to-believ/) [4](https://api.believ.com/register) |
 | [Blink (EB Charging / Electric Blue)](https://blinkcharging.com/en-gb) | [Page](https://blinkcharging.com/en-gb/getintouch/blink-open-data-request) | [https://open-chargepoints.com/api/ocpi/cpo/2.2.1/](https://open-chargepoints.com/api/ocpi/cpo/2.2.1/) | OCPI JSON / 2.2.1 (URL; guide calls it 2.2) | locations, tariffs, statuses | unknown | unknown | emailed-key | Request form; sharing personal data with Eco-Movement disclosed | unknown | 2026-10-11: needs-key; HTTP 307/401; http-error | [1](https://blinkcharging.com/en-gb/getintouch/blink-open-data-request) [2](https://developers.eco-movement.com/docs/eco-movement-pcpr-api-user-guide) [3](https://developers.eco-movement.com/reference/get-all-locations-pcpr-api) [4](https://ir.blinkcharging.com/sec-filings/all-sec-filings/content/0001493152-22-011169/0001493152-22-011169.pdf) |
-| [BP Pulse](https://www.bppulse.co.uk/) | [Page](https://www.bppulse.co.uk/help-centre/charging/faq/public-charge-point-regulations) | [https://open-chargepoints.com/api/ocpi/cpo/2.2.1/](https://open-chargepoints.com/api/ocpi/cpo/2.2.1/) | OCPI JSON / 2.2.1 (URL; guide calls it 2.2) | locations, tariffs, statuses | unknown | unknown | emailed-key | Not found | unknown | 2026-10-11: needs-key; HTTP 307/401; http-error | [1](https://www.bppulse.co.uk/help-centre/charging/faq/public-charge-point-regulations) [2](https://developers.eco-movement.com/docs/eco-movement-pcpr-api-user-guide) [3](https://developers.eco-movement.com/reference/get-all-locations-pcpr-api) [4](https://wiki.openstreetmap.org/wiki/EV_charge_points_in_the_United_Kingdom) |
+| [BP Pulse](https://www.bppulse.co.uk/) | [Page](https://www.bppulse.co.uk/help-centre/charging/faq/public-charge-point-regulations) | [https://open-chargepoints.com/api/ocpi/cpo/2.2.1/](https://open-chargepoints.com/api/ocpi/cpo/2.2.1/) | OCPI JSON / 2.2.1 (URL; guide calls it 2.2) | locations, tariffs, statuses | unknown | unknown | emailed-key | Not found | unknown | 2026-10-11: needs-key; HTTP 307/401; http-error | [1](https://www.bppulse.co.uk/help-centre/charging/faq/public-charge-point-regulations) [2](https://developers.eco-movement.com/docs/eco-movement-pcpr-api-user-guide) [3](https://developers.eco-movement.com/reference/get-all-locations-pcpr-api) [4](https://wiki.openstreetmap.org/wiki/EV_charge_points_in_the_United_Kingdom) [5](https://www.bppulse.com/en-gb/help-and-support/contact) |
 | [char.gy](https://char.gy/) | [Page](https://help.char.gy/support/solutions/articles/77000576948-public-charge-point-regulations-2023) | [https://char.gy/open-ocpi/](https://char.gy/open-ocpi/) | OCPI-shaped JSON / unknown | locations, tariffs | not-observed | references-only | none | No feed-specific acceptance shown on publication page | 5962 | 2026-10-11: open-and-working; HTTP 200; one-location-observed; X-Total-Count 5962; Link present | [1](https://help.char.gy/support/solutions/articles/77000576948-public-charge-point-regulations-2023) |
 | [ChargeMyStreet](https://chargemystreet.co.uk/) | — | — | unknown / unknown | unknown | unknown | unknown | unknown | Not found | unknown | 2026-10-11: not-published; No statutory feed URL found in reviewed sources; no feed request | [1](https://chargemystreet.co.uk/) |
 | [ChargePlace Scotland](https://chargeplacescotland.org/) | [Page](https://chargeplacescotland.org/network-performance-2/) | [https://info.smartcharging.uk/public_feed/locations/2463](https://info.smartcharging.uk/public_feed/locations/2463) | OCPI-shaped JSON / unknown | locations, tariffs | observed | references-only | none | No feed-specific acceptance shown on publication page | 1479 | 2026-10-11: open-and-working; HTTP 200; one-location-observed; X-Total-Count 1479 | [1](https://chargeplacescotland.org/network-performance-2/) |
-| [ChargePoint CMS (platform networks)](https://www.chargepoint.com/en-gb) | [Page](https://www.chargepoint.com/en-gb/blog/navigating-uk-public-charging-regulations-guide-charge-point-operators) | — | unknown / unknown | unknown | unknown | unknown | unknown | Not found | unknown | 2026-10-11: needs-key; Partner request route offered; token and endpoint not disclosed | [1](https://www.chargepoint.com/en-gb/blog/navigating-uk-public-charging-regulations-guide-charge-point-operators) |
+| [ChargePoint CMS (platform networks)](https://www.chargepoint.com/en-gb) | [Page](https://www.chargepoint.com/en-gb/blog/navigating-uk-public-charging-regulations-guide-charge-point-operators) | — | unknown / unknown | unknown | unknown | unknown | unknown | Not found | unknown | 2026-10-11: needs-key; Partner request route offered; token and endpoint not disclosed | [1](https://www.chargepoint.com/en-gb/blog/navigating-uk-public-charging-regulations-guide-charge-point-operators) [2](https://docs.google.com/forms/d/e/1FAIpQLSeJ9Z3dyMdsBjaQ3pj9F3aOAXE4jstoHFBxwVq3wxs5lU5JLg/viewform) |
 | [CityEV / EVopencard (platform networks)](https://cityev.net/) | — | — | unknown / unknown | unknown | unknown | unknown | unknown | Not found | unknown | 2026-10-11: not-published; No statutory feed URL found in reviewed sources; no feed request | [1](https://cityev.net/faqs/) [2](https://cityev.net/evopencard-app/) |
 | [Clenergy EV](https://www.clenergy-ev.com/) | [Page](https://www.clenergy-ev.com/open-data/) | [https://api.clenergy.online/development/pcpr/](https://api.clenergy.online/development/pcpr/) | OCPI-shaped JSON / unknown | locations, tariffs | unknown | unknown | none | No feed-specific acceptance shown on publication page | unknown | 2026-10-11: published-not-sampled; HTTP 200; oversize-body-skipped | [1](https://www.clenergy-ev.com/open-data/) |
 | [Connected Kerb](https://connectedkerb.com/) | — | — | unknown / unknown | unknown | unknown | unknown | unknown | Not found | unknown | 2026-10-11: not-published; No statutory feed URL found in reviewed sources; no feed request | [1](https://connectedkerb.com/) [2](https://wiki.openstreetmap.org/wiki/EV_charge_points_in_the_United_Kingdom) |
@@ -133,10 +134,10 @@ not deduplicated physical sites; Be.EV's 600 is its published lower bound.
 | [EVC](https://www.evc.co.uk/) | — | — | unknown / unknown | unknown | unknown | unknown | unknown | Not found | unknown | 2026-10-11: not-published; No statutory feed URL found in reviewed sources; no feed request | [1](https://www.evc.co.uk/) |
 | [Evology](https://evology.co.uk/) | — | — | unknown / unknown | unknown | unknown | unknown | unknown | Not found | unknown | 2026-10-11: not-published; No statutory feed URL found in reviewed sources; no feed request | [1](https://evology.co.uk/) |
 | [Evolt Network (SWARCO E.Connect)](https://evoltnetwork.co.uk/) | [Page](https://evoltnetwork.co.uk/faqs/) | [https://info.smartcharging.uk/public_feed/locations/3666](https://info.smartcharging.uk/public_feed/locations/3666) | OCPI-shaped JSON / unknown | locations, tariffs | observed | references-only | none | No feed-specific acceptance shown on publication page | 710 | 2026-10-11: open-and-working; HTTP 200; one-location-observed; X-Total-Count 710 | [1](https://evoltnetwork.co.uk/faqs/) |
-| [EVPoint / EG on the move](https://www.eg-otm.com/ev-charging/) | — | — | unknown / unknown | unknown | unknown | unknown | unknown | Not found | unknown | 2026-10-11: not-published; No statutory feed URL found in reviewed sources; no feed request | [1](https://www.eg-otm.com/ev-charging/) |
+| [EVPoint / EG on the move](https://www.eg-otm.com/ev-charging/) | [Page](https://www.chargepoint.com/en-gb/blog/navigating-uk-public-charging-regulations-guide-charge-point-operators) | — | unknown / unknown | unknown | unknown | unknown | unknown | Request form; access and reuse conditions not verified | unknown | 2026-10-11: needs-key; ChargePoint request form explicitly lists this network; endpoint and credentials pending | [1](https://www.eg-otm.com/ev-charging/) [2](https://www.chargepoint.com/en-gb/blog/navigating-uk-public-charging-regulations-guide-charge-point-operators) [3](https://docs.google.com/forms/d/e/1FAIpQLSeJ9Z3dyMdsBjaQ3pj9F3aOAXE4jstoHFBxwVq3wxs5lU5JLg/viewform) |
 | [EVYVE](https://evyve.co.uk/) | [Page](https://evyve.co.uk/) | [https://open-chargepoints.com/api/ocpi/cpo/2.2.1/](https://open-chargepoints.com/api/ocpi/cpo/2.2.1/) | OCPI JSON / 2.2.1 (URL; guide calls it 2.2) | locations, tariffs, statuses | unknown | unknown | emailed-key | Request form; data-use conditions not stated on homepage | unknown | 2026-10-11: needs-key; HTTP 307/401; http-error | [1](https://evyve.co.uk/) [2](https://developers.eco-movement.com/docs/eco-movement-pcpr-api-user-guide) [3](https://developers.eco-movement.com/reference/get-all-locations-pcpr-api) |
 | [EZO (EasyGo)](https://ezo.co.uk/) | — | — | unknown / unknown | unknown | unknown | unknown | unknown | Not found | unknown | 2026-10-11: not-published; No statutory feed URL found in reviewed sources; no feed request | [1](https://ezo.co.uk/news/ezo-begins-rollout-in-scotland/) [2](https://scotlandchargers.ezo.co.uk/infrastructure-faqs) [3](https://ezo.co.uk/support/) |
-| [Fastned](https://www.fastnedcharging.com/en-gb) | [Page](https://www.fastnedcharging.com/en-gb/uk-open-data) | — | unknown / unknown | locations, tariffs | documented | documented | emailed-key | Fair-use policy: attribution, adapted-data notice, revocable licence, indemnity; access implies agreement | unknown | 2026-10-11: needs-key; Access gated; no credentials requested or used | [1](https://www.fastnedcharging.com/en-gb/uk-open-data) |
+| [Fastned](https://www.fastnedcharging.com/en-gb) | [Page](https://www.fastnedcharging.com/en-gb/uk-open-data) | — | unknown / unknown | locations, tariffs | documented | documented | emailed-key | Fair-use policy: attribution, adapted-data notice, revocable licence, indemnity; access implies agreement | unknown | 2026-10-11: needs-key; Access gated; no credentials requested or used | [1](https://www.fastnedcharging.com/en-gb/uk-open-data) [2](https://form.typeform.com/to/y9Adcjqe) |
 | [FOR EV](https://forev.co.uk/) | — | — | unknown / unknown | unknown | unknown | unknown | unknown | Not found | unknown | 2026-10-11: not-published; No statutory feed URL found in reviewed sources; no feed request | [1](https://forev.co.uk/) |
 | [Fuuse (platform networks)](https://fuuse.io/) | [Page](https://fuuse.io/blog/public-charge-point-regulations) | — | OCPI-shaped JSON (tenant dependent) / unknown | locations, tariffs | unknown | unknown | unknown | Not found | unknown | 2026-10-11: not-published; No statutory feed URL found in reviewed sources; no feed request | [1](https://fuuse.io/blog/public-charge-point-regulations) [2](https://content.fuuse.io/hubfs/User%20Guides%20and%20Onboarding%20Support/Customer%20Journeys%20-%20F-MK-0066-V2.pdf) |
 | [GeniePoint (Equans)](https://www.equans.co.uk/drivers-geniepoint) | [Page](https://www.equans.co.uk/drivers-geniepoint/open-data) | [https://opendata.geniepoint.co.uk/](https://opendata.geniepoint.co.uk/) | OCPI-shaped JSON / unknown | locations, tariffs | unknown | unknown | none | No feed-specific acceptance shown on publication page | unknown | 2026-10-11: published-not-sampled; Published links; exact paths not verified; no feed request | [1](https://www.equans.co.uk/drivers-geniepoint/open-data) [2](https://drivers.geniepoint.co.uk/open-data) |
@@ -146,7 +147,7 @@ not deduplicated physical sites; Be.EV's 600 is its published lower bound.
 | [IONITY](https://www.ionity.eu/) | [Page](https://www.ionity.eu/open-data-request) | [https://open-chargepoints.com/api/ocpi/cpo/2.2.1/](https://open-chargepoints.com/api/ocpi/cpo/2.2.1/) | OCPI JSON / 2.2.1 (URL; guide calls it 2.2) | locations, tariffs, statuses | unknown | unknown | emailed-key | Request form and personal-data processing notice | unknown | 2026-10-11: needs-key; HTTP 307/401; http-error | [1](https://www.ionity.eu/open-data-request) [2](https://developers.eco-movement.com/docs/eco-movement-pcpr-api-user-guide) [3](https://developers.eco-movement.com/reference/get-all-locations-pcpr-api) |
 | [Joju Charging](https://www.jojusolar.co.uk/) | — | — | unknown / unknown | unknown | unknown | unknown | unknown | Not found | unknown | 2026-10-11: not-published; No statutory feed URL found in reviewed sources; no feed request | [1](https://www.jojusolar.co.uk/a-10-million-kwh-milestone-joju-and-mer-ev-charging/) [2](https://play.google.com/store/apps/details?id=com.jojucharging) |
 | [JOLT](https://joltcharge.com/uk/) | — | — | unknown / unknown | unknown | unknown | unknown | unknown | Not found | unknown | 2026-10-11: not-published; No statutory feed URL found in reviewed sources; no feed request | [1](https://joltcharge.com/uk/) |
-| [Lidl](https://www.lidl.co.uk/c/electric-vehicle-charging/s10022527) | — | — | unknown / unknown | unknown | unknown | unknown | unknown | Not found | unknown | 2026-10-11: not-published; No statutory feed URL found in reviewed sources; no feed request | [1](https://www.lidl.co.uk/c/electric-vehicle-charging/s10022527) |
+| [Lidl](https://www.lidl.co.uk/c/electric-vehicle-charging/s10022527) | [Page](https://www.chargepoint.com/en-gb/blog/navigating-uk-public-charging-regulations-guide-charge-point-operators) | — | unknown / unknown | unknown | unknown | unknown | unknown | Request form; access and reuse conditions not verified | unknown | 2026-10-11: needs-key; ChargePoint request form explicitly lists this network; endpoint and credentials pending | [1](https://www.lidl.co.uk/c/electric-vehicle-charging/s10022527) [2](https://www.chargepoint.com/en-gb/blog/navigating-uk-public-charging-regulations-guide-charge-point-operators) [3](https://docs.google.com/forms/d/e/1FAIpQLSeJ9Z3dyMdsBjaQ3pj9F3aOAXE4jstoHFBxwVq3wxs5lU5JLg/viewform) |
 | [Mer](https://uk.mer.eco/) | — | — | unknown / unknown | unknown | unknown | unknown | unknown | Not found | unknown | 2026-10-11: not-published; No statutory feed URL found in reviewed sources; no feed request | [1](https://uk.mer.eco/) |
 | [MFG EV Power](https://www.motorfuelgroup.com/) | [Page](https://www.motorfuelgroup.com/ev-power/) | [https://opendata.motorfuelgroup.net/](https://opendata.motorfuelgroup.net/) | OCPI-shaped JSON / unknown | locations, tariffs | unknown | unknown | none | No feed-specific acceptance shown on publication page | unknown | 2026-10-11: published-but-failing; HTTP no response; timeout | [1](https://www.motorfuelgroup.com/ev-power/) |
 | [Monta (platform networks)](https://monta.com/uk/) | [Page](https://docs.public-api.monta.com/reference/get-open-data-locations) | [https://public-api.monta.com/api/v1/open-data/](https://public-api.monta.com/api/v1/open-data/) | OCPI JSON / 2.2.1 (documented) | locations | observed | references-only | none | Bearer UI shown in API docs, but one location returned anonymously; feed-specific terms unverified | unknown | 2026-10-11: open-and-working; HTTP 200; one-location-observed | [1](https://docs.public-api.monta.com/reference/get-open-data-locations) |
@@ -157,7 +158,7 @@ not deduplicated physical sites; Be.EV's 600 is its published lower bound.
 | [PoGo Charge](https://pogocharge.com/) | [Page](https://pogocharge.com/faqs/) | [https://info.smartcharging.uk/public_feed/locations/4009](https://info.smartcharging.uk/public_feed/locations/4009) | OCPI-shaped JSON / unknown | locations, tariffs | observed | references-only | none | No feed-specific acceptance shown on publication page | 161 | 2026-10-11: open-and-working; HTTP 200; one-location-observed; X-Total-Count 161 | [1](https://pogocharge.com/faqs/) |
 | [Project EV (platform networks)](https://www.projectev.co.uk/) | — | — | unknown / unknown | unknown | unknown | unknown | unknown | Not found | unknown | 2026-10-11: not-published; No statutory feed URL found in reviewed sources; no feed request | [1](https://www.projectev.co.uk/) |
 | [Qwello](https://qwello.uk/) | — | — | unknown / unknown | unknown | unknown | unknown | unknown | Not found | unknown | 2026-10-11: not-published; No statutory feed URL found in reviewed sources; no feed request | [1](https://qwello.uk/) |
-| [RAW Charging](https://rawcharging.com/) | — | — | unknown / unknown | unknown | unknown | unknown | unknown | Not found | unknown | 2026-10-11: not-published; No statutory feed URL found in reviewed sources; no feed request | [1](https://rawcharging.com/) |
+| [RAW Charging](https://rawcharging.com/) | [Page](https://www.chargepoint.com/en-gb/blog/navigating-uk-public-charging-regulations-guide-charge-point-operators) | — | unknown / unknown | unknown | unknown | unknown | unknown | Request form; access and reuse conditions not verified | unknown | 2026-10-11: needs-key; ChargePoint request form explicitly lists this network; endpoint and credentials pending | [1](https://rawcharging.com/) [2](https://www.chargepoint.com/en-gb/blog/navigating-uk-public-charging-regulations-guide-charge-point-operators) [3](https://docs.google.com/forms/d/e/1FAIpQLSeJ9Z3dyMdsBjaQ3pj9F3aOAXE4jstoHFBxwVq3wxs5lU5JLg/viewform) |
 | [Revive (West of England)](https://travelwest.info/electric-vehicles/charging-points/) | — | — | unknown / unknown | unknown | unknown | unknown | unknown | Not found | unknown | 2026-10-11: not-published; No statutory feed URL found in reviewed sources; no feed request | [1](https://travelwest.info/electric-vehicles/charging-points/) |
 | [ROAM Charging](https://www.roamcharging.com/) | — | — | unknown / unknown | unknown | unknown | unknown | unknown | Not found | unknown | 2026-10-11: not-published; No statutory feed URL found in reviewed sources; no feed request | [1](https://www.roamcharging.com/) |
 | [Sainsbury's Smart Charge](https://smartcharge.co.uk/) | [Page](https://smartcharge.co.uk/faq) | — | unknown / unknown | unknown | unknown | unknown | unknown | Not found | unknown | 2026-10-11: needs-key; Endpoint supplied on request; authentication mechanism unknown | [1](https://smartcharge.co.uk/faq) |
@@ -213,6 +214,25 @@ operator domain served unrelated content and its current publisher remains
 unverified. ESB's separately published quarterly island-of-Ireland reference CSV
 is not established as a statutory live UK feed. No bulk CSV was downloaded.
 
+## Access-route follow-up — 11 October 2026
+
+A browser review of the operator-linked request forms found three additional
+network scopes in the [ChargePoint request form](https://docs.google.com/forms/d/e/1FAIpQLSeJ9Z3dyMdsBjaQ3pj9F3aOAXE4jstoHFBxwVq3wxs5lU5JLg/viewform): **Raw Charging**,
+**ev-point**, and **Lidl Great Britain Limited**. These rows now have an access
+route, but no endpoint, credentials or authenticated sample. The separate
+**ChargePoint platform CPOs** option must not be assumed to include every scope.
+Confirm coverage and avoid counting shared records twice.
+
+[Believ registration](https://api.believ.com/register) provides a simpler API
+onboarding route than its separate larger-data questionnaire. Fastned's policy
+page offers a [Request API Access form](https://form.typeform.com/to/y9Adcjqe).
+BP's old PCPR page redirected to its homepage; use the
+[current contact form](https://www.bppulse.com/en-gb/help-and-support/contact)
+to confirm the statutory access route. These are publication observations, not
+additional feed requests. Forms were prepared for the app operator, with final
+submission, passwords, CAPTCHA and agreement decisions left to them. No request
+was submitted by this research task. Receipt of credentials remains unverified.
+
 ## Unsent access-request drafts
 
 All drafts below are **from testing@tailendcharlie.app**, for the app operator to
@@ -220,6 +240,60 @@ send. No email was sent and no contact form was submitted. Where no verified
 mailbox exists, the recipient is the published contact route; obtain the correct
 open-data mailbox before sending. Do not guess addresses. Ask for credentials
 privately and keep them out of the public repository.
+
+### Raw Charging — ChargePoint request scope
+
+To: [ChargePoint open-data request form](https://docs.google.com/forms/d/e/1FAIpQLSeJ9Z3dyMdsBjaQ3pj9F3aOAXE4jstoHFBxwVq3wxs5lU5JLg/viewform); select **Raw Charging**\
+From: testing@tailendcharlie.app\
+Subject: PCPR regulation 10 — read-only UK open-data access
+
+Please provide free read-only access under Public Charge Point Regulations 2023
+[regulation 10](https://www.legislation.gov.uk/uksi/2023/1168/regulation/10/made)
+to public UK locations, connectors, payment methods, EVSE status and tariffs
+(including price per kWh) for Tail End Charlie, a free motorcycle group-riding app
+(https://tailendcharlie.app). Please include the OCPI version, endpoint URLs,
+pagination, rate limits and update frequency. Please confirm the **Raw Charging**
+network scope, any overlap with ChargePoint platform CPOs and how credentials
+should be supplied privately.
+
+Thank you,\
+Tail End Charlie
+
+### ev-point — ChargePoint request scope
+
+To: [ChargePoint open-data request form](https://docs.google.com/forms/d/e/1FAIpQLSeJ9Z3dyMdsBjaQ3pj9F3aOAXE4jstoHFBxwVq3wxs5lU5JLg/viewform); select **ev-point**\
+From: testing@tailendcharlie.app\
+Subject: PCPR regulation 10 — read-only UK open-data access
+
+Please provide free read-only access under Public Charge Point Regulations 2023
+[regulation 10](https://www.legislation.gov.uk/uksi/2023/1168/regulation/10/made)
+to public UK locations, connectors, payment methods, EVSE status and tariffs
+(including price per kWh) for Tail End Charlie, a free motorcycle group-riding app
+(https://tailendcharlie.app). Please include the OCPI version, endpoint URLs,
+pagination, rate limits and update frequency. Please confirm the **ev-point**
+network scope, any overlap with ChargePoint platform CPOs and how credentials
+should be supplied privately.
+
+Thank you,\
+Tail End Charlie
+
+### Lidl Great Britain Limited — ChargePoint request scope
+
+To: [ChargePoint open-data request form](https://docs.google.com/forms/d/e/1FAIpQLSeJ9Z3dyMdsBjaQ3pj9F3aOAXE4jstoHFBxwVq3wxs5lU5JLg/viewform); select **Lidl Great Britain Limited**\
+From: testing@tailendcharlie.app\
+Subject: PCPR regulation 10 — read-only UK open-data access
+
+Please provide free read-only access under Public Charge Point Regulations 2023
+[regulation 10](https://www.legislation.gov.uk/uksi/2023/1168/regulation/10/made)
+to public UK locations, connectors, payment methods, EVSE status and tariffs
+(including price per kWh) for Tail End Charlie, a free motorcycle group-riding app
+(https://tailendcharlie.app). Please include the OCPI version, endpoint URLs,
+pagination, rate limits and update frequency. Please confirm the **Lidl Great Britain Limited**
+network scope, any overlap with ChargePoint platform CPOs and how credentials
+should be supplied privately.
+
+Thank you,\
+Tail End Charlie
 
 ### Allego
 
@@ -331,7 +405,7 @@ Tail End Charlie
 
 ### Fastned
 
-To: UK support via operator website; dedicated open-data mailbox not found ([published route](https://www.fastnedcharging.com/en-gb/uk-open-data))\
+To: Request API Access form on the [UK open-data page](https://www.fastnedcharging.com/en-gb/uk-open-data) ([direct form](https://form.typeform.com/to/y9Adcjqe))\
 From: testing@tailendcharlie.app\
 Subject: PCPR regulation 10 — read-only UK open-data access
 
