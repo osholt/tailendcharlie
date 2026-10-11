@@ -5,7 +5,7 @@ Companion to [the charging-data decision](fuel-and-charging-data-decision.md#cha
 
 This register records **65 network, platform and legacy-name entries**, including
 all the names in the issue, with aliases combined where appropriate. It identifies
-seven anonymously working locations samples. It is a verified record of the
+eight anonymously working locations samples. It is a verified record of the
 observations below, **not a verified census of every current legal CPO**, nor a
 certification that any feed meets every statutory requirement.
 
@@ -41,9 +41,9 @@ certification that any feed meets every statutory requirement.
    follow pagination, fetch individual EVSEs, download a bulk archive,
    retry, or automatically follow redirects. The six Eco-Movement entries each
    used two requests: the documented path returned 307, then the separately
-   documented trailing-slash path returned 401. Six open entries also received one separately documented tariff-page request
+   documented trailing-slash path returned 401. Seven open entries also received one separately documented tariff-page request
    with `limit=1`; all other sampled entries used one request.
-   **29 feed requests across 17 entries**, still at most two per entry; other entries have no
+   **31 feed requests across 18 entries**, still at most two per entry; other entries have no
    live feed observation. Website/document retrieval is separate from these feed
    requests. No saved responses, station records or personal addresses are included.
 6. Record sanitized metadata only: HTTP codes, offered versions, module names,
@@ -70,19 +70,19 @@ and one is a legacy name; the other 57 are network entries. Networks can overlap
 
 | Outcome | Entries | Interpretation |
 | --- | ---: | --- |
-| `open-and-working` | 7 | Anonymous HTTP 200 with exactly one recognizable Location; no completeness claim |
+| `open-and-working` | 8 | Anonymous HTTP 200 with exactly one recognizable Location; no completeness claim |
 | `needs-key` | 18 | Key, login, or access-request route; actual credential type can remain unknown |
 | `basic-auth` | 1 | Osprey: Basic access reported by OSM; not independently authenticated |
 | `published-but-failing` | 1 | MFG: request timed out on this check |
 | `not-published` | 34 | No verified statutory feed URL found within reviewed sources |
-| `published-not-sampled` | 4 | Publication exists, but the bounded check cannot establish a usable sample |
+| `published-not-sampled` | 3 | Publication exists, but the bounded check cannot establish a usable sample |
 | **Total** | **65** | |
 
 The sixth category prevents bulk-only publications, skipped oversized responses
 and unresolved publication links from being misleadingly called failed APIs.
 
 - **Working samples:** Arnold Clark Charge, char.gy, ChargePlace Scotland, Evolt
-  Network, Monta, PoGo Charge and Urban Fox.
+  Network, GeniePoint, Monta, PoGo Charge and Urban Fox.
 - **Key/access requests:** Allego, Believ, Blink, BP Pulse, ChargePoint CMS, EVYVE,
   Fastned, GRIDSERVE, InstaVolt, IONITY, Lidl, RAW Charging, EVPoint,
   Sainsbury's Smart Charge, Shell Recharge /
@@ -90,8 +90,7 @@ and unresolved publication links from being misleadingly called failed APIs.
   a draft asking for a paginated API; its publicly linked ZIP was not downloaded.
 - **Published but not sampled:** Clenergy EV and EV Dot returned HTTP 200 with
   Content-Length above 64 KiB; their bodies were skipped, so this does **not** prove
-  they ignore pagination. GeniePoint publishes JSON links, but exact target paths
-  could not be extracted from the directly blocked page. Wenea exposes a bulk ZIP.
+  they ignore pagination. Wenea exposes a bulk ZIP.
 
 ## Register
 
@@ -143,7 +142,7 @@ not deduplicated physical sites; Be.EV's 600 is its published lower bound.
 | [Fastned](https://www.fastnedcharging.com/en-gb) | [Page](https://www.fastnedcharging.com/en-gb/uk-open-data) | — | unknown / unknown | locations, tariffs | documented | documented | emailed-key | Fair-use policy: attribution, adapted-data notice, revocable licence, indemnity; access implies agreement | unknown | 2026-10-11: needs-key; Access gated; no credentials requested or used | [1](https://www.fastnedcharging.com/en-gb/uk-open-data) [2](https://form.typeform.com/to/y9Adcjqe) |
 | [FOR EV](https://forev.co.uk/) | — | — | unknown / unknown | unknown | unknown | unknown | unknown | Not found | unknown | 2026-10-11: not-published; No statutory feed URL found in reviewed sources; no feed request | [1](https://forev.co.uk/) |
 | [Fuuse (platform networks)](https://fuuse.io/) | [Page](https://fuuse.io/blog/public-charge-point-regulations) | — | OCPI-shaped JSON (tenant dependent) / unknown | locations, tariffs | unknown | unknown | unknown | Not found | unknown | 2026-10-11: not-published; No statutory feed URL found in reviewed sources; no feed request | [1](https://fuuse.io/blog/public-charge-point-regulations) [2](https://content.fuuse.io/hubfs/User%20Guides%20and%20Onboarding%20Support/Customer%20Journeys%20-%20F-MK-0066-V2.pdf) |
-| [GeniePoint (Equans)](https://www.equans.co.uk/drivers-geniepoint) | [Page](https://www.equans.co.uk/drivers-geniepoint/open-data) | [https://opendata.geniepoint.co.uk/](https://opendata.geniepoint.co.uk/) | OCPI-shaped JSON / unknown | locations, tariffs | unknown | unknown | none | No feed-specific acceptance shown on publication page | unknown | 2026-10-11: published-not-sampled; Published links; exact paths not verified; no feed request | [1](https://www.equans.co.uk/drivers-geniepoint/open-data) [2](https://drivers.geniepoint.co.uk/open-data) |
+| [GeniePoint (Equans)](https://www.equans.co.uk/drivers-geniepoint) | [Page](https://www.equans.co.uk/drivers-geniepoint/open-data) | [https://opendata.geniepoint.co.uk/](https://opendata.geniepoint.co.uk/) | OCPI-shaped JSON / unknown | locations, tariffs | observed | references-only | none | No feed-specific acceptance shown on publication page | 306 | 2026-10-11: open-and-working; HTTP 200; one Location with EVSE status and tariff IDs | [1](https://www.equans.co.uk/drivers-geniepoint/open-data) [2](https://drivers.geniepoint.co.uk/open-data) |
 | [Go Zero](https://www.gozerocharge.com/) | [Page](https://gozerocharge.com/public-charge-point-open-data/) | — | unknown / unknown | unknown | unknown | unknown | unknown | Not found | unknown | 2026-10-11: not-published; No statutory feed URL found in reviewed sources; no feed request | [1](https://www.gozerocharge.com/) [2](https://gozerocharge.com/public-charge-point-open-data/) [3](https://wiki.openstreetmap.org/wiki/EV_charge_points_in_the_United_Kingdom) |
 | [GRIDSERVE (Electric Highway)](https://www.gridserve.com/) | [Page](https://www.gridserve.com/open-data/) | [https://api.gridserve.com/ocpi/v1/](https://api.gridserve.com/ocpi/v1/) | OCPI-shaped JSON / unknown | locations, tariffs | documented | documented | emailed-key | API/fair-use acceptance required; terms assert data IP/confidentiality and restrictions; clarify statutory reuse rights | unknown | 2026-10-11: needs-key; HTTP 401; http-error | [1](https://www.gridserve.com/open-data/) [2](https://www.gridserve.com/wp-content/uploads/2024/11/GRIDSERVE-PCPR-API-Developer-Documentation.pdf) [3](https://www.gridserve.com/wp-content/uploads/2024/11/GRIDSERVE-PCPR-Open-Data-Onboarding-Information.pdf) [4](https://www.gridserve.com/ecotricity-completes-electric-highway-sale-to-gridserve/) [5](https://www.gridserve.com/legal-area/open-data-api-terms-and-conditions/) |
 | [InstaVolt](https://instavolt.co.uk/) | [Page](https://instavolt.co.uk/public-charge-point-regulation-data/) | — | OCPI (documented) / unknown | locations | unknown | unknown | emailed-key | Page requires a signed Open Data Agreement before credentials | unknown | 2026-10-11: needs-key; Access gated; no credentials requested or used | [1](https://instavolt.co.uk/public-charge-point-regulation-data/) |
@@ -231,6 +230,13 @@ outcome counts above are unchanged; this check establishes a separate module.
 | Evolt Network | Observed | 289 | Yes |
 | PoGo Charge | Observed | 13 | Yes |
 | Urban Fox | Observed | 22 | Yes |
+
+GeniePoint was subsequently checked using the exact links extracted from its
+[rendered publication page](https://www.equans.co.uk/drivers-geniepoint/open-data).
+Its anonymous locations sample contains EVSE status and tariff IDs, with
+`X-Total-Count: 306` and no Link header. The tariff response reports 530 objects
+and no Link header, but its declared body size exceeds 64 KiB; the body was
+skipped. This is not a numeric-price observation or proof of ignored pagination.
 
 Targets are stored as `tariffs_url` beside their operator publication sources.
 Monta has no reviewed tariff URL, so none was guessed. The probe requires a
@@ -631,7 +637,9 @@ Tail End Charlie
 
 ## Probe usage and schema
 
-Python 3.12; standard library only. Run from the repository root:
+Python 3.12; standard library only. Install CI tooling with
+`uv sync --frozen --extra dev` from `apps/server`, then run from the repository root.
+Use the locked Ruff executable below; an older global Ruff can disagree with CI:
 
 ```bash
 # One chosen feed, with at most two requests. This is a new live check.
@@ -642,8 +650,8 @@ python3 tools/charging/check_feeds.py --id char-gy --tariffs-only
 python3 tools/charging/check_feeds.py --markdown
 # Offline, mocked HTTP checks, including exact docs/register agreement.
 python3 -m unittest discover -s tools/charging/tests
-ruff format --check tools/charging
-ruff check tools/charging
+apps/server/.venv/bin/ruff format --check tools/charging
+apps/server/.venv/bin/ruff check tools/charging
 ```
 
 Without `--id` the tool checks all configured entries once, sequentially. It is a

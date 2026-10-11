@@ -398,14 +398,14 @@ def markdown_table(feeds: list[dict]) -> str:
             link(feed["website"], feed["name"]),
             link(feed["open_data_page"], "Page"),
             link(feed["base_url"], feed["base_url"]) if feed["base_url"] else "—",
-            f'{feed["format"]} / {feed["ocpi_version"]}',
+            f"{feed['format']} / {feed['ocpi_version']}",
             ", ".join(feed["modules"]) or "unknown",
             feed["has_status"],
             feed["has_tariffs"],
             feed["auth"],
             feed["terms"],
             str(feed["sites_approx"]) if feed["sites_approx"] >= 0 else "unknown",
-            f'{feed["checked_on"]}: {feed["check_result"]}; {feed["check_detail"]}',
+            f"{feed['checked_on']}: {feed['check_result']}; {feed['check_detail']}",
             " ".join(link(url, str(i + 1)) for i, url in enumerate(feed["sources"])),
         ]
         lines.append(
@@ -449,9 +449,9 @@ def main(argv=None) -> int:
         link = "yes" if last.get("link") else "—"
         modules = ",".join(result["modules"]) or "unknown"
         print(
-            f'{feed["id"]:24} {http:10} {versions:14} {result["status"]:15} '
-            f'{result["tariffs"]:16} {count:9} {link:5} {modules} / '
-            f'{result["outcome"]} / {result["reason"]}'
+            f"{feed['id']:24} {http:10} {versions:14} {result['status']:15} "
+            f"{result['tariffs']:16} {count:9} {link:5} {modules} / "
+            f"{result['outcome']} / {result['reason']}"
         )
     print("; ".join(f"{outcome}: {counts[outcome]}" for outcome in OUTCOMES))
     return 0
