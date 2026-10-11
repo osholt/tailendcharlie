@@ -140,7 +140,7 @@ not deduplicated physical sites; Be.EV's 600 is its published lower bound.
 | [EVPoint / EG on the move](https://www.eg-otm.com/ev-charging/) | [Page](https://www.chargepoint.com/en-gb/blog/navigating-uk-public-charging-regulations-guide-charge-point-operators) | — | unknown / unknown | unknown | unknown | unknown | unknown | Request form; access and reuse conditions not verified | unknown | 2026-10-11: needs-key; ChargePoint request form explicitly lists this network; endpoint and credentials pending | [1](https://www.eg-otm.com/ev-charging/) [2](https://www.chargepoint.com/en-gb/blog/navigating-uk-public-charging-regulations-guide-charge-point-operators) [3](https://docs.google.com/forms/d/e/1FAIpQLSeJ9Z3dyMdsBjaQ3pj9F3aOAXE4jstoHFBxwVq3wxs5lU5JLg/viewform) |
 | [EVYVE](https://evyve.co.uk/) | [Page](https://evyve.co.uk/) | [https://open-chargepoints.com/api/ocpi/cpo/2.2.1/](https://open-chargepoints.com/api/ocpi/cpo/2.2.1/) | OCPI JSON / 2.2.1 (URL; guide calls it 2.2) | locations, tariffs, statuses | unknown | unknown | emailed-key | Request form; data-use conditions not stated on homepage | unknown | 2026-10-11: needs-key; HTTP 307/401; http-error | [1](https://evyve.co.uk/) [2](https://developers.eco-movement.com/docs/eco-movement-pcpr-api-user-guide) [3](https://developers.eco-movement.com/reference/get-all-locations-pcpr-api) |
 | [EZO (EasyGo)](https://ezo.co.uk/) | — | — | unknown / unknown | unknown | unknown | unknown | unknown | Not found | unknown | 2026-10-11: not-published; No statutory feed URL found in reviewed sources; no feed request | [1](https://ezo.co.uk/news/ezo-begins-rollout-in-scotland/) [2](https://scotlandchargers.ezo.co.uk/infrastructure-faqs) [3](https://ezo.co.uk/support/) |
-| [Fastned](https://www.fastnedcharging.com/en-gb) | [Page](https://www.fastnedcharging.com/en-gb/uk-open-data) | [https://uk-public.api.fastned.nl/uk-public/ocpi/cpo/2.2.1/](https://uk-public.api.fastned.nl/uk-public/ocpi/cpo/2.2.1/) | OCPI JSON / 2.2.1d2 (access email) | locations, tariffs | documented | documented | emailed-key | Fair-use policy: attribution, adapted-data notice, revocable licence, indemnity; access implies agreement | unknown | 2026-10-11: needs-key; Access email received; endpoints and x-api-key header documented; authenticated sample pending | [1](https://www.fastnedcharging.com/en-gb/uk-open-data) [2](https://form.typeform.com/to/y9Adcjqe) |
+| [Fastned](https://www.fastnedcharging.com/en-gb) | [Page](https://www.fastnedcharging.com/en-gb/uk-open-data) | [https://uk-public.api.fastned.nl/uk-public/ocpi/cpo/2.2.1/](https://uk-public.api.fastned.nl/uk-public/ocpi/cpo/2.2.1/) | OCPI JSON / 2.2.1d2 (access email) | locations, tariffs | observed | observed (separate tariff sample; not location-matched) | emailed-key | Fair-use policy: attribution, adapted-data notice, revocable licence, indemnity; access implies agreement | 42 | 2026-10-11: needs-key; Authenticated locations and tariffs HTTP 200; one Location with status and tariff IDs; separate numeric ENERGY tariff; Location count 42 and Link present | [1](https://www.fastnedcharging.com/en-gb/uk-open-data) [2](https://form.typeform.com/to/y9Adcjqe) |
 | [FOR EV](https://forev.co.uk/) | — | — | unknown / unknown | unknown | unknown | unknown | unknown | Not found | unknown | 2026-10-11: not-published; No statutory feed URL found in reviewed sources; no feed request | [1](https://forev.co.uk/) |
 | [Fuuse (platform networks)](https://fuuse.io/) | [Page](https://fuuse.io/blog/public-charge-point-regulations) | — | OCPI-shaped JSON (tenant dependent) / unknown | locations, tariffs | unknown | unknown | unknown | Not found | unknown | 2026-10-11: not-published; No statutory feed URL found in reviewed sources; no feed request | [1](https://fuuse.io/blog/public-charge-point-regulations) [2](https://content.fuuse.io/hubfs/User%20Guides%20and%20Onboarding%20Support/Customer%20Journeys%20-%20F-MK-0066-V2.pdf) [3](https://content.fuuse.io/hubfs/User%20Guides%20and%20Onboarding%20Support/Customer%20Journeys%20-%20F-MK-0066-V2.pdf) |
 | [GeniePoint (Equans)](https://www.equans.co.uk/drivers-geniepoint) | [Page](https://www.equans.co.uk/drivers-geniepoint/open-data) | [https://opendata.geniepoint.co.uk/](https://opendata.geniepoint.co.uk/) | OCPI-shaped JSON / unknown | locations, tariffs | observed | references-only | none | No feed-specific acceptance shown on publication page | 306 | 2026-10-11: open-and-working; HTTP 200; one Location with EVSE status and tariff IDs | [1](https://www.equans.co.uk/drivers-geniepoint/open-data) [2](https://drivers.geniepoint.co.uk/open-data) |
@@ -293,9 +293,21 @@ without a target because a charger-label lookup is not a locations page.
 The response to the operator-authorized access request documents OCPI 2.2.1d2,
 two GET endpoints under `https://uk-public.api.fastned.nl/uk-public/ocpi/cpo/2.2.1/`
 (`locations` and `tariffs`), and the `x-api-key` header. These targets are now in
-the register. No key or email body is included in the public repository. No live
-request has yet been made using this key; field-presence claims remain documented,
-not observed, and the outcome counts are unchanged.
+the register. No key or email body is included in the public repository. Two bounded authenticated requests (`limit=1`) returned HTTP 200: one Location
+with EVSE status and tariff IDs, then one Tariff with a numeric ENERGY price.
+The locations response reported `X-Total-Count: 42` and a Link header; the tariff
+response reported count 1 without a Link header. Location objects are not a
+verified physical-site census. The separate tariff was not joined to the sampled
+connectors; currency/VAT conversion and 30-second freshness remain unverified.
+These checks bring the total to **35 requests across 20 entries**, still at most
+two per entry. Outcome counts are unchanged because working authenticated feeds
+remain in `needs-key`, distinct from the eight anonymous working samples.
+
+The first probe attempts made no HTTP requests because header validation was
+case-sensitive. The probe now canonicalizes its allowlisted credential header
+names case-insensitively. Mocked tests cover lowercase API-key and Authorization
+headers, preserve authenticated classification, and ensure secrets stay absent
+from results. Reverting that normalization makes the regression test fail.
 
 ### Additional publication routes
 

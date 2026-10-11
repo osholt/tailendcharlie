@@ -876,19 +876,19 @@ base_url = "https://uk-public.api.fastned.nl/uk-public/ocpi/cpo/2.2.1/"
 format = "OCPI JSON"
 ocpi_version = "2.2.1d2 (access email)"
 modules = ["locations", "tariffs"]
-has_status = "documented"
-has_tariffs = "documented"
+has_status = "observed"
+has_tariffs = "observed (separate tariff sample; not location-matched)"
 auth = "emailed-key"
 credential_env = "OCPI_FEED_FASTNED_TOKEN"
 auth_header = "x-api-key"
 auth_scheme = ""
 terms = "Fair-use policy: attribution, adapted-data notice, revocable licence, indemnity; access implies agreement"
 rate_limit = "May throttle; no numerical limit published"
-sites_approx = -1
+sites_approx = 42
 checked_on = "2026-10-11"
 check_result = "needs-key"
-check_detail = "Access email received; endpoints and x-api-key header documented; authenticated sample pending"
-notes = "Operator-authorized request received an access email on 2026-10-11 documenting OCPI 2.2.1d2, locations and tariffs GET endpoints, and x-api-key authentication. Key is omitted from this register; authenticated checks remain pending. No versions endpoint was supplied."
+check_detail = "Authenticated locations and tariffs HTTP 200; one Location with status and tariff IDs; separate numeric ENERGY tariff; Location count 42 and Link present"
+notes = "Operator-authorized request received an access email on 2026-10-11 documenting OCPI 2.2.1d2, locations and tariffs GET endpoints, and x-api-key authentication. Authenticated limit=1 locations and tariff checks each returned HTTP 200. Counts are Location objects, not deduplicated physical sites. Key is omitted from this register. No versions endpoint was supplied."
 sources = ["https://www.fastnedcharging.com/en-gb/uk-open-data", "https://form.typeform.com/to/y9Adcjqe"]
 versions_url = ""
 locations_url = "https://uk-public.api.fastned.nl/uk-public/ocpi/cpo/2.2.1/locations"
@@ -896,11 +896,15 @@ tariffs_url = "https://uk-public.api.fastned.nl/uk-public/ocpi/cpo/2.2.1/tariffs
 update_frequency = "Not stated in reviewed sources"
 contact = "Request API Access button on the UK open-data page; Typeform y9Adcjqe"
 record_kind = "network"
-http_statuses = []
+http_statuses = [200, 200]
 versions_offered = []
 modules_observed = []
-x_total_count = -1
-link_pagination = "not-observed"
+x_total_count = 42
+link_pagination = "observed"
+
+tariff_http_status = 200
+tariff_total_count = 1
+tariff_link_pagination = "not-observed"
 
 [[feed]]
 id = "for-ev"

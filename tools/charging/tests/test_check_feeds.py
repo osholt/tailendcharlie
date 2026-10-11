@@ -283,6 +283,8 @@ class ProbeTests(unittest.TestCase):
             ("basic", "Authorization", "Basic", "user:pass"),
             ("token", "Authorization", "Token", "synthetic-secret"),
             ("emailed-key", "ec-subscription-key", "", "synthetic-key"),
+            ("emailed-key", "x-api-key", "", "synthetic-fastned-key"),
+            ("token", "authorization", "Bearer", "synthetic-bearer"),
         ]:
             with self.subTest(auth=auth):
                 f = feed(

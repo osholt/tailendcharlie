@@ -76,7 +76,11 @@ def headers_for(feed: dict, environ: dict) -> dict:
             raise ValueError("invalid credential")
         headers["Authorization"] = "Basic " + base64.b64encode(secret.encode()).decode("ascii")
     else:
-        header = feed.get("auth_header", "")
+        header = {
+            "authorization": "Authorization",
+            "ec-subscription-key": "ec-subscription-key",
+            "x-api-key": "X-API-Key",
+        }.get(feed.get("auth_header", "").lower(), "")
         scheme = feed.get("auth_scheme", "")
         if header not in {"Authorization", "ec-subscription-key", "X-API-Key"}:
             raise ValueError("unconfigured credential header")
