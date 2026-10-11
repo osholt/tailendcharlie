@@ -1,0 +1,2 @@
+# Use the same rules as the discovery-tool checks in Server CI, from any cwd.
+extend = "../../apps/server/pyproject.toml"
