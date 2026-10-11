@@ -47,9 +47,9 @@ certification that any feed meets every statutory requirement.
    live feed observation. Website/document retrieval is separate from these feed
    requests. No saved responses, station records or personal addresses are included.
 6. Record sanitized metadata only: HTTP codes, offered versions, module names,
-   field-presence evidence, total-count and pagination-presence flags. No account
-   registration, form submission, agreement, email, key acquisition or authenticated
-   request was made. Request drafts below are unsent.
+   field-presence evidence, total-count and pagination-presence flags. The initial anonymous research made no account registrations or authenticated
+   requests. Later operator-authorized access work is distinguished below; the
+   request text remains reusable templates rather than a current submission log.
 
 [Regulation 10](https://www.legislation.gov.uk/uksi/2023/1168/regulation/10/made)
 requires reference and availability data to be open, with changes to availability
@@ -120,7 +120,7 @@ not deduplicated physical sites; Be.EV's 600 is its published lower bound.
 | [Applegreen Electric](https://www.applegreenfastcharge.com/) | — | — | unknown / unknown | unknown | unknown | unknown | unknown | Not found | unknown | 2026-10-11: not-published; No statutory feed URL found in reviewed sources; no feed request | [1](https://www.applegreenfastcharge.com/) |
 | [Arnold Clark Charge](https://www.arnoldclark.com/charge) | [Page](https://www.arnoldclark.com/charge) | [https://api.fuuse.io/opendata/e6397b95-1624-49cd-824d-ab2f9dfe7294/](https://api.fuuse.io/opendata/e6397b95-1624-49cd-824d-ab2f9dfe7294/) | OCPI-shaped JSON / unknown | locations, tariffs | observed | not-observed | none | No feed-specific acceptance shown on publication page | 126 | 2026-10-11: open-and-working; HTTP 200; one-location-observed; X-Total-Count 126; Link present | [1](https://www.arnoldclark.com/charge) |
 | [Be.EV](https://be-ev.co.uk/) | [Page](https://be-ev.co.uk/public-charge-point-regulations/) | — | unknown / unknown | unknown | unknown | unknown | unknown | Not found | 600 | 2026-10-11: not-published; No statutory feed URL found in reviewed sources; no feed request | [1](https://be-ev.co.uk/) [2](https://be-ev.co.uk/public-charge-point-regulations/) |
-| [Believ (Liberty Charge)](https://www.believ.com/) | [Page](https://www.believ.com/open-data/) | [https://api.believ.com/](https://api.believ.com/) | unknown / unknown | unknown | unknown | unknown | unknown | Developer portal registration/login; larger-data request form | unknown | 2026-10-11: needs-key; Access gated; no credentials requested or used | [1](https://www.believ.com/open-data/) [2](https://api.believ.com/) [3](https://www.believ.com/press-releases/liberty-charge-rebrands-to-believ/) [4](https://api.believ.com/register) |
+| [Believ (Liberty Charge)](https://www.believ.com/) | [Page](https://www.believ.com/open-data/) | [https://api.believ.com/](https://api.believ.com/) | Custom JSON EVSE lookup / unknown | evses (embedded location and tariffs) | observed (authenticated single EVSE) | observed (numeric ENERGY price; single EVSE) | token | Developer portal registration/login; larger-data request form | unknown | 2026-10-11: needs-key; OAuth 200; documented single-EVSE example 200 with location, status and ENERGY tariff; no network listing verified | [1](https://www.believ.com/open-data/) [2](https://api.believ.com/) [3](https://www.believ.com/press-releases/liberty-charge-rebrands-to-believ/) [4](https://api.believ.com/register) [5](https://api.believ.com/doc) |
 | [Blink (EB Charging / Electric Blue)](https://blinkcharging.com/en-gb) | [Page](https://blinkcharging.com/en-gb/getintouch/blink-open-data-request) | [https://open-chargepoints.com/api/ocpi/cpo/2.2.1/](https://open-chargepoints.com/api/ocpi/cpo/2.2.1/) | OCPI JSON / 2.2.1 (URL; guide calls it 2.2) | locations, tariffs, statuses | unknown | unknown | emailed-key | Request form; sharing personal data with Eco-Movement disclosed | unknown | 2026-10-11: needs-key; HTTP 307/401; http-error | [1](https://blinkcharging.com/en-gb/getintouch/blink-open-data-request) [2](https://developers.eco-movement.com/docs/eco-movement-pcpr-api-user-guide) [3](https://developers.eco-movement.com/reference/get-all-locations-pcpr-api) [4](https://ir.blinkcharging.com/sec-filings/all-sec-filings/content/0001493152-22-011169/0001493152-22-011169.pdf) |
 | [BP Pulse](https://www.bppulse.co.uk/) | [Page](https://www.bppulse.co.uk/help-centre/charging/faq/public-charge-point-regulations) | [https://open-chargepoints.com/api/ocpi/cpo/2.2.1/](https://open-chargepoints.com/api/ocpi/cpo/2.2.1/) | OCPI JSON / 2.2.1 (URL; guide calls it 2.2) | locations, tariffs, statuses | unknown | unknown | emailed-key | Not found | unknown | 2026-10-11: needs-key; HTTP 307/401; http-error | [1](https://www.bppulse.co.uk/help-centre/charging/faq/public-charge-point-regulations) [2](https://developers.eco-movement.com/docs/eco-movement-pcpr-api-user-guide) [3](https://developers.eco-movement.com/reference/get-all-locations-pcpr-api) [4](https://wiki.openstreetmap.org/wiki/EV_charge_points_in_the_United_Kingdom) [5](https://www.bppulse.com/en-gb/help-and-support/contact) |
 | [char.gy](https://char.gy/) | [Page](https://help.char.gy/support/solutions/articles/77000576948-public-charge-point-regulations-2023) | [https://char.gy/open-ocpi/](https://char.gy/open-ocpi/) | OCPI-shaped JSON / unknown | locations, tariffs | not-observed | observed | none | No feed-specific acceptance shown on publication page | 5962 | 2026-10-11: open-and-working; HTTP 200; one-location-observed; X-Total-Count 5962; Link present | [1](https://help.char.gy/support/solutions/articles/77000576948-public-charge-point-regulations-2023) |
@@ -264,15 +264,35 @@ page offers a [Request API Access form](https://form.typeform.com/to/y9Adcjqe).
 BP's old PCPR page redirected to its homepage; use the
 [current contact form](https://www.bppulse.com/en-gb/help-and-support/contact)
 to confirm the statutory access route. These are publication observations, not
-additional feed requests. Forms were prepared for the app operator, with final
-submission, passwords, CAPTCHA and agreement decisions left to them. No request
-was submitted by this research task. Receipt of credentials remains unverified.
+additional feed requests. Forms were initially prepared for the app operator. Subsequent explicit
+authorization allowed access requests and email verification; submission does not
+establish feed access. Believ authentication was verified as described below.
+
+### Believ authenticated follow-up — 11 October 2026
+
+After operator-authorized registration and email verification, the authenticated
+[developer documentation](https://api.believ.com/doc) describes OAuth
+`client_credentials` at `POST /oauth/token`, followed by Bearer authentication
+for `GET /1.0/evses/{label}`. It documents **100 calls per 24 hours**, with at
+most **one request per second**. It does not document a network listing,
+pagination or OCPI discovery; the separate larger-data request route is still
+needed for aggregation.
+
+Two small requests (OAuth, then the documentation's single-EVSE example) both
+returned **HTTP 200**. The sample contains a location, connectors, EVSE status
+and a numeric ENERGY tariff. No response body or credentials were saved in the
+repository. This brings feed/authentication checks to 33 requests across 19
+entries, still at most two per entry. The `needs-key` outcome remains because
+access is authenticated; the eight anonymous working-location outcomes are
+unchanged. No network completeness, tariff currency/VAT conversion or live
+freshness claim follows from this single sample. The generic page probe is left
+without a target because a charger-label lookup is not a locations page.
 
 ### Additional publication routes
 
 [Evology](https://evologyparking.com/open-data/) explicitly offers an API-key
 request form; its endpoint and credential header remain unverified. Submission
-includes privacy and terms acceptance, left to the app operator.
+includes privacy and terms acceptance requiring an operator decision.
 [3ti](https://3ti.co.uk/3ti-public-charge-points/) publishes charging and tariff
 tables, but the underlying Fuuse endpoints have not been extracted or probed.
 The [Fuuse onboarding guide](https://content.fuuse.io/hubfs/User%20Guides%20and%20Onboarding%20Support/Customer%20Journeys%20-%20F-MK-0066-V2.pdf)
@@ -750,8 +770,9 @@ do not put them on a command line, in the register, in a PR or in test output.
   Documented refresh commitments and rate limits are not measured service levels.
   Versions/modules were not negotiated. Content-Length skips and pagination
   header presence alone do not establish whether pagination is implemented.
-- No credentials were requested, accounts created, terms accepted, forms sent,
-  emails sent, driver APIs reverse-engineered, or whole datasets downloaded.
-  Resolve the access drafts and publication gaps before implementing ingestion.
+- Follow-up access requests were authorized separately by the app operator.
+  Credentials stay outside this public repository. No driver APIs were
+  reverse-engineered or whole datasets downloaded. Resolve remaining access
+  and publication gaps before implementing ingestion.
   Integration, freshness validation and field tests belong to subsequent work in
   #969; this PR changes documentation, a manual probe and its offline CI only.
