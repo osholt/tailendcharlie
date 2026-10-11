@@ -71,11 +71,11 @@ and one is a legacy name; the other 57 are network entries. Networks can overlap
 | Outcome | Entries | Interpretation |
 | --- | ---: | --- |
 | `open-and-working` | 8 | Anonymous HTTP 200 with exactly one recognizable Location; no completeness claim |
-| `needs-key` | 18 | Key, login, or access-request route; actual credential type can remain unknown |
+| `needs-key` | 19 | Key, login, or access-request route; actual credential type can remain unknown |
 | `basic-auth` | 1 | Osprey: Basic access reported by OSM; not independently authenticated |
 | `published-but-failing` | 1 | MFG: request timed out on this check |
-| `not-published` | 34 | No verified statutory feed URL found within reviewed sources |
-| `published-not-sampled` | 3 | Publication exists, but the bounded check cannot establish a usable sample |
+| `not-published` | 32 | No verified statutory feed URL found within reviewed sources |
+| `published-not-sampled` | 4 | Publication exists, but the bounded check cannot establish a usable sample |
 | **Total** | **65** | |
 
 The sixth category prevents bulk-only publications, skipped oversized responses
@@ -83,14 +83,15 @@ and unresolved publication links from being misleadingly called failed APIs.
 
 - **Working samples:** Arnold Clark Charge, char.gy, ChargePlace Scotland, Evolt
   Network, GeniePoint, Monta, PoGo Charge and Urban Fox.
-- **Key/access requests:** Allego, Believ, Blink, BP Pulse, ChargePoint CMS, EVYVE,
+- **Key/access requests:** Allego, Believ, Blink, BP Pulse, ChargePoint CMS, Evology, EVYVE,
   Fastned, GRIDSERVE, InstaVolt, IONITY, Lidl, RAW Charging, EVPoint,
   Sainsbury's Smart Charge, Shell Recharge /
   ubitricity, Source EV, Weev and Zest. Osprey is separately Basic. Wenea also gets
   a draft asking for a paginated API; its publicly linked ZIP was not downloaded.
 - **Published but not sampled:** Clenergy EV and EV Dot returned HTTP 200 with
   Content-Length above 64 KiB; their bodies were skipped, so this does **not** prove
-  they ignore pagination. Wenea exposes a bulk ZIP.
+  they ignore pagination. Wenea exposes a bulk ZIP. 3ti publishes Fuuse-backed
+  charging tables, but its exact feed URLs remain unresolved.
 
 ## Register
 
@@ -113,7 +114,7 @@ not deduplicated physical sites; Be.EV's 600 is its published lower bound.
 <!-- register:start -->
 | Operator | Open-data page | Feed base URL | Format / OCPI | Modules (documented) | EVSE status | kWh tariffs | Auth | Terms | Sites approx | Checked / result | Sources |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| [3ti / Papilio](https://3ti.co.uk/) | — | — | unknown / unknown | unknown | unknown | unknown | unknown | Not found | unknown | 2026-10-11: not-published; No statutory feed URL found in reviewed sources; no feed request | [1](https://3ti.co.uk/) |
+| [3ti / Papilio](https://3ti.co.uk/) | [Page](https://3ti.co.uk/3ti-public-charge-points/) | — | unknown / unknown | unknown | unknown | unknown | unknown | Not found | unknown | 2026-10-11: published-not-sampled; Public page presents Fuuse location/status/tariff tables; exact API URLs unresolved | [1](https://3ti.co.uk/) [2](https://3ti.co.uk/3ti-public-charge-points/) |
 | [Allego](https://www.allego.eu/) | [Page](https://www.allego.eu/charge-point-data/) | — | unknown / unknown | unknown | unknown | unknown | unknown | Request form and UK GDPR notice | unknown | 2026-10-11: needs-key; Charge-point data request form; credential mechanism unknown | [1](https://www.allego.eu/charge-point-data/) |
 | [APCOA Charging](https://www.apcoa.co.uk/ev-charging/) | — | — | unknown / unknown | unknown | unknown | unknown | unknown | Not found | unknown | 2026-10-11: not-published; No statutory feed URL found in reviewed sources; no feed request | [1](https://www.apcoa.co.uk/ev-charging/) |
 | [Applegreen Electric](https://www.applegreenfastcharge.com/) | — | — | unknown / unknown | unknown | unknown | unknown | unknown | Not found | unknown | 2026-10-11: not-published; No statutory feed URL found in reviewed sources; no feed request | [1](https://www.applegreenfastcharge.com/) |
@@ -134,16 +135,16 @@ not deduplicated physical sites; Be.EV's 600 is its published lower bound.
 | [ESB Energy / ESB ecars (UK and NI)](https://www.esbenergy.co.uk/ev) | — | — | unknown / unknown | unknown | unknown | unknown | unknown | Not found | unknown | 2026-10-11: not-published; No statutory feed URL found in reviewed sources; no feed request | [1](https://www.esbenergy.co.uk/ev) [2](https://data.gov.ie/en_GB/dataset/esb-ev-public-charging-network) |
 | [EV Dot (BMM Networks)](https://www.bmmnetworks.co.uk/) | [Page](https://www.bmmnetworks.co.uk/open-data/) | [https://api.evdot.clenergy.online/development/pcpr/](https://api.evdot.clenergy.online/development/pcpr/) | OCPI-shaped JSON / unknown | locations, tariffs | unknown | unknown | none | No feed-specific acceptance shown on publication page | unknown | 2026-10-11: published-not-sampled; HTTP 200; oversize-body-skipped | [1](https://www.bmmnetworks.co.uk/open-data/) |
 | [EVC](https://www.evc.co.uk/) | — | — | unknown / unknown | unknown | unknown | unknown | unknown | Not found | unknown | 2026-10-11: not-published; No statutory feed URL found in reviewed sources; no feed request | [1](https://www.evc.co.uk/) |
-| [Evology](https://evology.co.uk/) | — | — | unknown / unknown | unknown | unknown | unknown | unknown | Not found | unknown | 2026-10-11: not-published; No statutory feed URL found in reviewed sources; no feed request | [1](https://evology.co.uk/) |
+| [Evology](https://evologyparking.com/) | [Page](https://evologyparking.com/open-data/) | — | unknown / unknown | unknown | unknown | unknown | emailed-key | Submission accepts Privacy Policy and Terms and Conditions and processing for the enquiry | unknown | 2026-10-11: needs-key; Operator publishes API-key request form; no endpoint or credentials yet | [1](https://evologyparking.com/open-data/) |
 | [Evolt Network (SWARCO E.Connect)](https://evoltnetwork.co.uk/) | [Page](https://evoltnetwork.co.uk/faqs/) | [https://info.smartcharging.uk/public_feed/locations/3666](https://info.smartcharging.uk/public_feed/locations/3666) | OCPI-shaped JSON / unknown | locations, tariffs | observed | observed | none | No feed-specific acceptance shown on publication page | 710 | 2026-10-11: open-and-working; HTTP 200; one-location-observed; X-Total-Count 710 | [1](https://evoltnetwork.co.uk/faqs/) |
 | [EVPoint / EG on the move](https://www.eg-otm.com/ev-charging/) | [Page](https://www.chargepoint.com/en-gb/blog/navigating-uk-public-charging-regulations-guide-charge-point-operators) | — | unknown / unknown | unknown | unknown | unknown | unknown | Request form; access and reuse conditions not verified | unknown | 2026-10-11: needs-key; ChargePoint request form explicitly lists this network; endpoint and credentials pending | [1](https://www.eg-otm.com/ev-charging/) [2](https://www.chargepoint.com/en-gb/blog/navigating-uk-public-charging-regulations-guide-charge-point-operators) [3](https://docs.google.com/forms/d/e/1FAIpQLSeJ9Z3dyMdsBjaQ3pj9F3aOAXE4jstoHFBxwVq3wxs5lU5JLg/viewform) |
 | [EVYVE](https://evyve.co.uk/) | [Page](https://evyve.co.uk/) | [https://open-chargepoints.com/api/ocpi/cpo/2.2.1/](https://open-chargepoints.com/api/ocpi/cpo/2.2.1/) | OCPI JSON / 2.2.1 (URL; guide calls it 2.2) | locations, tariffs, statuses | unknown | unknown | emailed-key | Request form; data-use conditions not stated on homepage | unknown | 2026-10-11: needs-key; HTTP 307/401; http-error | [1](https://evyve.co.uk/) [2](https://developers.eco-movement.com/docs/eco-movement-pcpr-api-user-guide) [3](https://developers.eco-movement.com/reference/get-all-locations-pcpr-api) |
 | [EZO (EasyGo)](https://ezo.co.uk/) | — | — | unknown / unknown | unknown | unknown | unknown | unknown | Not found | unknown | 2026-10-11: not-published; No statutory feed URL found in reviewed sources; no feed request | [1](https://ezo.co.uk/news/ezo-begins-rollout-in-scotland/) [2](https://scotlandchargers.ezo.co.uk/infrastructure-faqs) [3](https://ezo.co.uk/support/) |
 | [Fastned](https://www.fastnedcharging.com/en-gb) | [Page](https://www.fastnedcharging.com/en-gb/uk-open-data) | — | unknown / unknown | locations, tariffs | documented | documented | emailed-key | Fair-use policy: attribution, adapted-data notice, revocable licence, indemnity; access implies agreement | unknown | 2026-10-11: needs-key; Access gated; no credentials requested or used | [1](https://www.fastnedcharging.com/en-gb/uk-open-data) [2](https://form.typeform.com/to/y9Adcjqe) |
 | [FOR EV](https://forev.co.uk/) | — | — | unknown / unknown | unknown | unknown | unknown | unknown | Not found | unknown | 2026-10-11: not-published; No statutory feed URL found in reviewed sources; no feed request | [1](https://forev.co.uk/) |
-| [Fuuse (platform networks)](https://fuuse.io/) | [Page](https://fuuse.io/blog/public-charge-point-regulations) | — | OCPI-shaped JSON (tenant dependent) / unknown | locations, tariffs | unknown | unknown | unknown | Not found | unknown | 2026-10-11: not-published; No statutory feed URL found in reviewed sources; no feed request | [1](https://fuuse.io/blog/public-charge-point-regulations) [2](https://content.fuuse.io/hubfs/User%20Guides%20and%20Onboarding%20Support/Customer%20Journeys%20-%20F-MK-0066-V2.pdf) |
+| [Fuuse (platform networks)](https://fuuse.io/) | [Page](https://fuuse.io/blog/public-charge-point-regulations) | — | OCPI-shaped JSON (tenant dependent) / unknown | locations, tariffs | unknown | unknown | unknown | Not found | unknown | 2026-10-11: not-published; No statutory feed URL found in reviewed sources; no feed request | [1](https://fuuse.io/blog/public-charge-point-regulations) [2](https://content.fuuse.io/hubfs/User%20Guides%20and%20Onboarding%20Support/Customer%20Journeys%20-%20F-MK-0066-V2.pdf) [3](https://content.fuuse.io/hubfs/User%20Guides%20and%20Onboarding%20Support/Customer%20Journeys%20-%20F-MK-0066-V2.pdf) |
 | [GeniePoint (Equans)](https://www.equans.co.uk/drivers-geniepoint) | [Page](https://www.equans.co.uk/drivers-geniepoint/open-data) | [https://opendata.geniepoint.co.uk/](https://opendata.geniepoint.co.uk/) | OCPI-shaped JSON / unknown | locations, tariffs | observed | references-only | none | No feed-specific acceptance shown on publication page | 306 | 2026-10-11: open-and-working; HTTP 200; one Location with EVSE status and tariff IDs | [1](https://www.equans.co.uk/drivers-geniepoint/open-data) [2](https://drivers.geniepoint.co.uk/open-data) |
-| [Go Zero](https://www.gozerocharge.com/) | [Page](https://gozerocharge.com/public-charge-point-open-data/) | — | unknown / unknown | unknown | unknown | unknown | unknown | Not found | unknown | 2026-10-11: not-published; No statutory feed URL found in reviewed sources; no feed request | [1](https://www.gozerocharge.com/) [2](https://gozerocharge.com/public-charge-point-open-data/) [3](https://wiki.openstreetmap.org/wiki/EV_charge_points_in_the_United_Kingdom) |
+| [Go Zero](https://www.gozerocharge.com/) | [Page](https://gozerocharge.com/public-charge-point-open-data/) | — | unknown / unknown | unknown | unknown | unknown | unknown | Not found | unknown | 2026-10-11: not-published; No statutory feed URL found in reviewed sources; no feed request | [1](https://www.gozerocharge.com/) [2](https://gozerocharge.com/public-charge-point-open-data/) [3](https://wiki.openstreetmap.org/wiki/EV_charge_points_in_the_United_Kingdom) [4](https://www.gozerocharge.com/public-charge-point-open-data) |
 | [GRIDSERVE (Electric Highway)](https://www.gridserve.com/) | [Page](https://www.gridserve.com/open-data/) | [https://api.gridserve.com/ocpi/v1/](https://api.gridserve.com/ocpi/v1/) | OCPI-shaped JSON / unknown | locations, tariffs | documented | documented | emailed-key | API/fair-use acceptance required; terms assert data IP/confidentiality and restrictions; clarify statutory reuse rights | unknown | 2026-10-11: needs-key; HTTP 401; http-error | [1](https://www.gridserve.com/open-data/) [2](https://www.gridserve.com/wp-content/uploads/2024/11/GRIDSERVE-PCPR-API-Developer-Documentation.pdf) [3](https://www.gridserve.com/wp-content/uploads/2024/11/GRIDSERVE-PCPR-Open-Data-Onboarding-Information.pdf) [4](https://www.gridserve.com/ecotricity-completes-electric-highway-sale-to-gridserve/) [5](https://www.gridserve.com/legal-area/open-data-api-terms-and-conditions/) |
 | [InstaVolt](https://instavolt.co.uk/) | [Page](https://instavolt.co.uk/public-charge-point-regulation-data/) | — | OCPI (documented) / unknown | locations | unknown | unknown | emailed-key | Page requires a signed Open Data Agreement before credentials | unknown | 2026-10-11: needs-key; Access gated; no credentials requested or used | [1](https://instavolt.co.uk/public-charge-point-regulation-data/) |
 | [IONITY](https://www.ionity.eu/) | [Page](https://www.ionity.eu/open-data-request) | [https://open-chargepoints.com/api/ocpi/cpo/2.2.1/](https://open-chargepoints.com/api/ocpi/cpo/2.2.1/) | OCPI JSON / 2.2.1 (URL; guide calls it 2.2) | locations, tariffs, statuses | unknown | unknown | emailed-key | Request form and personal-data processing notice | unknown | 2026-10-11: needs-key; HTTP 307/401; http-error | [1](https://www.ionity.eu/open-data-request) [2](https://developers.eco-movement.com/docs/eco-movement-pcpr-api-user-guide) [3](https://developers.eco-movement.com/reference/get-all-locations-pcpr-api) |
@@ -267,6 +268,19 @@ additional feed requests. Forms were prepared for the app operator, with final
 submission, passwords, CAPTCHA and agreement decisions left to them. No request
 was submitted by this research task. Receipt of credentials remains unverified.
 
+### Additional publication routes
+
+[Evology](https://evologyparking.com/open-data/) explicitly offers an API-key
+request form; its endpoint and credential header remain unverified. Submission
+includes privacy and terms acceptance, left to the app operator.
+[3ti](https://3ti.co.uk/3ti-public-charge-points/) publishes charging and tariff
+tables, but the underlying Fuuse endpoints have not been extracted or probed.
+The [Fuuse onboarding guide](https://content.fuuse.io/hubfs/User%20Guides%20and%20Onboarding%20Support/Customer%20Journeys%20-%20F-MK-0066-V2.pdf)
+tells site operators to publish the two links from Organisation > Open Data
+Access. Request those public tenant links; data consumers need not be assumed
+to require a Fuuse customer account. Go Zero's previously listed open-data page
+renders a 404; its register entry remains unresolved.
+
 ## Unsent access-request drafts
 
 All drafts below are **from testing@tailendcharlie.app**, for the app operator to
@@ -325,6 +339,23 @@ to public UK locations, connectors, payment methods, EVSE status and tariffs
 pagination, rate limits and update frequency. Please confirm the **Lidl Great Britain Limited**
 network scope, any overlap with ChargePoint platform CPOs and how credentials
 should be supplied privately.
+
+Thank you,\
+Tail End Charlie
+
+### Evology Charging
+
+To: [Evology open-data request form](https://evologyparking.com/open-data/)\
+From: testing@tailendcharlie.app\
+Subject: PCPR regulation 10 — read-only UK open-data access
+
+Please provide free read-only access under Public Charge Point Regulations 2023
+[regulation 10](https://www.legislation.gov.uk/uksi/2023/1168/regulation/10/made)
+to public UK locations, connectors, payment methods, EVSE status and tariffs
+(including price per kWh) for Tail End Charlie, a free motorcycle group-riding app
+(https://tailendcharlie.app). Please include the OCPI version, endpoint URLs,
+credential header format, pagination, rate limits and update frequency.
+Please supply credentials privately to testing@tailendcharlie.app.
 
 Thank you,\
 Tail End Charlie
