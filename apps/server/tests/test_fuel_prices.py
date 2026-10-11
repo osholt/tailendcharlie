@@ -251,9 +251,42 @@ def test_fuel_finder_reloads_everything_after_a_day(settings):
     price_requests = [r for r in server.requests if r.url.path == "/api/v1/pfs/fuel-prices"]
     assert price_requests
     assert all("effective-start-timestamp" not in r.url.params for r in price_requests)
-    # The token outlived its hour and the station list its six hours.
+    # The token outlived its hour and the station list its hour.
     assert server.paths()[0] == "/api/v1/oauth/generate_access_token"
     assert "/api/v1/pfs" in server.paths()
+
+
+def test_fuel_finder_reloads_the_station_list_hourly(settings):
+    # The developer guidelines cache station data for at most an hour, so a
+    # forecourt's closure reaches riders within it.
+    server = _FuelFinderServer()
+    clock = _Clock()
+
+    async def scenario() -> None:
+        source, client = _uk_source(settings, server, clock, _Sleeps())
+        async with client:
+            first = await source.refresh(SourceSnapshot())
+            server.requests.clear()
+            clock.now = START + timedelta(minutes=61)
+            await source.refresh(first)
+
+    asyncio.run(scenario())
+
+    assert "/api/v1/pfs" in server.paths()
+
+
+def test_prices_are_checked_at_least_every_five_minutes(settings):
+    # Fuel Finder's Fair Use policy for services shown to the public.
+    assert settings.fuel_price_refresh_seconds <= 300
+    with pytest.raises(ValueError, match="less than or equal to 300"):
+        Settings(
+            **{
+                **settings.model_dump(),
+                "data_encryption_key": settings.data_encryption_key.get_secret_value(),
+                "cursor_signing_key": settings.cursor_signing_key.get_secret_value(),
+                "fuel_price_refresh_seconds": 900,
+            }
+        )
 
 
 def test_a_failed_refresh_keeps_the_previous_snapshot_and_its_check_time(settings):
@@ -699,7 +732,8 @@ def test_an_unexpected_source_failure_does_not_end_the_refresh_loop(settings):
 
     assert broken.refreshes == 2
     # Retried on the shorter failure interval, not the normal cadence.
-    assert sleeps == [300, 300]
+    # A failed pass retries no later than the next scheduled check.
+    assert sleeps == [240, 240]
 
 
 def test_a_relay_with_no_source_starts_no_background_task(settings):

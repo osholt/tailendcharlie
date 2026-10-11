@@ -203,7 +203,7 @@ enum FuelPriceFreshness {
 }
 
 /// How long a confirmation stands. A UK forecourt must report a change within
-/// 30 minutes; the relay checks every 15. An hour covers one missed check
+/// 30 minutes; the relay checks every four. An hour covers missed checks
 /// without calling a price current that nobody has looked at since lunch.
 const fuelPriceConfirmationWindow = Duration(hours: 1);
 
@@ -398,6 +398,12 @@ class FuelPriceResult {
   final FuelPriceSnapshot snapshot;
 }
 
+/// How long a tile's prices are reused before the relay is asked again. Fuel
+/// Finder's Fair Use policy wants what the public sees refreshed at least every
+/// five minutes; the relay checks every four, and this keeps the phone inside
+/// the same bound.
+const fuelPriceClientCacheFor = Duration(minutes: 4);
+
 /// Fetches prices from the relay, tile by tile, with a short in-memory cache.
 class RelayFuelPriceClient {
   RelayFuelPriceClient({
@@ -405,7 +411,7 @@ class RelayFuelPriceClient {
     this.compatibility,
     FuelPriceHttpGet? httpGet,
     DateTime Function()? clock,
-    this.cacheFor = const Duration(minutes: 10),
+    this.cacheFor = fuelPriceClientCacheFor,
     this.maximumResponseBytes = 512 * 1024,
   }) : _httpGet = httpGet ?? http.get,
        _clock = clock ?? DateTime.now;
