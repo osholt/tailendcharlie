@@ -38,11 +38,12 @@ certification that any feed meets every statutory requirement.
    versions and API-path versions are labelled separately.
 5. Read at most **64 KiB per response**, below the requested 2 MB ceiling. Skip
    bodies whose Content-Length exceeds that cap and compressed bodies. Never
-   follow pagination, fetch individual EVSEs or tariffs, download a bulk archive,
+   follow pagination, fetch individual EVSEs, download a bulk archive,
    retry, or automatically follow redirects. The six Eco-Movement entries each
    used two requests: the documented path returned 307, then the separately
-   documented trailing-slash path returned 401. Every other sampled entry used
-   one request. **23 feed requests across 17 entries**; other entries have no
+   documented trailing-slash path returned 401. Six open entries also received one separately documented tariff-page request
+   with `limit=1`; all other sampled entries used one request.
+   **29 feed requests across 17 entries**, still at most two per entry; other entries have no
    live feed observation. Website/document retrieval is separate from these feed
    requests. No saved responses, station records or personal addresses are included.
 6. Record sanitized metadata only: HTTP codes, offered versions, module names,
@@ -97,9 +98,11 @@ and unresolved publication links from being misleadingly called failed APIs.
 The table is generated from [feeds.toml](../tools/charging/feeds.toml); an offline
 unit test checks every cell and the row order. `unknown` means unverified,
 `documented` means asserted in source documentation, `observed` means present in
-one sampled Location, and `not-observed` means absent from that one sample only.
+one sampled Location or separately labelled Tariff, and `not-observed` means
+absent from that one sample only.
 `references-only` means connector tariff IDs, **not a verified per-kWh price**.
-There are no live verified numeric kWh tariff prices in this snapshot. Modules
+Five separate tariff samples expose numeric ENERGY prices; these have not been
+joined to the sampled Locations or converted to rider-facing pence/kWh. Modules
 are documented publications, not a discovered OCPI module list. An empty EVSE
 array can produce a working Location sample with no status observation.
 
@@ -120,9 +123,9 @@ not deduplicated physical sites; Be.EV's 600 is its published lower bound.
 | [Believ (Liberty Charge)](https://www.believ.com/) | [Page](https://www.believ.com/open-data/) | [https://api.believ.com/](https://api.believ.com/) | unknown / unknown | unknown | unknown | unknown | unknown | Developer portal registration/login; larger-data request form | unknown | 2026-10-11: needs-key; Access gated; no credentials requested or used | [1](https://www.believ.com/open-data/) [2](https://api.believ.com/) [3](https://www.believ.com/press-releases/liberty-charge-rebrands-to-believ/) [4](https://api.believ.com/register) |
 | [Blink (EB Charging / Electric Blue)](https://blinkcharging.com/en-gb) | [Page](https://blinkcharging.com/en-gb/getintouch/blink-open-data-request) | [https://open-chargepoints.com/api/ocpi/cpo/2.2.1/](https://open-chargepoints.com/api/ocpi/cpo/2.2.1/) | OCPI JSON / 2.2.1 (URL; guide calls it 2.2) | locations, tariffs, statuses | unknown | unknown | emailed-key | Request form; sharing personal data with Eco-Movement disclosed | unknown | 2026-10-11: needs-key; HTTP 307/401; http-error | [1](https://blinkcharging.com/en-gb/getintouch/blink-open-data-request) [2](https://developers.eco-movement.com/docs/eco-movement-pcpr-api-user-guide) [3](https://developers.eco-movement.com/reference/get-all-locations-pcpr-api) [4](https://ir.blinkcharging.com/sec-filings/all-sec-filings/content/0001493152-22-011169/0001493152-22-011169.pdf) |
 | [BP Pulse](https://www.bppulse.co.uk/) | [Page](https://www.bppulse.co.uk/help-centre/charging/faq/public-charge-point-regulations) | [https://open-chargepoints.com/api/ocpi/cpo/2.2.1/](https://open-chargepoints.com/api/ocpi/cpo/2.2.1/) | OCPI JSON / 2.2.1 (URL; guide calls it 2.2) | locations, tariffs, statuses | unknown | unknown | emailed-key | Not found | unknown | 2026-10-11: needs-key; HTTP 307/401; http-error | [1](https://www.bppulse.co.uk/help-centre/charging/faq/public-charge-point-regulations) [2](https://developers.eco-movement.com/docs/eco-movement-pcpr-api-user-guide) [3](https://developers.eco-movement.com/reference/get-all-locations-pcpr-api) [4](https://wiki.openstreetmap.org/wiki/EV_charge_points_in_the_United_Kingdom) [5](https://www.bppulse.com/en-gb/help-and-support/contact) |
-| [char.gy](https://char.gy/) | [Page](https://help.char.gy/support/solutions/articles/77000576948-public-charge-point-regulations-2023) | [https://char.gy/open-ocpi/](https://char.gy/open-ocpi/) | OCPI-shaped JSON / unknown | locations, tariffs | not-observed | references-only | none | No feed-specific acceptance shown on publication page | 5962 | 2026-10-11: open-and-working; HTTP 200; one-location-observed; X-Total-Count 5962; Link present | [1](https://help.char.gy/support/solutions/articles/77000576948-public-charge-point-regulations-2023) |
+| [char.gy](https://char.gy/) | [Page](https://help.char.gy/support/solutions/articles/77000576948-public-charge-point-regulations-2023) | [https://char.gy/open-ocpi/](https://char.gy/open-ocpi/) | OCPI-shaped JSON / unknown | locations, tariffs | not-observed | observed | none | No feed-specific acceptance shown on publication page | 5962 | 2026-10-11: open-and-working; HTTP 200; one-location-observed; X-Total-Count 5962; Link present | [1](https://help.char.gy/support/solutions/articles/77000576948-public-charge-point-regulations-2023) |
 | [ChargeMyStreet](https://chargemystreet.co.uk/) | — | — | unknown / unknown | unknown | unknown | unknown | unknown | Not found | unknown | 2026-10-11: not-published; No statutory feed URL found in reviewed sources; no feed request | [1](https://chargemystreet.co.uk/) |
-| [ChargePlace Scotland](https://chargeplacescotland.org/) | [Page](https://chargeplacescotland.org/network-performance-2/) | [https://info.smartcharging.uk/public_feed/locations/2463](https://info.smartcharging.uk/public_feed/locations/2463) | OCPI-shaped JSON / unknown | locations, tariffs | observed | references-only | none | No feed-specific acceptance shown on publication page | 1479 | 2026-10-11: open-and-working; HTTP 200; one-location-observed; X-Total-Count 1479 | [1](https://chargeplacescotland.org/network-performance-2/) |
+| [ChargePlace Scotland](https://chargeplacescotland.org/) | [Page](https://chargeplacescotland.org/network-performance-2/) | [https://info.smartcharging.uk/public_feed/locations/2463](https://info.smartcharging.uk/public_feed/locations/2463) | OCPI-shaped JSON / unknown | locations, tariffs | observed | observed | none | No feed-specific acceptance shown on publication page | 1479 | 2026-10-11: open-and-working; HTTP 200; one-location-observed; X-Total-Count 1479 | [1](https://chargeplacescotland.org/network-performance-2/) |
 | [ChargePoint CMS (platform networks)](https://www.chargepoint.com/en-gb) | [Page](https://www.chargepoint.com/en-gb/blog/navigating-uk-public-charging-regulations-guide-charge-point-operators) | — | unknown / unknown | unknown | unknown | unknown | unknown | Not found | unknown | 2026-10-11: needs-key; Partner request route offered; token and endpoint not disclosed | [1](https://www.chargepoint.com/en-gb/blog/navigating-uk-public-charging-regulations-guide-charge-point-operators) [2](https://docs.google.com/forms/d/e/1FAIpQLSeJ9Z3dyMdsBjaQ3pj9F3aOAXE4jstoHFBxwVq3wxs5lU5JLg/viewform) |
 | [CityEV / EVopencard (platform networks)](https://cityev.net/) | — | — | unknown / unknown | unknown | unknown | unknown | unknown | Not found | unknown | 2026-10-11: not-published; No statutory feed URL found in reviewed sources; no feed request | [1](https://cityev.net/faqs/) [2](https://cityev.net/evopencard-app/) |
 | [Clenergy EV](https://www.clenergy-ev.com/) | [Page](https://www.clenergy-ev.com/open-data/) | [https://api.clenergy.online/development/pcpr/](https://api.clenergy.online/development/pcpr/) | OCPI-shaped JSON / unknown | locations, tariffs | unknown | unknown | none | No feed-specific acceptance shown on publication page | unknown | 2026-10-11: published-not-sampled; HTTP 200; oversize-body-skipped | [1](https://www.clenergy-ev.com/open-data/) |
@@ -133,7 +136,7 @@ not deduplicated physical sites; Be.EV's 600 is its published lower bound.
 | [EV Dot (BMM Networks)](https://www.bmmnetworks.co.uk/) | [Page](https://www.bmmnetworks.co.uk/open-data/) | [https://api.evdot.clenergy.online/development/pcpr/](https://api.evdot.clenergy.online/development/pcpr/) | OCPI-shaped JSON / unknown | locations, tariffs | unknown | unknown | none | No feed-specific acceptance shown on publication page | unknown | 2026-10-11: published-not-sampled; HTTP 200; oversize-body-skipped | [1](https://www.bmmnetworks.co.uk/open-data/) |
 | [EVC](https://www.evc.co.uk/) | — | — | unknown / unknown | unknown | unknown | unknown | unknown | Not found | unknown | 2026-10-11: not-published; No statutory feed URL found in reviewed sources; no feed request | [1](https://www.evc.co.uk/) |
 | [Evology](https://evology.co.uk/) | — | — | unknown / unknown | unknown | unknown | unknown | unknown | Not found | unknown | 2026-10-11: not-published; No statutory feed URL found in reviewed sources; no feed request | [1](https://evology.co.uk/) |
-| [Evolt Network (SWARCO E.Connect)](https://evoltnetwork.co.uk/) | [Page](https://evoltnetwork.co.uk/faqs/) | [https://info.smartcharging.uk/public_feed/locations/3666](https://info.smartcharging.uk/public_feed/locations/3666) | OCPI-shaped JSON / unknown | locations, tariffs | observed | references-only | none | No feed-specific acceptance shown on publication page | 710 | 2026-10-11: open-and-working; HTTP 200; one-location-observed; X-Total-Count 710 | [1](https://evoltnetwork.co.uk/faqs/) |
+| [Evolt Network (SWARCO E.Connect)](https://evoltnetwork.co.uk/) | [Page](https://evoltnetwork.co.uk/faqs/) | [https://info.smartcharging.uk/public_feed/locations/3666](https://info.smartcharging.uk/public_feed/locations/3666) | OCPI-shaped JSON / unknown | locations, tariffs | observed | observed | none | No feed-specific acceptance shown on publication page | 710 | 2026-10-11: open-and-working; HTTP 200; one-location-observed; X-Total-Count 710 | [1](https://evoltnetwork.co.uk/faqs/) |
 | [EVPoint / EG on the move](https://www.eg-otm.com/ev-charging/) | [Page](https://www.chargepoint.com/en-gb/blog/navigating-uk-public-charging-regulations-guide-charge-point-operators) | — | unknown / unknown | unknown | unknown | unknown | unknown | Request form; access and reuse conditions not verified | unknown | 2026-10-11: needs-key; ChargePoint request form explicitly lists this network; endpoint and credentials pending | [1](https://www.eg-otm.com/ev-charging/) [2](https://www.chargepoint.com/en-gb/blog/navigating-uk-public-charging-regulations-guide-charge-point-operators) [3](https://docs.google.com/forms/d/e/1FAIpQLSeJ9Z3dyMdsBjaQ3pj9F3aOAXE4jstoHFBxwVq3wxs5lU5JLg/viewform) |
 | [EVYVE](https://evyve.co.uk/) | [Page](https://evyve.co.uk/) | [https://open-chargepoints.com/api/ocpi/cpo/2.2.1/](https://open-chargepoints.com/api/ocpi/cpo/2.2.1/) | OCPI JSON / 2.2.1 (URL; guide calls it 2.2) | locations, tariffs, statuses | unknown | unknown | emailed-key | Request form; data-use conditions not stated on homepage | unknown | 2026-10-11: needs-key; HTTP 307/401; http-error | [1](https://evyve.co.uk/) [2](https://developers.eco-movement.com/docs/eco-movement-pcpr-api-user-guide) [3](https://developers.eco-movement.com/reference/get-all-locations-pcpr-api) |
 | [EZO (EasyGo)](https://ezo.co.uk/) | — | — | unknown / unknown | unknown | unknown | unknown | unknown | Not found | unknown | 2026-10-11: not-published; No statutory feed URL found in reviewed sources; no feed request | [1](https://ezo.co.uk/news/ezo-begins-rollout-in-scotland/) [2](https://scotlandchargers.ezo.co.uk/infrastructure-faqs) [3](https://ezo.co.uk/support/) |
@@ -155,7 +158,7 @@ not deduplicated physical sites; Be.EV's 600 is its published lower bound.
 | [Park & Recharge](https://parkrecharge.com/) | [Page](https://parkrecharge.com/public-charging/) | — | unknown / unknown | unknown | unknown | unknown | unknown | Not found | unknown | 2026-10-11: not-published; No statutory feed URL found in reviewed sources; no feed request | [1](https://parkrecharge.com/public-charging/) |
 | [Plug-N-Go](https://plug-n-go.com/) | — | — | unknown / unknown | unknown | unknown | unknown | unknown | Not found | unknown | 2026-10-11: not-published; No statutory feed URL found in reviewed sources; no feed request | [1](https://plug-n-go.com/) |
 | [Pod (Pod Point)](https://podenergy.com/) | — | — | unknown / unknown | unknown | unknown | unknown | unknown | Not found | unknown | 2026-10-11: not-published; No statutory feed URL found in reviewed sources; no feed request | [1](https://podenergy.com/) |
-| [PoGo Charge](https://pogocharge.com/) | [Page](https://pogocharge.com/faqs/) | [https://info.smartcharging.uk/public_feed/locations/4009](https://info.smartcharging.uk/public_feed/locations/4009) | OCPI-shaped JSON / unknown | locations, tariffs | observed | references-only | none | No feed-specific acceptance shown on publication page | 161 | 2026-10-11: open-and-working; HTTP 200; one-location-observed; X-Total-Count 161 | [1](https://pogocharge.com/faqs/) |
+| [PoGo Charge](https://pogocharge.com/) | [Page](https://pogocharge.com/faqs/) | [https://info.smartcharging.uk/public_feed/locations/4009](https://info.smartcharging.uk/public_feed/locations/4009) | OCPI-shaped JSON / unknown | locations, tariffs | observed | observed | none | No feed-specific acceptance shown on publication page | 161 | 2026-10-11: open-and-working; HTTP 200; one-location-observed; X-Total-Count 161 | [1](https://pogocharge.com/faqs/) |
 | [Project EV (platform networks)](https://www.projectev.co.uk/) | — | — | unknown / unknown | unknown | unknown | unknown | unknown | Not found | unknown | 2026-10-11: not-published; No statutory feed URL found in reviewed sources; no feed request | [1](https://www.projectev.co.uk/) |
 | [Qwello](https://qwello.uk/) | — | — | unknown / unknown | unknown | unknown | unknown | unknown | Not found | unknown | 2026-10-11: not-published; No statutory feed URL found in reviewed sources; no feed request | [1](https://qwello.uk/) |
 | [RAW Charging](https://rawcharging.com/) | [Page](https://www.chargepoint.com/en-gb/blog/navigating-uk-public-charging-regulations-guide-charge-point-operators) | — | unknown / unknown | unknown | unknown | unknown | unknown | Request form; access and reuse conditions not verified | unknown | 2026-10-11: needs-key; ChargePoint request form explicitly lists this network; endpoint and credentials pending | [1](https://rawcharging.com/) [2](https://www.chargepoint.com/en-gb/blog/navigating-uk-public-charging-regulations-guide-charge-point-operators) [3](https://docs.google.com/forms/d/e/1FAIpQLSeJ9Z3dyMdsBjaQ3pj9F3aOAXE4jstoHFBxwVq3wxs5lU5JLg/viewform) |
@@ -169,7 +172,7 @@ not deduplicated physical sites; Be.EV's 600 is its published lower bound.
 | [Tesla Supercharger](https://www.tesla.com/en_gb/supercharger) | — | — | unknown / unknown | unknown | unknown | unknown | unknown | Not found | unknown | 2026-10-11: not-published; No statutory feed URL found in reviewed sources; no feed request | [1](https://www.tesla.com/en_gb/support/charging/supercharging-other-evs) [2](https://wiki.openstreetmap.org/wiki/EV_charge_points_in_the_United_Kingdom) |
 | [TotalEnergies Charging Services (Source London)](https://chargingservices.totalenergies.com/) | — | — | unknown / unknown | unknown | unknown | unknown | unknown | Not found | unknown | 2026-10-11: not-published; No statutory feed URL found in reviewed sources; no feed request | [1](https://totalenergies.co.uk/contact-us) [2](https://chargingservices.totalenergies.com/en/assistance/faq?category=2&country=united-kingdom) |
 | [Trojan Energy](https://trojan.energy/) | — | — | unknown / unknown | unknown | unknown | unknown | unknown | Not found | unknown | 2026-10-11: not-published; No statutory feed URL found in reviewed sources; no feed request | [1](https://trojan.energy/) |
-| [Urban Fox](https://urbanfox.network/) | [Page](https://urbanfox.network/public-charge-point-regulations-data-access/) | [https://api.urbanfox.network/api/opendata/](https://api.urbanfox.network/api/opendata/) | OCPI-shaped JSON / unknown | locations, tariffs | not-observed | not-observed | none | No feed-specific acceptance shown on publication page | 139 | 2026-10-11: open-and-working; HTTP 200; one-location-observed; X-Total-Count 139; Link present | [1](https://urbanfox.network/public-charge-point-regulations-data-access/) [2](https://api.urbanfox.network/api-docs/opendata/v1/api.yaml) |
+| [Urban Fox](https://urbanfox.network/) | [Page](https://urbanfox.network/public-charge-point-regulations-data-access/) | [https://api.urbanfox.network/api/opendata/](https://api.urbanfox.network/api/opendata/) | OCPI-shaped JSON / unknown | locations, tariffs | not-observed | observed | none | No feed-specific acceptance shown on publication page | 139 | 2026-10-11: open-and-working; HTTP 200; one-location-observed; X-Total-Count 139; Link present | [1](https://urbanfox.network/public-charge-point-regulations-data-access/) [2](https://api.urbanfox.network/api-docs/opendata/v1/api.yaml) |
 | [VendElectric (Rolec platform)](https://www.rolecserv.com/vendelectric) | — | — | unknown / unknown | unknown | unknown | unknown | unknown | Not found | unknown | 2026-10-11: not-published; No statutory feed URL found in reviewed sources; no feed request | [1](https://www.rolecserv.com/vendelectric) |
 | [Wattif EV](https://www.wattifev.com/) | — | — | unknown / unknown | unknown | unknown | unknown | unknown | Not found | unknown | 2026-10-11: not-published; No statutory feed URL found in reviewed sources; no feed request | [1](https://www.wattifev.com/) |
 | [Weev](https://weev.ie/) | [Page](https://weev.ie/open-data) | — | unknown / unknown | unknown | unknown | unknown | emailed-key | API-key request form; detailed terms not verified | unknown | 2026-10-11: needs-key; Access gated; no credentials requested or used | [1](https://weev.ie/open-data) |
@@ -213,6 +216,31 @@ than counted as extra legal CPOs. ZeroNet is marked `legacy-network`: its former
 operator domain served unrelated content and its current publisher remains
 unverified. ESB's separately published quarterly island-of-Ireland reference CSV
 is not established as a statutory live UK feed. No bulk CSV was downloaded.
+
+## Tariff endpoint follow-up — 11 October 2026
+
+The six documented tariff endpoints each returned HTTP 200 with one JSON object
+using `limit=1`. No whole dataset was downloaded or response saved. Location
+outcome counts above are unchanged; this check establishes a separate module.
+
+| Network | Numeric ENERGY price | X-Total-Count (tariffs, not sites) | Link pagination |
+| --- | --- | ---: | --- |
+| Arnold Clark Charge | Not observed in first tariff | 2 | Yes |
+| char.gy | Observed | 3 | Yes |
+| ChargePlace Scotland | Observed | 323 | Yes |
+| Evolt Network | Observed | 289 | Yes |
+| PoGo Charge | Observed | 13 | Yes |
+| Urban Fox | Observed | 22 | Yes |
+
+Targets are stored as `tariffs_url` beside their operator publication sources.
+Monta has no reviewed tariff URL, so none was guessed. The probe requires a
+single tariff object, currency field and a finite, nonnegative numeric ENERGY
+component. It does not output the price, IDs or other record contents.
+[OCPI 2.2.1](https://github.com/ocpi/ocpi/blob/2.2.1/mod_tariffs.asciidoc)
+defines ENERGY as per-kWh pricing. A usable rider price still requires matching
+connector tariff IDs, currency and VAT handling, time/restriction evaluation and
+other fee components. One arbitrary tariff must not be attached to an arbitrary
+Location, and an absent ENERGY component can be a legitimate non-energy tariff.
 
 ## Access-route follow-up — 11 October 2026
 
@@ -608,6 +636,8 @@ Python 3.12; standard library only. Run from the repository root:
 ```bash
 # One chosen feed, with at most two requests. This is a new live check.
 python3 tools/charging/check_feeds.py --id arnold-clark
+# Optional separate check: one documented tariff page, no Location join.
+python3 tools/charging/check_feeds.py --id char-gy --tariffs-only
 # No network: render the committed metadata as the documentation table.
 python3 tools/charging/check_feeds.py --markdown
 # Offline, mocked HTTP checks, including exact docs/register agreement.
@@ -619,7 +649,11 @@ ruff check tools/charging
 Without `--id` the tool checks all configured entries once, sequentially. It is a
 manual spot-check tool, not a polling service; respect recorded limits before
 rerunning it. A supplied versions endpoint would be called before locations,
-without following its returned discovery URLs. A 401, 403 or 429 stops that entry.
+without following its returned discovery URLs. `--tariffs-only` replaces both
+requests with one tariff-page request, never a third request. Its outcome describes
+only that tariff sample and must not overwrite the Location outcome. Budget
+requests across runs; the tool does not persist a cross-run request counter.
+A 401, 403 or 429 stops that entry.
 Unpublished endpoints and deliberate bulk/link skips make no HTTP request.
 The timeout bounds socket operations and a deadline stops further body reads;
 it is not a hard process-wide deadline for DNS resolution.
@@ -639,7 +673,7 @@ counterparts are separate. `rate_limit`, `update_frequency`, `terms`, `notes`,
 `contact` and `sources` preserve the qualifiers needed to interpret a row.
 `record_kind` distinguishes network, platform-network and legacy-network.
 
-`versions_url` and `locations_url` contain only reviewed HTTPS targets;
+`versions_url`, `locations_url` and optional `tariffs_url` contain reviewed HTTPS targets;
 `base_url` is descriptive and is never guessed into a request. The optional
 `page_size_parameter` selects the documented pagination field. `probe_skip`
 prevents bulk downloads or unresolved links from being probed. Shared provider
@@ -670,7 +704,7 @@ do not put them on a command line, in the register, in a PR or in test output.
 - One Location cannot establish network coverage, connector completeness,
   payment-method coverage, current prices, tariff currency/VAT interpretation,
   public accessibility, or whether an operator reports every working/broken EVSE.
-  No numeric tariff endpoint was requested. A later authorized verification must
+  Separate tariff samples establish field presence only. Further verification must
   join tariff IDs and validate pence/kWh, currency and VAT; `references-only`
   must not be used as a price.
 - No repeated status observation was made; **30-second freshness was not tested**.

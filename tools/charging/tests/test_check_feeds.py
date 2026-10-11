@@ -61,6 +61,61 @@ def location():
 
 
 class ProbeTests(unittest.TestCase):
+    def test_tariffs_only_uses_one_small_request_without_location_claim(self):
+        opener = Mock()
+        opener.open.return_value = Response(self.tariff())
+        result = checker.probe(
+            feed(tariffs_url="https://feed.example/tariffs"), {}, opener, tariffs_only=True
+        )
+        self.assertEqual(opener.open.call_count, 1)
+        self.assertEqual(
+            opener.open.call_args.args[0].full_url, "https://feed.example/tariffs?limit=1"
+        )
+        self.assertEqual(result["tariffs"], "observed")
+        self.assertEqual(result["status"], "unknown")
+        self.assertEqual(result["reason"], "one-tariff-observed-not-location-matched")
+
+    @staticmethod
+    def tariff(price=0.5):
+        return {
+            "data": [
+                {
+                    "id": "synthetic",
+                    "currency": "GBP",
+                    "elements": [{"price_components": [{"type": "ENERGY", "price": price}]}],
+                }
+            ]
+        }
+
+    def test_tariff_requires_finite_nonnegative_numeric_energy_price(self):
+        for value in [True, "0.5", None, -1, float("nan"), float("inf")]:
+            with self.subTest(value=value):
+                self.assertEqual(checker.tariff_features(self.tariff(value)), "not-observed")
+        self.assertEqual(checker.tariff_features(self.tariff(0)), "observed")
+
+    def test_tariff_page_requires_one_object_currency_and_structure(self):
+        for body in [
+            location(),
+            {"data": []},
+            {"data": self.tariff()["data"] * 2},
+            {"data": [{"id": "synthetic", "elements": []}]},
+            {"data": [{"id": "synthetic", "currency": "GBP", "elements": None}]},
+        ]:
+            self.assertEqual(checker.tariff_features(body), "unknown")
+        body = self.tariff()
+        body["data"][0]["elements"][0]["price_components"][0]["type"] = "TIME"
+        self.assertEqual(checker.tariff_features(body), "not-observed")
+
+    def test_tariffs_are_opt_in_and_missing_endpoint_is_not_guessed(self):
+        opener = Mock()
+        result = checker.probe(feed(), {}, opener, tariffs_only=True)
+        opener.open.assert_not_called()
+        self.assertEqual(result["reason"], "no-published-endpoint")
+        opener.open.side_effect = [Response({"data": []}), Response(location())]
+        checker.probe(feed(tariffs_url="https://feed.example/tariffs"), {}, opener)
+        self.assertEqual(opener.open.call_count, 2)
+        self.assertNotIn("tariffs", opener.open.call_args.args[0].full_url)
+
     def test_two_small_requests_versions_then_one_location(self):
         opener = Mock()
         opener.open.side_effect = [
@@ -321,7 +376,7 @@ class RegisterTests(unittest.TestCase):
                 self.assertIn(f["auth"], {"none", "token", "basic", "emailed-key", "unknown"})
                 if f["credential_env"]:
                     self.assertRegex(f["credential_env"], r"^OCPI_FEED_[A-Z0-9_]+_(TOKEN|BASIC)$")
-                for key in ["base_url", "versions_url", "locations_url"]:
+                for key in ["base_url", "versions_url", "locations_url", "tariffs_url"]:
                     if f.get(key):
                         self.assertTrue(checker.safe_url(f[key]), key)
                 self.assertTrue(f["sources"])

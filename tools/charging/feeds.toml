@@ -150,7 +150,7 @@ sites_approx = 126
 checked_on = "2026-10-11"
 check_result = "open-and-working"
 check_detail = "HTTP 200; one-location-observed; X-Total-Count 126; Link present"
-notes = "Public footer links Fuuse location and tariff resources. UUID is a publicly linked dataset identifier, not a secret. No versions/discovery endpoint is published in the reviewed documentation; no version path guessed. Numeric tariff endpoint not requested. Site estimate is the feed Location count, not deduplicated physical sites or EVSE count."
+notes = "Public footer links Fuuse location and tariff resources. UUID is a publicly linked dataset identifier, not a secret. No versions/discovery endpoint is published in the reviewed documentation; no version path guessed. Site estimate is the feed Location count, not deduplicated physical sites or EVSE count. Separate tariff check: one HTTP 200 JSON page with limit=1; no numeric ENERGY price in the sampled tariff; not evidence that all tariffs lack prices."
 sources = ["https://www.arnoldclark.com/charge"]
 versions_url = ""
 locations_url = "https://api.fuuse.io/opendata/e6397b95-1624-49cd-824d-ab2f9dfe7294/location"
@@ -163,6 +163,12 @@ modules_observed = []
 x_total_count = 126
 link_pagination = "present"
 
+tariffs_url = "https://api.fuuse.io/opendata/e6397b95-1624-49cd-824d-ab2f9dfe7294/tariff"
+tariffs_checked_on = "2026-10-11"
+tariffs_http_status = 200
+tariffs_check_detail = "no-per-kwh-price-in-one-tariff"
+tariffs_x_total_count = 2
+tariffs_link_pagination = true
 [[feed]]
 id = "be-ev"
 name = "Be.EV"
@@ -305,7 +311,7 @@ format = "OCPI-shaped JSON"
 ocpi_version = "unknown"
 modules = ["locations", "tariffs"]
 has_status = "not-observed"
-has_tariffs = "references-only"
+has_tariffs = "observed"
 auth = "none"
 credential_env = ""
 terms = "No feed-specific acceptance shown on publication page"
@@ -314,7 +320,7 @@ sites_approx = 5962
 checked_on = "2026-10-11"
 check_result = "open-and-working"
 check_detail = "HTTP 200; one-location-observed; X-Total-Count 5962; Link present"
-notes = " No versions/discovery endpoint is published in the reviewed documentation; no version path guessed. Numeric tariff endpoint not requested. Site estimate is the feed Location count, not deduplicated physical sites or EVSE count."
+notes = " No versions/discovery endpoint is published in the reviewed documentation; no version path guessed. Site estimate is the feed Location count, not deduplicated physical sites or EVSE count. Separate tariff check: one HTTP 200 JSON page with limit=1; finite numeric ENERGY price observed, not matched to the sampled Location."
 sources = ["https://help.char.gy/support/solutions/articles/77000576948-public-charge-point-regulations-2023"]
 versions_url = ""
 locations_url = "https://char.gy/open-ocpi/locations"
@@ -327,6 +333,12 @@ modules_observed = []
 x_total_count = 5962
 link_pagination = "present"
 
+tariffs_url = "https://char.gy/open-ocpi/tariffs"
+tariffs_checked_on = "2026-10-11"
+tariffs_http_status = 200
+tariffs_check_detail = "one-tariff-observed-not-location-matched"
+tariffs_x_total_count = 3
+tariffs_link_pagination = true
 [[feed]]
 id = "chargemystreet"
 name = "ChargeMyStreet"
@@ -369,7 +381,7 @@ format = "OCPI-shaped JSON"
 ocpi_version = "unknown"
 modules = ["locations", "tariffs"]
 has_status = "observed"
-has_tariffs = "references-only"
+has_tariffs = "observed"
 auth = "none"
 credential_env = ""
 terms = "No feed-specific acceptance shown on publication page"
@@ -378,7 +390,7 @@ sites_approx = 1479
 checked_on = "2026-10-11"
 check_result = "open-and-working"
 check_detail = "HTTP 200; one-location-observed; X-Total-Count 1479"
-notes = "Public network spans many host owners. The page mentions 2,400 charge points, not sites: do not use this as a site count. Northern council sites have migrated to EZO; CPS must not be assumed to cover all Scottish public charging. No versions/discovery endpoint is published in the reviewed documentation; no version path guessed. Numeric tariff endpoint not requested. Site estimate is the feed Location count, not deduplicated physical sites or EVSE count."
+notes = "Public network spans many host owners. The page mentions 2,400 charge points, not sites: do not use this as a site count. Northern council sites have migrated to EZO; CPS must not be assumed to cover all Scottish public charging. No versions/discovery endpoint is published in the reviewed documentation; no version path guessed. Site estimate is the feed Location count, not deduplicated physical sites or EVSE count. Separate tariff check: one HTTP 200 JSON page with limit=1; finite numeric ENERGY price observed, not matched to the sampled Location."
 sources = ["https://chargeplacescotland.org/network-performance-2/"]
 versions_url = ""
 locations_url = "https://info.smartcharging.uk/public_feed/locations/2463"
@@ -391,6 +403,12 @@ modules_observed = []
 x_total_count = 1479
 link_pagination = "not-observed"
 
+tariffs_url = "https://info.smartcharging.uk/public_feed/locations/2463/tariffs"
+tariffs_checked_on = "2026-10-11"
+tariffs_http_status = 200
+tariffs_check_detail = "one-tariff-observed-not-location-matched"
+tariffs_x_total_count = 323
+tariffs_link_pagination = true
 [[feed]]
 id = "chargepoint"
 name = "ChargePoint CMS (platform networks)"
@@ -721,7 +739,7 @@ format = "OCPI-shaped JSON"
 ocpi_version = "unknown"
 modules = ["locations", "tariffs"]
 has_status = "observed"
-has_tariffs = "references-only"
+has_tariffs = "observed"
 auth = "none"
 credential_env = ""
 terms = "No feed-specific acceptance shown on publication page"
@@ -730,7 +748,7 @@ sites_approx = 710
 checked_on = "2026-10-11"
 check_result = "open-and-working"
 check_detail = "HTTP 200; one-location-observed; X-Total-Count 710"
-notes = "Evolt Network public-feed links; keep ChargePlace Scotland and PoGo tenant feeds separate. No versions/discovery endpoint is published in the reviewed documentation; no version path guessed. Numeric tariff endpoint not requested. Site estimate is the feed Location count, not deduplicated physical sites or EVSE count."
+notes = "Evolt Network public-feed links; keep ChargePlace Scotland and PoGo tenant feeds separate. No versions/discovery endpoint is published in the reviewed documentation; no version path guessed. Site estimate is the feed Location count, not deduplicated physical sites or EVSE count. Separate tariff check: one HTTP 200 JSON page with limit=1; finite numeric ENERGY price observed, not matched to the sampled Location."
 sources = ["https://evoltnetwork.co.uk/faqs/"]
 versions_url = ""
 locations_url = "https://info.smartcharging.uk/public_feed/locations/3666"
@@ -743,6 +761,12 @@ modules_observed = []
 x_total_count = 710
 link_pagination = "not-observed"
 
+tariffs_url = "https://info.smartcharging.uk/public_feed/locations/3666/tariffs"
+tariffs_checked_on = "2026-10-11"
+tariffs_http_status = 200
+tariffs_check_detail = "one-tariff-observed-not-location-matched"
+tariffs_x_total_count = 289
+tariffs_link_pagination = true
 [[feed]]
 id = "evpoint"
 name = "EVPoint / EG on the move"
@@ -1435,7 +1459,7 @@ format = "OCPI-shaped JSON"
 ocpi_version = "unknown"
 modules = ["locations", "tariffs"]
 has_status = "observed"
-has_tariffs = "references-only"
+has_tariffs = "observed"
 auth = "none"
 credential_env = ""
 terms = "No feed-specific acceptance shown on publication page"
@@ -1444,7 +1468,7 @@ sites_approx = 161
 checked_on = "2026-10-11"
 check_result = "open-and-working"
 check_detail = "HTTP 200; one-location-observed; X-Total-Count 161"
-notes = "FAQ publishes separate locations and tariffs links. Undated/forward-looking uptime figures on the page are not used as current verification. No versions/discovery endpoint is published in the reviewed documentation; no version path guessed. Numeric tariff endpoint not requested. Site estimate is the feed Location count, not deduplicated physical sites or EVSE count."
+notes = "FAQ publishes separate locations and tariffs links. Undated/forward-looking uptime figures on the page are not used as current verification. No versions/discovery endpoint is published in the reviewed documentation; no version path guessed. Site estimate is the feed Location count, not deduplicated physical sites or EVSE count. Separate tariff check: one HTTP 200 JSON page with limit=1; finite numeric ENERGY price observed, not matched to the sampled Location."
 sources = ["https://pogocharge.com/faqs/"]
 versions_url = ""
 locations_url = "https://info.smartcharging.uk/public_feed/locations/4009"
@@ -1457,6 +1481,12 @@ modules_observed = []
 x_total_count = 161
 link_pagination = "not-observed"
 
+tariffs_url = "https://info.smartcharging.uk/public_feed/locations/4009/tariffs"
+tariffs_checked_on = "2026-10-11"
+tariffs_http_status = 200
+tariffs_check_detail = "one-tariff-observed-not-location-matched"
+tariffs_x_total_count = 13
+tariffs_link_pagination = true
 [[feed]]
 id = "project-ev"
 name = "Project EV (platform networks)"
@@ -1887,7 +1917,7 @@ format = "OCPI-shaped JSON"
 ocpi_version = "unknown"
 modules = ["locations", "tariffs"]
 has_status = "not-observed"
-has_tariffs = "not-observed"
+has_tariffs = "observed"
 auth = "none"
 credential_env = ""
 terms = "No feed-specific acceptance shown on publication page"
@@ -1896,7 +1926,7 @@ sites_approx = 139
 checked_on = "2026-10-11"
 check_result = "open-and-working"
 check_detail = "HTTP 200; one-location-observed; X-Total-Count 139; Link present"
-notes = "Official Swagger documents anonymous paginated locations and tariffs; maximum page size 100, default 50. API v1 is not the OCPI protocol version. No versions/discovery endpoint is published in the reviewed documentation; no version path guessed. Numeric tariff endpoint not requested. Site estimate is the feed Location count, not deduplicated physical sites or EVSE count."
+notes = "Official Swagger documents anonymous paginated locations and tariffs; maximum page size 100, default 50. API v1 is not the OCPI protocol version. No versions/discovery endpoint is published in the reviewed documentation; no version path guessed. Site estimate is the feed Location count, not deduplicated physical sites or EVSE count. Separate tariff check: one HTTP 200 JSON page with limit=1; finite numeric ENERGY price observed, not matched to the sampled Location."
 sources = ["https://urbanfox.network/public-charge-point-regulations-data-access/", "https://api.urbanfox.network/api-docs/opendata/v1/api.yaml"]
 versions_url = ""
 locations_url = "https://api.urbanfox.network/api/opendata/locations"
@@ -1909,6 +1939,12 @@ modules_observed = []
 x_total_count = 139
 link_pagination = "present"
 
+tariffs_url = "https://api.urbanfox.network/api/opendata/tariffs"
+tariffs_checked_on = "2026-10-11"
+tariffs_http_status = 200
+tariffs_check_detail = "one-tariff-observed-not-location-matched"
+tariffs_x_total_count = 22
+tariffs_link_pagination = true
 [[feed]]
 id = "vendelectric"
 name = "VendElectric (Rolec platform)"

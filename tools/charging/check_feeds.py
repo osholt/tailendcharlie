@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import base64
 import json
+import math
 import os
 import re
 import time
@@ -191,7 +192,12 @@ def sample_features(data: object) -> dict:
     while pending:
         node = pending.pop()
         if isinstance(node, dict):
-            if node.get("type") == "ENERGY" and type(node.get("price")) in {int, float}:
+            if (
+                node.get("type") == "ENERGY"
+                and type(node.get("price")) in {int, float}
+                and (type(node["price"]) is int or math.isfinite(node["price"]))
+                and node["price"] >= 0
+            ):
                 result["tariffs"] = "observed"
                 break
             pending.extend(node.values())
@@ -200,7 +206,36 @@ def sample_features(data: object) -> dict:
     return result
 
 
-def probe(feed: dict, environ=None, opener=None) -> dict:
+def tariff_features(data: object) -> str:
+    """One OCPI tariff with a finite ENERGY price; never imply a Location join."""
+    rows = items(data)
+    if len(rows) != 1 or not isinstance(rows[0], dict):
+        return "unknown"
+    tariff = rows[0]
+    if not tariff.get("id") or not re.fullmatch(r"[A-Z]{3}", str(tariff.get("currency", ""))):
+        return "unknown"
+    elements = tariff.get("elements")
+    if not isinstance(elements, list):
+        return "unknown"
+    for element in elements:
+        components = element.get("price_components") if isinstance(element, dict) else None
+        if not isinstance(components, list):
+            continue
+        for component in components:
+            if not isinstance(component, dict):
+                continue
+            price = component.get("price")
+            if (
+                component.get("type") == "ENERGY"
+                and type(price) in {int, float}
+                and (type(price) is int or math.isfinite(price))
+                and price >= 0
+            ):
+                return "observed"
+    return "not-observed"
+
+
+def probe(feed: dict, environ=None, opener=None, *, tariffs_only=False) -> dict:
     result = {
         "id": feed["id"],
         "checked_on": datetime.now(ZoneInfo("Europe/London")).date().isoformat(),
@@ -215,10 +250,14 @@ def probe(feed: dict, environ=None, opener=None) -> dict:
     if feed.get("probe_skip"):
         result.update(outcome=feed["check_result"], reason=feed["probe_skip"])
         return result
-    urls = [(kind, feed.get(f"{kind}_url", "")) for kind in ("versions", "locations")]
+    kinds = ("tariffs",) if tariffs_only else ("versions", "locations")
+    urls = [(kind, feed.get(f"{kind}_url", "")) for kind in kinds]
     urls = [(kind, url) for kind, url in urls if url]
     if not urls:
-        result.update(outcome=feed["check_result"], reason="no-published-endpoint")
+        result.update(
+            outcome="published-not-sampled" if tariffs_only else feed["check_result"],
+            reason="no-published-endpoint",
+        )
         return result
     if any(not safe_url(url) for _, url in urls):
         result.update(outcome="published-not-sampled", reason="unsafe-url")
@@ -230,7 +269,7 @@ def probe(feed: dict, environ=None, opener=None) -> dict:
         return result
     result["outcome"] = "published-but-failing"
     for kind, url in urls:
-        if kind == "locations":
+        if kind in {"locations", "tariffs"}:
             param = feed.get("page_size_parameter", "limit")
             if param not in {"limit", "per_page", "page_size"}:
                 result.update(outcome="published-not-sampled", reason="pagination-configuration")
@@ -284,6 +323,24 @@ def probe(feed: dict, environ=None, opener=None) -> dict:
                     }
                 }
             )
+        elif kind == "tariffs" and meta["result"] == "json":
+            result["tariffs"] = tariff_features(data)
+            result.update(
+                outcome="published-not-sampled",
+                reason="no-per-kwh-price-in-one-tariff",
+            )
+            if result["tariffs"] == "observed":
+                authenticated = any(
+                    key in headers for key in ("Authorization", "ec-subscription-key", "X-API-Key")
+                )
+                result.update(
+                    outcome=(
+                        ("basic-auth" if feed["auth"] == "basic" else "needs-key")
+                        if authenticated
+                        else "open-and-working"
+                    ),
+                    reason="one-tariff-observed-not-location-matched",
+                )
         elif meta["result"] == "json":
             features = sample_features(data)
             result.update(status=features["status"], tariffs=features["tariffs"])
@@ -303,7 +360,7 @@ def probe(feed: dict, environ=None, opener=None) -> dict:
                     outcome="published-not-sampled",
                     reason="empty-unrecognised-or-unbounded-page",
                 )
-        elif kind == "locations" and meta["result"] in {
+        elif kind in {"locations", "tariffs"} and meta["result"] in {
             "body-limit",
             "oversize-body-skipped",
             "encoded-body-skipped",
@@ -361,6 +418,11 @@ def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--register", type=Path, default=REGISTER)
     parser.add_argument("--id", action="append", help="Only these operator IDs (repeatable)")
+    parser.add_argument(
+        "--tariffs-only",
+        action="store_true",
+        help="One documented tariff page instead of versions/locations; no join",
+    )
     parser.add_argument("--markdown", action="store_true", help="Render stored table; no network")
     args = parser.parse_args(argv)
     feeds = tomllib.loads(args.register.read_text())["feed"]
@@ -377,7 +439,7 @@ def main(argv=None) -> int:
         "Count     Link  Modules observed / Outcome / reason"
     )
     for feed in feeds:
-        result = probe(feed)
+        result = probe(feed, tariffs_only=args.tariffs_only)
         counts[result["outcome"]] += 1
         http = "/".join(str(r["http"]) if r["http"] else "ERR" for r in result["requests"]) or "—"
         versions = ",".join(result["versions"]) or "unknown"
