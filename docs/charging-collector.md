@@ -38,8 +38,18 @@ end time, whichever is earlier. Uptime/reliability is not inferred from a sample
 2. Put the needed credential variable names from `feeds.toml` in an owner-only
    file outside the checkout; set `CHARGING_ENV_FILE` to its path. Never place
    credentials in the app, a public PR, image or logs.
-3. Use the existing routing Compose environment and run
-   `docker compose --profile charging -f deploy/routing/compose.yaml up -d --build charging caddy`.
+3. From the reviewed checkout on the routing host, export the same runtime
+   ownership used by `routing-deploy.sh` and explicitly load the routing environment:
+
+   ```bash
+   export ROUTING_UID="$(id -u)" ROUTING_GID="$(id -g)"
+   docker compose --env-file deploy/routing/.env --profile charging \
+     -f deploy/routing/compose.yaml up -d --build charging
+   docker compose --env-file deploy/routing/.env --profile charging \
+     -f deploy/routing/compose.yaml up -d --build --force-recreate caddy
+   ```
+
+   Recreating Caddy is necessary when its bind-mounted configuration changes.
    This starts network collection; offline tests never do so. The checked-in
    profile is intentionally opt-in. Review source terms and limits before enabling.
 4. Through the routing edge, request `/charging/v1/chargers` with `west`, `south`,
