@@ -109,6 +109,12 @@ void main() {
     );
     expect(options.length, 2);
     expect(options.last.station.id, 'osm');
+    final painted = fuelMapDrawOrder(options);
+    expect(painted.first.station.id, 'osm');
+    expect(painted.last.charging, isNotNull);
+    expect(fuelPinLabel(painted.first, now)!.text, 'No live data');
+    expect(fuelPinLabel(painted.last, now)!.text, startsWith('from 60.0p/kWh'));
+
     expect(fuelPinLabel(options.first, now)!.text, contains('Unavailable'));
     expect(
       fuelPinLabel(options.first, now.add(const Duration(minutes: 3)))!.current,

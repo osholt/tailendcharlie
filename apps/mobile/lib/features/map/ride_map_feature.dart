@@ -7022,11 +7022,13 @@ class _RideMapScreenState extends State<RideMapScreen>
       return const [];
     }
     if (preference.isElectric) {
-      return attachChargers(
-        stations: stations,
-        readings: _chargerReadings,
-        preference: preference,
-      ).take(80).toList();
+      return fuelMapDrawOrder(
+        attachChargers(
+          stations: stations,
+          readings: _chargerReadings,
+          preference: preference,
+        ).take(80),
+      );
     }
     if (stations.isEmpty) return const [];
     final key = (stations, _fuelPrices, preference);
