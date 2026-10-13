@@ -384,6 +384,19 @@ class RegisterTests(unittest.TestCase):
                 self.assertTrue(f["sources"])
                 self.assertIsInstance(f["sites_approx"], int)
 
+    def test_eco_movement_register_sends_documented_token_header(self):
+        feeds = [f for f in self.feeds if "open-chargepoints.com" in f["base_url"]]
+        self.assertGreaterEqual(len(feeds), 7)
+        for f in feeds:
+            with self.subTest(id=f["id"]):
+                opener = Mock()
+                opener.open.return_value = Response(location())
+                checker.probe(f, {f["credential_env"]: "synthetic-token"}, opener)
+                self.assertEqual(
+                    opener.open.call_args.args[0].get_header("Authorization"),
+                    "Token synthetic-token",
+                )
+
     def test_documentation_matches_all_register_columns_in_order(self):
         root = Path(__file__).resolve().parents[3]
         doc = (root / "docs/ev-charging-open-data-feeds.md").read_text()
