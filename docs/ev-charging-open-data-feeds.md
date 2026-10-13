@@ -5,7 +5,7 @@ Companion to [the charging-data decision](fuel-and-charging-data-decision.md#cha
 
 This register records **65 network, platform and legacy-name entries**, including
 all the names in the issue, with aliases combined where appropriate. It identifies
-eight anonymously working locations samples. It is a verified record of the
+nine anonymously working locations samples. It is a verified record of the
 observations below, **not a verified census of every current legal CPO**, nor a
 certification that any feed meets every statutory requirement.
 
@@ -70,18 +70,18 @@ and one is a legacy name; the other 57 are network entries. Networks can overlap
 
 | Outcome | Entries | Interpretation |
 | --- | ---: | --- |
-| `open-and-working` | 8 | Anonymous HTTP 200 with exactly one recognizable Location; no completeness claim |
+| `open-and-working` | 9 | Anonymous HTTP 200 with exactly one recognizable Location; no completeness claim |
 | `needs-key` | 19 | Key, login, or access-request route; actual credential type can remain unknown |
 | `basic-auth` | 1 | Osprey: Basic access reported by OSM; not independently authenticated |
 | `published-but-failing` | 1 | MFG: request timed out on this check |
 | `not-published` | 32 | No verified statutory feed URL found within reviewed sources |
-| `published-not-sampled` | 4 | Publication exists, but the bounded check cannot establish a usable sample |
+| `published-not-sampled` | 3 | Publication exists, but the bounded check cannot establish a usable sample |
 | **Total** | **65** | |
 
 The sixth category prevents bulk-only publications, skipped oversized responses
 and unresolved publication links from being misleadingly called failed APIs.
 
-- **Working samples:** Arnold Clark Charge, char.gy, ChargePlace Scotland, Evolt
+- **Working samples:** 3ti / Papilio (one published site), Arnold Clark Charge, char.gy, ChargePlace Scotland, Evolt
   Network, GeniePoint, Monta, PoGo Charge and Urban Fox.
 - **Key/access requests:** Allego, Believ, Blink, BP Pulse, ChargePoint CMS, Evology, EVYVE,
   Fastned, GRIDSERVE, InstaVolt, IONITY, Lidl, RAW Charging, EVPoint,
@@ -90,8 +90,7 @@ and unresolved publication links from being misleadingly called failed APIs.
   a draft asking for a paginated API; its publicly linked ZIP was not downloaded.
 - **Published but not sampled:** Clenergy EV and EV Dot returned HTTP 200 with
   Content-Length above 64 KiB; their bodies were skipped, so this does **not** prove
-  they ignore pagination. Wenea exposes a bulk ZIP. 3ti publishes Fuuse-backed
-  charging tables, but its exact feed URLs remain unresolved.
+  they ignore pagination. Wenea exposes a bulk ZIP.
 
 ## Register
 
@@ -114,7 +113,7 @@ not deduplicated physical sites; Be.EV's 600 is its published lower bound.
 <!-- register:start -->
 | Operator | Open-data page | Feed base URL | Format / OCPI | Modules (documented) | EVSE status | kWh tariffs | Auth | Terms | Sites approx | Checked / result | Sources |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| [3ti / Papilio](https://3ti.co.uk/) | [Page](https://3ti.co.uk/3ti-public-charge-points/) | — | unknown / unknown | unknown | unknown | unknown | unknown | Not found | unknown | 2026-10-11: published-not-sampled; Public page presents Fuuse location/status/tariff tables; exact API URLs unresolved | [1](https://3ti.co.uk/) [2](https://3ti.co.uk/3ti-public-charge-points/) |
+| [3ti / Papilio](https://3ti.co.uk/) | [Page](https://3ti.co.uk/3ti-public-charge-points/) | [https://api.fuuse.io/opendata/](https://api.fuuse.io/opendata/) | OCPI-shaped JSON (site-specific) / unknown | locations, tariffs | observed | not-observed (separate tariff sample); location references-only | none | Not found | 7 | 2026-10-13: open-and-working; Anonymous site-specific Location HTTP 200; EVSE status and tariff references; X-Total-Count 1; no Link | [1](https://3ti.co.uk/) [2](https://3ti.co.uk/3ti-public-charge-points/) |
 | [Allego](https://www.allego.eu/) | [Page](https://www.allego.eu/charge-point-data/) | — | unknown / unknown | unknown | unknown | unknown | unknown | Request form and UK GDPR notice | unknown | 2026-10-11: needs-key; Charge-point data request form; credential mechanism unknown | [1](https://www.allego.eu/charge-point-data/) |
 | [APCOA Charging](https://www.apcoa.co.uk/ev-charging/) | — | — | unknown / unknown | unknown | unknown | unknown | unknown | Not found | unknown | 2026-10-11: not-published; No statutory feed URL found in reviewed sources; no feed request | [1](https://www.apcoa.co.uk/ev-charging/) |
 | [Applegreen Electric](https://www.applegreenfastcharge.com/) | — | — | unknown / unknown | unknown | unknown | unknown | unknown | Not found | unknown | 2026-10-11: not-published; No statutory feed URL found in reviewed sources; no feed request | [1](https://www.applegreenfastcharge.com/) |
@@ -334,7 +333,7 @@ request-form choices.
 
 The cumulative total is **47 feed/authentication requests across 21 entries**.
 The original survey's two-request-per-entry ceiling is distinct from these
-explicitly authorized authenticated follow-ups. There are now **13 entries with
+explicitly authorized authenticated follow-ups. At that stage there were **13 entries with
 working samples**: eight anonymous, Fastned, Believ's single-EVSE lookup, IONITY,
 EVYVE and Source EV. Outcome counts remain unchanged: authenticated feeds stay in
 `needs-key`, which describes their access requirement, not an outstanding request
@@ -345,8 +344,17 @@ for a credential. ChargePoint's latest failure is recorded separately in its row
 [Evology](https://evologyparking.com/open-data/) explicitly offers an API-key
 request form; its endpoint and credential header remain unverified. Submission
 includes privacy and terms acceptance requiring an operator decision.
-[3ti](https://3ti.co.uk/3ti-public-charge-points/) publishes charging and tariff
-tables, but the underlying Fuuse endpoints have not been extracted or probed.
+[3ti](https://3ti.co.uk/3ti-public-charge-points/) now exposes seven site IDs
+and constructs site-specific Fuuse location/tariff URLs in its public page.
+On 13 October, one location and its separate tariff returned HTTP 200, each
+with X-Total-Count 1 and no Link header. The location contains EVSE status and
+tariff references; the tariff sample has no numeric ENERGY price. The two checks
+were separated by more than 31 seconds, matching the page's request spacing.
+The page refreshes displayed availability every minute and caches tariffs for a
+day; upstream 30-second freshness remains unverified. Only one of seven sites
+was sampled, with no network-wide endpoint verified. This raises the current
+working sample count to **14** (nine anonymous, five authenticated) and the
+cumulative request count to **49 across 22 entries**.
 The [Fuuse onboarding guide](https://content.fuuse.io/hubfs/User%20Guides%20and%20Onboarding%20Support/Customer%20Journeys%20-%20F-MK-0066-V2.pdf)
 tells site operators to publish the two links from Organisation > Open Data
 Access. Request those public tenant links; data consumers need not be assumed
