@@ -107,6 +107,7 @@ abstract final class RelayProtocolCapabilities {
   /// [current]. The relay advertises it only while a price source is
   /// configured, which makes it the switch for showing prices at all.
   static const fuelPrices = 'fuel-prices-v1';
+  static const chargingStatus = 'charging-status-v1';
 
   static const current = {
     rideStart,

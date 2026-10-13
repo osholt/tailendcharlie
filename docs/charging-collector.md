@@ -63,3 +63,26 @@ mocked HTTP. Tests cover source isolation, rate-limit backoff, credential gates,
 partial sweep retention/removal, bounds, expiry, connector status and conservative
 VAT-aware tariff joins. Existing Server CI runs these and Ruff. Physical-device
 and deployed-host evidence remain deployment gates, not claims of these tests.
+
+## Relay and mobile rollout (Refs #973)
+
+Set `RIDE_RELAY_CHARGING_COLLECTOR_URL` to the routing edge's fixed HTTPS
+`/charging/v1/chargers` URL only after a usable snapshot exists. The preproduction
+Compose environment uses the `PREPRODUCTION_` prefix. Empty disables both the
+relay endpoint and its advertised `charging-status-v1` capability. The relay
+proxies bounded viewport requests with a 2 MiB response limit and a 12-second
+deadline; it does not hold provider credentials or poll operators.
+
+With electric fuel selected, the app combines provider locations with offline
+OSM chargers, including locations absent from OSM. Connector preferences filter
+both pins and navigation candidates. Observations older than two minutes never
+count as currently available; failed refreshes preserve their original time.
+Simple verified tariffs expire after 24 hours. Unknown status and prices remain
+explicitly unknown. Recently available matching connectors rank ahead of nearby
+unknown or reported broken candidates; distance still matters. No historical
+reliability score is implemented yet (Refs #972).
+
+The map refreshes while the charger layer is visible; viewport caching limits
+repeat requests. The detail sheet shows attribution, observation age and tariff
+when known. Disabling the relay capability returns the app to offline OSM.
+A reviewed deployment and a new mobile build are required before users see this.

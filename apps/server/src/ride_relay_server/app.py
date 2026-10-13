@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hmac
 import json
 import re
@@ -7,6 +8,7 @@ import time
 from collections.abc import Callable
 from contextlib import asynccontextmanager
 
+import httpx
 from fastapi import BackgroundTasks, Depends, FastAPI, Query, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
@@ -23,6 +25,7 @@ from pydantic import ValidationError
 from sqlalchemy import text
 from sqlalchemy.orm import Session, sessionmaker
 
+from .charging import CHARGING_CAPABILITY, charger_viewport
 from .client_build_gate import (
     PLATFORM_ANDROID,
     PLATFORM_IOS,
@@ -394,6 +397,7 @@ def create_app(
                 # so the operator switches them on and off for every app from
                 # the relay's environment alone (#951).
                 | ({FUEL_PRICES_CAPABILITY} if fuel_price_service.configured else set())
+                | ({CHARGING_CAPABILITY} if settings.charging_collector_url else set())
             ),
             requiredCapabilities=sorted(set(settings.required_capabilities)),
             cacheSeconds=settings.compatibility_cache_seconds,
@@ -571,6 +575,40 @@ def create_app(
                 },
             )
         return JSONResponse(content=result)
+
+    charging_slots = asyncio.Semaphore(3)
+
+    @app.get("/api/v1/charging/locations", include_in_schema=False)
+    async def charging_locations(
+        request: Request,
+        west: float = Query(ge=-180, le=180),
+        south: float = Query(ge=-90, le=90),
+        east: float = Query(ge=-180, le=180),
+        north: float = Query(ge=-90, le=90),
+    ) -> Response:
+        try:
+            validate_fuel_viewport(
+                west, south, east, north, maximum_latitude_span=0.5, maximum_longitude_span=0.8
+            )
+        except ValueError as error:
+            raise RelayServiceError(400, "Invalid charger viewport") from error
+        if not settings.charging_collector_url:
+            return JSONResponse(status_code=503, content={"code": "charging_unconfigured"})
+        client_ip = request.client.host if request.client else "unknown"
+        retry = fuel_price_limiter.check(f"charging:{client_ip}")
+        if retry is not None or charging_slots.locked():
+            return JSONResponse(
+                status_code=429, headers={"Retry-After": "30"}, content={"code": "charging_busy"}
+            )
+        try:
+            async with charging_slots:
+                data = await charger_viewport(
+                    settings.charging_collector_url,
+                    dict(west=west, south=south, east=east, north=north),
+                )
+        except (httpx.HTTPError, ValueError, TimeoutError):
+            return JSONResponse(status_code=503, content={"code": "charging_unavailable"})
+        return JSONResponse(content=data, headers={"Cache-Control": "private, max-age=30"})
 
     @app.get("/api/v1/fuel/prices", include_in_schema=False)
     def fuel_prices(
