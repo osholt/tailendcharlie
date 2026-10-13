@@ -111,6 +111,18 @@
 			respond `{"error":"client identification required"}` 403
 		}
 
+		handle /charging/v1/chargers {
+			rate_limit {
+				zone charging {
+					key {remote_host}
+					events 120
+					window 1m
+				}
+			}
+			rewrite * /v1/chargers
+			reverse_proxy charging:8090
+		}
+
 		# CORS for the planner only. The engines' own wildcard headers are
 		# stripped below, so a browser sees exactly one answer.
 		header @planner Access-Control-Allow-Origin {http.request.header.Origin}

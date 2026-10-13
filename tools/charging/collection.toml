@@ -1,0 +1,67 @@
+# Explicit initial rollout. Missing credentials skip the source.
+# Conservative origin-wide spacing; no automatic discovery of other feeds.
+
+[[collect]]
+id = "3ti"
+request_interval_seconds = 125
+refresh_seconds = 600
+
+[[collect]]
+id = "arnold-clark"
+request_interval_seconds = 125
+refresh_seconds = 600
+
+[[collect]]
+id = "char-gy"
+request_interval_seconds = 125
+refresh_seconds = 600
+
+[[collect]]
+id = "chargeplace-scotland"
+request_interval_seconds = 125
+refresh_seconds = 600
+
+[[collect]]
+id = "evolt"
+request_interval_seconds = 125
+refresh_seconds = 600
+
+[[collect]]
+id = "evyve"
+request_interval_seconds = 125
+refresh_seconds = 600
+
+[[collect]]
+id = "fastned"
+request_interval_seconds = 125
+refresh_seconds = 600
+
+[[collect]]
+id = "geniepoint"
+request_interval_seconds = 125
+refresh_seconds = 600
+
+[[collect]]
+id = "ionity"
+request_interval_seconds = 125
+refresh_seconds = 600
+
+[[collect]]
+id = "monta"
+request_interval_seconds = 125
+refresh_seconds = 600
+
+[[collect]]
+id = "pogo"
+request_interval_seconds = 125
+refresh_seconds = 600
+
+[[collect]]
+id = "source"
+request_interval_seconds = 125
+refresh_seconds = 600
+
+[[collect]]
+id = "urban-fox"
+request_interval_seconds = 125
+refresh_seconds = 600
