@@ -38,6 +38,29 @@ permissions by design.
 - ...
 ```
 
+## iOS build 105 / Android build 105 — 1.0.1 — charging preview
+
+Prepared for the next tester release; availability depends on store processing.
+
+### What to test
+
+1. Choose electric fuel and your connector types in **Settings**.
+2. Open the charger layer or **Navigate to charger**. Participating providers'
+   locations can now appear even when they are absent from the offline map.
+3. Tap a charger to inspect matching connectors, observed availability and the
+   time checked. A simple VAT-inclusive tariff appears where it can be verified.
+4. Select a charger as a navigation stop. Recently available compatible
+   connectors are preferred, with distance still taken into account.
+
+### Known limitations
+
+- Coverage is partial and grows as the collector reads participating feeds.
+- Status can be delayed. Old observations are marked stale, and availability
+  is never a reservation or a guarantee that a connector works on arrival.
+- Complex or unverified tariffs stay unknown. Check the operator's price before
+  charging. Historical reliability scores are not available yet.
+- Offline mapped chargers remain available when the service cannot be reached.
+
 ## iOS build 103 / Android build 103 — 1.0.1 — October 2026
 
 This is the build the open beta starts with. It covers the 10 October ride
