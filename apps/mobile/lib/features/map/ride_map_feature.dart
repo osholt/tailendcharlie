@@ -87,6 +87,8 @@ import '../../services/route_geometry_enricher.dart';
 import '../../services/route_importer.dart';
 import '../../services/fuel_preference.dart';
 import '../../services/fuel_prices.dart';
+import '../../services/charging.dart';
+import '../../services/charging_data.dart';
 import '../../services/fuel_station_catalogue.dart';
 import '../../services/fuel_stop_finder.dart';
 import '../../services/route_marker_plan.dart';
@@ -1710,6 +1712,9 @@ class _RideMapScreenState extends State<RideMapScreen>
   FuelPreferenceController? _fuelPreference;
   bool _fuelStationsVisible = true;
   FuelPriceSnapshot _fuelPrices = FuelPriceSnapshot.empty;
+  List<ChargerReading> _chargerReadings = const [];
+  Timer? _chargingRefresh;
+  int _chargingRequest = 0;
   Timer? _fuelPriceDebounce;
 
   BasemapConfiguration get _basemap => widget.offlineTileCache.configuration;
@@ -1833,6 +1838,13 @@ class _RideMapScreenState extends State<RideMapScreen>
   @override
   void initState() {
     super.initState();
+    _chargingRefresh = Timer.periodic(const Duration(seconds: 60), (_) {
+      if (mounted &&
+          _fuelPreference?.value.isElectric == true &&
+          !_mapRenderingPaused) {
+        _scheduleFuelPriceRefresh(immediate: true);
+      }
+    });
     WidgetsBinding.instance.addObserver(this);
     final lifecycle = WidgetsBinding.instance.lifecycleState;
     _mapRenderingPaused =
@@ -2094,6 +2106,7 @@ class _RideMapScreenState extends State<RideMapScreen>
     widget.globalRideHeatmap?.removeListener(_onGlobalRideHeatmapChanged);
     _globalHeatmapDebounce?.cancel();
     _fuelPriceDebounce?.cancel();
+    _chargingRefresh?.cancel();
     _fuelPreference?.removeListener(_onFuelPreferenceChanged);
     unawaited(_groupPipBridge.dispose());
     _routingClient.close();
@@ -4147,7 +4160,7 @@ class _RideMapScreenState extends State<RideMapScreen>
                 )
                 .toList(growable: false),
           ),
-        if (_visibleFuelStations.isNotEmpty)
+        if (_visibleFuelOptions.isNotEmpty)
           MarkerLayer(
             key: const Key('fuel-stations-layer'),
             markers: [
@@ -6999,7 +7012,23 @@ class _RideMapScreenState extends State<RideMapScreen>
   List<FuelStopOption> get _visibleFuelOptions {
     final stations = _visibleFuelStations;
     final preference = _fuelPreference?.value;
-    if (stations.isEmpty || preference == null) return const [];
+    if (preference == null ||
+        !fuelLayerShownIn(
+          _discoveryLayerContext,
+          layerEnabled: _fuelStationsVisible,
+          riderAskedForFuel: _fuelStopRequested,
+        ) ||
+        _lastViewportZoom < fuelStationMinimumZoom) {
+      return const [];
+    }
+    if (preference.isElectric) {
+      return attachChargers(
+        stations: stations,
+        readings: _chargerReadings,
+        preference: preference,
+      ).take(80).toList();
+    }
+    if (stations.isEmpty) return const [];
     final key = (stations, _fuelPrices, preference);
     if (key == _fuelOptionsKey) return _fuelOptionsCache;
     _fuelOptionsKey = key;
@@ -7018,24 +7047,33 @@ class _RideMapScreenState extends State<RideMapScreen>
 
   void _onFuelPreferenceChanged() {
     if (!mounted) return;
-    setState(() => _fuelPrices = FuelPriceSnapshot.empty);
+    setState(() {
+      _fuelPrices = FuelPriceSnapshot.empty;
+      _chargerReadings = const [];
+      _chargingRequest++;
+    });
     _scheduleMapLibreSync(overlays: true);
     _scheduleFuelPriceRefresh(immediate: true);
   }
 
-  /// Prices for the stations in view (#951). Only for liquid fuel (there is
-  /// no charger tariff source), only while the layer is drawn, and only at a
+  /// Fuel prices and charger observations for the stations in view,
+  /// only while the layer is drawn, and only at a
   /// zoom where the view fits the relay's small boxes. The relay client
   /// caches, so panning back and forth asks nothing new.
   void _scheduleFuelPriceRefresh({bool immediate = false}) {
     _fuelPriceDebounce?.cancel();
+    final request = ++_chargingRequest;
     final corners = _discoveryViewportCorners;
     final preference = _fuelPreference?.value;
     if (corners == null ||
         corners.length < 2 ||
         preference == null ||
-        preference.isElectric ||
-        _visibleFuelStations.isEmpty) {
+        !fuelLayerShownIn(
+          _discoveryLayerContext,
+          layerEnabled: _fuelStationsVisible,
+          riderAskedForFuel: _fuelStopRequested,
+        ) ||
+        _lastViewportZoom < fuelStationMinimumZoom) {
       return;
     }
     final west = math.min(corners[0].longitude, corners[1].longitude);
@@ -7046,6 +7084,35 @@ class _RideMapScreenState extends State<RideMapScreen>
     _fuelPriceDebounce = Timer(
       immediate ? Duration.zero : const Duration(milliseconds: 600),
       () async {
+        if (preference.isElectric) {
+          final readings = await RelayChargingClient.shared().fetch(
+            fuelPriceTiles(
+              west: west,
+              south: south,
+              east: east,
+              north: north,
+              limit: 4,
+            ),
+          );
+          if (!mounted ||
+              request != _chargingRequest ||
+              _fuelPreference?.value != preference) {
+            return;
+          }
+          setState(
+            () => _chargerReadings = readings
+                .where(
+                  (r) =>
+                      r.point.latitude >= south &&
+                      r.point.latitude <= north &&
+                      r.point.longitude >= west &&
+                      r.point.longitude <= east,
+                )
+                .toList(),
+          );
+          _scheduleMapLibreSync(overlays: true);
+          return;
+        }
         final result = await RelayFuelPriceClient.shared().fetch(
           fuelPriceTiles(
             west: west,
@@ -7133,8 +7200,7 @@ class _RideMapScreenState extends State<RideMapScreen>
                         Text(
                           key: const Key('fuel-station-detail'),
                           station.kind == FuelStationKind.charging
-                              ? '${station.chargerSummary}. Tariff and '
-                                    'availability not shown.'
+                              ? '${station.chargerSummary}. ${option.chargingText(now)}'
                               : price ?? 'No price available.',
                         ),
                         if (option.quote?.reportedAt case final reported?)
@@ -7151,6 +7217,7 @@ class _RideMapScreenState extends State<RideMapScreen>
                         for (final credit in [
                           catalogue.attribution,
                           ?option.source?.attribution,
+                          ?option.charging?.attribution,
                         ])
                           Text(
                             credit,

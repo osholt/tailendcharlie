@@ -173,6 +173,30 @@ class Settings(BaseSettings):
     # credentials; without both it is off. France's open feed needs none and is
     # off until enabled. The app shows prices only while `fuel-prices-v1` is
     # advertised, which follows these settings.
+    # Fixed HTTPS endpoint or the exact co-hosted Docker service; empty disables capability.
+    charging_collector_url: str = ""
+
+    @field_validator("charging_collector_url")
+    @classmethod
+    def validate_charging_collector_url(cls, value: str) -> str:
+        from urllib.parse import urlsplit
+
+        if not value or value == "http://charging:8090/v1/chargers":
+            return value
+        parts = urlsplit(value)
+        if (
+            parts.scheme != "https"
+            or not parts.hostname
+            or parts.username
+            or parts.password
+            or parts.query
+            or parts.fragment
+        ):
+            raise ValueError(
+                "Charger collector must use HTTPS or the fixed internal charging service"
+            )
+        return value
+
     fuel_finder_client_id: str = Field(default="", max_length=255)
     fuel_finder_client_secret: SecretStr | None = None
     fuel_finder_base_url: str = "https://www.fuel-finder.service.gov.uk"

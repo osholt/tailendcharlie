@@ -143,6 +143,13 @@ List<FuelStopCandidate> rankFuelStops({
         final cost =
             item.reachMetres +
             rules.detourWeight * item.detourMetres +
+            (preference.isElectric
+                ? item.option.charging?.unusable(preference, now) == true
+                      ? 50000
+                      : item.option.charging?.available(preference, now) == true
+                      ? 0
+                      : 5000
+                : 0) +
             (difference ?? 0) * rules.metresPerPenny +
             (item.compatibility == FuelCompatibility.unrecorded &&
                     !preference.kind.commonlyStocked

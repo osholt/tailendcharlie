@@ -20,6 +20,7 @@ import 'package:http/http.dart' as http;
 import '../domain/geo_point.dart';
 import '../internet/internet_relay_client.dart';
 import 'fuel_preference.dart';
+import 'charging_data.dart';
 import 'fuel_station_catalogue.dart';
 import 'geo_calculations.dart';
 
@@ -583,6 +584,8 @@ class FuelStopOption {
   const FuelStopOption({
     required this.station,
     this.priced,
+    this.charging,
+    this.chargingPreference,
     this.quote,
     this.source,
     this.fetchedAt,
@@ -590,11 +593,20 @@ class FuelStopOption {
 
   final FuelStation station;
   final PricedFuelStation? priced;
+  final ChargerReading? charging;
+  final FuelPreference? chargingPreference;
   final FuelPriceQuote? quote;
   final FuelPriceSource? source;
   final DateTime? fetchedAt;
 
   bool get closed => priced?.closed ?? false;
+
+  String chargingText(DateTime now) =>
+      charging?.describe(
+        chargingPreference ?? const FuelPreference(FuelKind.electric),
+        now,
+      ) ??
+      'Tariff and availability not shown';
 
   /// The name to show: the source's trading name for a priced forecourt with
   /// no better one mapped, otherwise the map's.
@@ -717,6 +729,40 @@ List<FuelStopOption> attachFuelPrices({
   FuelStopOption option,
   DateTime now,
 ) {
+  final charging = option.charging;
+  if (charging != null) {
+    final preference =
+        option.chargingPreference ?? const FuelPreference(FuelKind.electric);
+    final fresh = charging.fresh(now);
+    final status = !fresh
+        ? 'Status stale'
+        : charging.available(preference, now)
+        ? 'Available'
+        : charging.unusable(preference, now)
+        ? 'Unavailable'
+        : 'Check status';
+    final prices =
+        charging
+            .matching(preference)
+            .where(
+              (s) =>
+                  s.pencePerKwh != null &&
+                  s.priceCheckedAt != null &&
+                  !now.difference(s.priceCheckedAt!).isNegative &&
+                  now.difference(s.priceCheckedAt!) <=
+                      const Duration(hours: 24),
+            )
+            .map((s) => s.pencePerKwh!)
+            .toList()
+          ..sort();
+    final price = prices.isEmpty
+        ? ''
+        : ' · from ${prices.first.toStringAsFixed(1)}p/kWh';
+    return (
+      text: '$status$price · ${_clock(charging.checkedAt)}',
+      current: fresh,
+    );
+  }
   final quote = option.quote;
   final source = option.source;
   final fetchedAt = option.fetchedAt;

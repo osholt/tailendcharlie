@@ -41,7 +41,7 @@ String? fuelStopDetailText(
   final parts = <String>[
     if (station.kind == FuelStationKind.charging) ...[
       station.chargerSummary,
-      'Tariff and availability not shown',
+      candidate.option.chargingText(now),
     ] else if (candidate.option.priceText(now) case final price?)
       price
     else if (candidate.compatibility == FuelCompatibility.unrecorded &&
@@ -220,7 +220,9 @@ class _FuelStopSheetState extends State<FuelStopSheet> {
   }
 
   static String? _priceNote(FuelStopSearchResult result) {
-    if (result.preference.isElectric) return null;
+    if (result.preference.isElectric) {
+      return 'Limited network coverage. Recent available connectors are preferred; check status before travelling.';
+    }
     return switch (result.prices) {
       FuelPriceAvailability.available => null,
       // Said once, plainly: prices are simply not switched on yet.

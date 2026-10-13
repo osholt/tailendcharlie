@@ -8,6 +8,8 @@ import 'package:flutter/foundation.dart';
 
 import '../domain/geo_point.dart';
 import 'fuel_preference.dart';
+import 'charging.dart';
+import 'charging_data.dart';
 import 'fuel_prices.dart';
 import 'fuel_station_catalogue.dart';
 import 'fuel_stop_ranking.dart';
@@ -55,6 +57,7 @@ class FuelStopFinder {
     required this.catalogue,
     required this.preference,
     required this.fetchPrices,
+    this.fetchChargers,
     DateTime Function()? clock,
     this.rules = const FuelStopRankingRules(),
   }) : _clock = clock ?? DateTime.now;
@@ -64,11 +67,14 @@ class FuelStopFinder {
     catalogue: FuelStationCatalogue.shared,
     preference: await FuelPreferenceController.shared(),
     fetchPrices: RelayFuelPriceClient.shared().fetch,
+    fetchChargers: RelayChargingClient.shared().fetch,
   );
 
   final FuelStationCatalogueLoader catalogue;
   final FuelPreferenceController preference;
   final FuelPriceFetch fetchPrices;
+  final Future<List<ChargerReading>> Function(List<FuelPriceTile>)?
+  fetchChargers;
   final FuelStopRankingRules rules;
   final DateTime Function() _clock;
 
@@ -105,7 +111,7 @@ class FuelStopFinder {
       FuelPriceAvailability.notOffered,
       FuelPriceSnapshot.empty,
     );
-    // Chargers have no price source yet (see the decision record).
+    // Liquid fuel uses its separate price service.
     if (!wanted.isElectric) {
       prices = await fetchPrices(
         fuelPriceTiles(
@@ -116,11 +122,26 @@ class FuelStopFinder {
         ),
       );
     }
-    final options = attachFuelPrices(
+    var options = attachFuelPrices(
       stations: stations,
       snapshot: prices.snapshot,
       preference: wanted,
     );
+    if (wanted.isElectric && fetchChargers != null) {
+      final readings = await fetchChargers!(
+        fuelPriceTiles(
+          west: bounds.west,
+          south: bounds.south,
+          east: bounds.east,
+          north: bounds.north,
+        ),
+      );
+      options = attachChargers(
+        stations: stations,
+        readings: readings,
+        preference: wanted,
+      );
+    }
     final candidates = rankFuelStops(
       options: options,
       preference: wanted,
@@ -139,6 +160,11 @@ class FuelStopFinder {
       attributions: [
         if (layer.attribution.isNotEmpty) layer.attribution,
         for (final source in usedSources) source.attribution,
+        ...{
+          for (final candidate in candidates)
+            if (candidate.option.charging != null)
+              candidate.option.charging!.attribution,
+        },
       ],
       reportErrorUrls: [
         for (final source in usedSources) ?source.reportErrorUrl,
