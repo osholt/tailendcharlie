@@ -1,6 +1,31 @@
 name: ride-relay
 
 services:
+  charging:
+    profiles: [charging]
+    build:
+      context: ..
+      dockerfile: deploy/charging/Dockerfile
+    restart: unless-stopped
+    read_only: true
+    user: '1000:1000'
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 128m
+    memswap_limit: 128m
+    cpus: 0.25
+    pids_limit: 32
+    env_file:
+      - path: ${CHARGING_ENV_FILE:-./charging.env}
+        required: false
+    volumes:
+      - ${CHARGING_DATA_DIR:-/var/lib/tailendcharlie/charging}:/data
+    logging:
+      driver: json-file
+      options:
+        max-size: 1m
+        max-file: '2'
+
   db:
     image: postgres:17-alpine
     restart: unless-stopped

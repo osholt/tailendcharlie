@@ -45,11 +45,18 @@ def test_configured_proxy_does_not_change_observation_times(settings, monkeypatc
 
 
 @pytest.mark.parametrize(
-    "url", ["http://example.com", "https://u:p@example.com", "https://example.com/?key=x"]
+    "url",
+    [
+        "http://example.com",
+        "https://u:p@example.com",
+        "https://example.com/?key=x",
+        "http://charging:8090/other",
+        "http://charging:8090/v1/chargers?url=x",
+    ],
 )
 def test_collector_url_requires_fixed_https(url):
     with pytest.raises(ValueError):
-        Settings(charging_collector_url=url)
+        Settings.validate_charging_collector_url(url)
 
 
 @pytest.mark.parametrize("mode", ["ok", "redirect", "large", "encoded", "schema"])
@@ -99,3 +106,10 @@ def test_upstream_is_bounded_and_redirects_are_not_followed(monkeypatch, mode):
         with pytest.raises((ValueError, httpx.HTTPError)):
             asyncio.run(charging.charger_viewport("https://routing.example", BOUNDS))
     assert len(calls) == 1
+
+
+def test_collector_accepts_exact_internal_service():
+    assert (
+        Settings.validate_charging_collector_url("http://charging:8090/v1/chargers")
+        == "http://charging:8090/v1/chargers"
+    )
