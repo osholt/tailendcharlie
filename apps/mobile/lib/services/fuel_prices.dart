@@ -757,11 +757,14 @@ List<FuelStopOption> attachFuelPrices({
           ..sort();
     final price = prices.isEmpty
         ? ''
-        : ' · from ${prices.first.toStringAsFixed(1)}p/kWh';
+        : 'from ${prices.first.toStringAsFixed(1)}p/kWh · ';
     return (
-      text: '$status$price · ${_clock(charging.checkedAt)}',
+      text: '$price$status · ${_clock(charging.checkedAt)}',
       current: fresh,
     );
+  }
+  if (option.station.kind == FuelStationKind.charging) {
+    return (text: 'No live data', current: false);
   }
   final quote = option.quote;
   final source = option.source;
@@ -782,3 +785,10 @@ List<FuelStopOption> attachFuelPrices({
       return null;
   }
 }
+
+/// Paint observed chargers above offline pins when their positions overlap.
+/// Keep both identities: nearby chargers can belong to different operators.
+List<FuelStopOption> fuelMapDrawOrder(Iterable<FuelStopOption> options) => [
+  ...options.where((option) => option.charging == null),
+  ...options.where((option) => option.charging != null),
+];
