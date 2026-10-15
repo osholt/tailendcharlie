@@ -38,6 +38,30 @@ permissions by design.
 - ...
 ```
 
+## iOS build 106 — 1.0.1 — 15 October 2026
+
+Prepared for TestFlight; availability depends on Apple processing and beta review.
+
+### What to test
+
+1. Select **Electric** and your connector types in Settings.
+2. Open the map around Bristol, Bath or Chippenham and tap a participating
+   provider's charger. Check its price, status and observation time.
+3. Check that nearby offline charger pins do not obscure provider-backed pins.
+
+### Fixed
+
+- Provider-backed charger pins are drawn above offline charger pins.
+- Chargers without live data explicitly say **No live data**.
+- Known prices remain visible when the availability observation is stale.
+
+### Known limitations
+
+- Coverage and prices remain partial. Missing or complex tariffs stay unknown.
+- Availability can be several minutes old; check the observation time and the
+  operator's price before charging.
+- The map fix has automated coverage but still needs confirmation on a phone.
+
 ## iOS build 105 / Android build 105 — 1.0.1 — charging preview
 
 Prepared for the next tester release; availability depends on store processing.
