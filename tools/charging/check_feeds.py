@@ -67,6 +67,21 @@ def headers_for(feed: dict, environ: dict) -> dict:
     env_name = feed["credential_env"]
     # No credential discovery, files, login, OAuth exchange or registration.
     secret = environ.get(env_name, "") if env_name else ""
+    api_key_env = feed.get("api_key_env", "")
+    if api_key_env:
+        # A second credential is only supported alongside OCPI Authorization.
+        # Reject partial credentials before constructing or sending any request.
+        api_key = environ.get(api_key_env, "")
+        if (
+            feed["auth"] not in {"token", "emailed-key"}
+            or feed.get("auth_header", "").lower() != "authorization"
+            or not secret
+            or not api_key
+            or "\r" in api_key
+            or "\n" in api_key
+        ):
+            raise ValueError("invalid dual credential configuration")
+        headers["X-API-Key"] = api_key
     if not secret or feed["auth"] in {"none", "unknown"}:
         return headers
     if "\r" in secret or "\n" in secret:

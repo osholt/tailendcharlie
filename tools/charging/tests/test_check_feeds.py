@@ -313,6 +313,42 @@ class ProbeTests(unittest.TestCase):
             ),
         )
 
+    def test_dual_credentials_require_both_secrets_and_never_expose_them(self):
+        f = feed(
+            versions_url="",
+            auth="emailed-key",
+            credential_env="TOKEN",
+            api_key_env="API_KEY",
+            auth_header="Authorization",
+            auth_scheme="Token",
+        )
+        opener = Mock()
+        opener.open.return_value = Response(location())
+        result = checker.probe(f, {"TOKEN": "synthetic-token", "API_KEY": "synthetic-key"}, opener)
+        request = opener.open.call_args.args[0]
+        self.assertEqual(request.get_header("Authorization"), "Token synthetic-token")
+        self.assertEqual(request.get_header("X-api-key"), "synthetic-key")
+        self.assertEqual(opener.open.call_count, 1)
+        self.assertEqual(result["reason"], "working-with-credentials")
+        self.assertNotIn("synthetic-token", str(result))
+        self.assertNotIn("synthetic-key", str(result))
+        for env in [
+            {},
+            {"TOKEN": "synthetic-token"},
+            {"API_KEY": "synthetic-key"},
+            {"TOKEN": "synthetic-token", "API_KEY": "bad\rkey"},
+            {"TOKEN": "synthetic-token", "API_KEY": "bad\nkey"},
+        ]:
+            with self.subTest(env_keys=list(env)):
+                opener.reset_mock()
+                result = checker.probe(f, env, opener)
+                opener.open.assert_not_called()
+                self.assertEqual(result["reason"], "credential-configuration")
+        for changes in [{"auth": "none"}, {"auth_header": "x-api-key"}]:
+            opener.reset_mock()
+            checker.probe(dict(f, **changes), {"TOKEN": "one", "API_KEY": "two"}, opener)
+            opener.open.assert_not_called()
+
     def test_invalid_credentials_urls_and_skip_do_not_request(self):
         cases = [
             feed(locations_url="http://feed.example/locations"),

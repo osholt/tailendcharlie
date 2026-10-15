@@ -383,9 +383,12 @@ counts toward the daily limit. At 96 calls/day, evenly spaced requests would be
 availability delivery to this app. Confirm EVSE status fields and timestamps in
 a bounded sample and distinguish embedded tariff values from tariff references.
 
-Current implementation gaps: the probe already detects embedded numeric ENERGY
-components, but the shared header builder supports only one credential header.
-The collector joins separate tariff records by ID; it does not ingest these
+The probe detects embedded numeric ENERGY components, and the shared header
+builder supports an optional second API key from a named environment variable.
+Missing or invalid dual credentials make no request; the collector isolates a
+credential configuration error to that source. The exact InstaVolt header scheme
+is not configured until confirmed. The collector joins separate tariff records
+by ID; it does not ingest these
 connector-embedded tariff objects. InstaVolt remains absent from the collection
 allowlist until those gaps and access requirements are resolved. No provider
 requests were made for this document review.
@@ -830,9 +833,13 @@ access. This tool does not update the register automatically. Update reviewed
 metadata, regenerate the marked table with `--markdown`, and rerun the tests.
 
 Credentials are read **only** from the environment variable named by
-`credential_env`; the TOML contains names, never values. For Basic auth that
+`credential_env` and optional `api_key_env`; the TOML contains names, never values. For Basic auth that
 variable holds `username:password`; for a documented API-key scheme it holds
 only the key. `auth_header` and `auth_scheme` describe a reviewed header format.
+For a feed requiring both OCPI Authorization and `X-API-Key`, `api_key_env`
+names the second secret. Both must be present and newline-free; partial credentials
+are rejected before any request. This option is not enabled for InstaVolt until
+its endpoint and exact Authorization scheme have been confirmed.
 If the format is unknown, the tool will not guess how to send a credential.
 A reserved environment-variable name on an unknown row is not evidence that
 access requires a key. Keep credentials in a local secret manager/environment;

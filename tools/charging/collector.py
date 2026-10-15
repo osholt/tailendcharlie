@@ -348,6 +348,12 @@ class Collector:
                 self.store.outcome(f, "credentials-missing", now)
                 job["due"] = now + 3600
                 continue
+            try:
+                headers = headers_for(f, self.environ)
+            except ValueError:
+                self.store.outcome(f, "credential-configuration", now)
+                job["due"] = now + 3600
+                continue
             gap = max(31, p.get("request_interval_seconds", 125))
             self.origin_due[origin] = now + gap
             job["due"] = now + gap
@@ -360,7 +366,7 @@ class Collector:
             if param == "per_page":
                 query = {param: PAGE_SIZE, "page": job["pages"] + 1}
             url = urlunsplit(urlsplit(job["url"])._replace(query=urlencode(query)))
-            status, rows, total = self.fetch(url, headers_for(f, self.environ))
+            status, rows, total = self.fetch(url, headers)
             if status != 200 or not isinstance(rows, list) or len(rows) > PAGE_SIZE:
                 self.store.outcome(f, "rate-limited" if status == 429 else "fetch-failed", now)
                 if status == 429:

@@ -159,6 +159,31 @@ class CollectorTests(unittest.TestCase):
         fetch.assert_not_called()
         self.assertEqual(self.view()["sources"][0]["outcome"], "credentials-missing")
 
+    def test_partial_dual_credentials_do_not_block_other_sources(self):
+        f = dict(
+            self.feed,
+            auth="token",
+            credential_env="TOKEN",
+            api_key_env="KEY",
+            auth_header="Authorization",
+            auth_scheme="Token",
+        )
+        other = dict(self.feed, id="other", locations_url="https://other.example/locations")
+        fetch = Mock(return_value=(200, [location()], 1))
+        collector = c.Collector(
+            self.store,
+            [f, other],
+            [{"id": "test"}, {"id": "other"}],
+            {"TOKEN": "synthetic-token"},
+            fetch,
+        )
+        collector.step(100)
+        self.assertEqual(fetch.call_count, 1)
+        self.assertTrue(fetch.call_args.args[0].startswith("https://other.example/"))
+        self.assertEqual(collector.jobs[0]["due"], 3700)
+        outcomes = {s["id"]: s["outcome"] for s in self.view()["sources"]}
+        self.assertEqual(outcomes["test"], "credential-configuration")
+
     def test_stale_or_expired_price_is_removed_without_losing_location(self):
         self.store.ingest(self.feed, "locations", [location()], 1, 100, True)
         self.store.ingest(self.feed, "tariffs", [tariff()], 1, 100, True)
