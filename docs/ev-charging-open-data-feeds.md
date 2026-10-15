@@ -145,7 +145,7 @@ not deduplicated physical sites; Be.EV's 600 is its published lower bound.
 | [GeniePoint (Equans)](https://www.equans.co.uk/drivers-geniepoint) | [Page](https://www.equans.co.uk/drivers-geniepoint/open-data) | [https://opendata.geniepoint.co.uk/](https://opendata.geniepoint.co.uk/) | OCPI-shaped JSON / unknown | locations, tariffs | observed | references-only | none | No feed-specific acceptance shown on publication page | 306 | 2026-10-11: open-and-working; HTTP 200; one Location with EVSE status and tariff IDs | [1](https://www.equans.co.uk/drivers-geniepoint/open-data) [2](https://drivers.geniepoint.co.uk/open-data) |
 | [Go Zero](https://www.gozerocharge.com/) | [Page](https://gozerocharge.com/public-charge-point-open-data/) | — | unknown / unknown | unknown | unknown | unknown | unknown | Not found | unknown | 2026-10-11: not-published; No statutory feed URL found in reviewed sources; no feed request | [1](https://www.gozerocharge.com/) [2](https://gozerocharge.com/public-charge-point-open-data/) [3](https://wiki.openstreetmap.org/wiki/EV_charge_points_in_the_United_Kingdom) [4](https://www.gozerocharge.com/public-charge-point-open-data) |
 | [GRIDSERVE (Electric Highway)](https://www.gridserve.com/) | [Page](https://www.gridserve.com/open-data/) | [https://api.gridserve.com/ocpi/v1/](https://api.gridserve.com/ocpi/v1/) | OCPI-shaped JSON / unknown | locations, tariffs | documented | documented | emailed-key | API/fair-use acceptance required; terms assert data IP/confidentiality and restrictions; clarify statutory reuse rights | unknown | 2026-10-11: needs-key; HTTP 401; http-error | [1](https://www.gridserve.com/open-data/) [2](https://www.gridserve.com/wp-content/uploads/2024/11/GRIDSERVE-PCPR-API-Developer-Documentation.pdf) [3](https://www.gridserve.com/wp-content/uploads/2024/11/GRIDSERVE-PCPR-Open-Data-Onboarding-Information.pdf) [4](https://www.gridserve.com/ecotricity-completes-electric-highway-sale-to-gridserve/) [5](https://www.gridserve.com/legal-area/open-data-api-terms-and-conditions/) |
-| [InstaVolt](https://instavolt.co.uk/) | [Page](https://instavolt.co.uk/public-charge-point-regulation-data/) | — | OCPI (documented) / unknown | locations | unknown | unknown | emailed-key | Page requires a signed Open Data Agreement before credentials | unknown | 2026-10-11: needs-key; Access gated; no credentials requested or used | [1](https://instavolt.co.uk/public-charge-point-regulation-data/) |
+| [InstaVolt](https://instavolt.co.uk/) | [Page](https://instavolt.co.uk/public-charge-point-regulation-data/) | — | OCPI (documented) / 2.1.1 (agreement; not negotiated) | locations | unknown | unknown | emailed-key | Page requires a signed Open Data Agreement before credentials | unknown | 2026-10-11: needs-key; Access requested; agreement received 2026-10-14; unsigned; no endpoint or credentials issued | [1](https://instavolt.co.uk/public-charge-point-regulation-data/) |
 | [IONITY](https://www.ionity.eu/) | [Page](https://www.ionity.eu/open-data-request) | [https://open-chargepoints.com/api/ocpi/cpo/2.2.1/](https://open-chargepoints.com/api/ocpi/cpo/2.2.1/) | OCPI JSON / 2.2.1 (URL; guide calls it 2.2) | locations, tariffs, statuses | observed | references-only | emailed-key | Request form and personal-data processing notice | 83 | 2026-10-13: needs-key; Authenticated locations HTTP 200; one Location with EVSE status and tariff IDs; X-Total-Count 83; Link present; numeric tariff not verified | [1](https://www.ionity.eu/open-data-request) [2](https://developers.eco-movement.com/docs/eco-movement-pcpr-api-user-guide) [3](https://developers.eco-movement.com/reference/get-all-locations-pcpr-api) [4](https://developers.eco-movement.com/reference/getting-started-data-api) [5](https://developers.eco-movement.com/reference/get-tariffs-pcpr-api) [6](https://developers.eco-movement.com/reference/get-statuses-pcpr-api) |
 | [Joju Charging](https://www.jojusolar.co.uk/) | — | — | unknown / unknown | unknown | unknown | unknown | unknown | Not found | unknown | 2026-10-11: not-published; No statutory feed URL found in reviewed sources; no feed request | [1](https://www.jojusolar.co.uk/a-10-million-kwh-milestone-joju-and-mer-ev-charging/) [2](https://play.google.com/store/apps/details?id=com.jojucharging) |
 | [JOLT](https://joltcharge.com/uk/) | — | — | unknown / unknown | unknown | unknown | unknown | unknown | Not found | unknown | 2026-10-11: not-published; No statutory feed URL found in reviewed sources; no feed request | [1](https://joltcharge.com/uk/) |
@@ -360,6 +360,35 @@ tells site operators to publish the two links from Organisation > Open Data
 Access. Request those public tenant links; data consumers need not be assumed
 to require a Fuuse customer account. Go Zero's previously listed open-data page
 renders a 404; its register entry remains unresolved.
+
+## InstaVolt access documents — reviewed 15 October 2026
+
+The operator replied on 14 October with **InstaVolt- API License Agreement
+2026.pdf** and **InstaVolt Open Data Request Process 2026.pdf**. These are
+operator-supplied correspondence, not a live API observation. The attachments,
+private mailbox links and personal details are not reproduced in this public
+repository. The live-check date and unknown field-presence results remain
+unchanged; the outcome remains `needs-key`.
+
+The setup guide describes a locations-only interface, with tariff objects inside
+`evses -> connectors -> tariffs`, and both OCPI TOKEN A and an `x-api-key` header.
+The agreement specifies OCPI 2.1.1, a maximum of 96 API calls per 24 hours and a
+12-month term. Credentials and the endpoint are issued only after the signed
+agreement is returned. No agreement has been signed and no credentials issued.
+
+Before enabling collection, obtain the endpoint and credentials, confirm the
+actual OCPI version, token header encoding, pagination and whether every page
+counts toward the daily limit. At 96 calls/day, evenly spaced requests would be
+15 minutes apart even before pagination. This is not evidence of 30-second
+availability delivery to this app. Confirm EVSE status fields and timestamps in
+a bounded sample and distinguish embedded tariff values from tariff references.
+
+Current implementation gaps: the probe already detects embedded numeric ENERGY
+components, but the shared header builder supports only one credential header.
+The collector joins separate tariff records by ID; it does not ingest these
+connector-embedded tariff objects. InstaVolt remains absent from the collection
+allowlist until those gaps and access requirements are resolved. No provider
+requests were made for this document review.
 
 ## Unsent access-request drafts
 
