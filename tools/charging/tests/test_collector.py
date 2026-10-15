@@ -89,6 +89,51 @@ class CollectorTests(unittest.TestCase):
         for t in cases:
             self.assertIsNone(c.simple_tariff(t, 100))
 
+    def test_embedded_tariff_is_connector_local_and_expires(self):
+        for wrapped in [False, True]:
+            row = location()
+            conn = row["evses"][0]["connectors"][0]
+            t = tariff()
+            t["end_date_time"] = "1970-01-01T00:03:20Z"
+            conn["tariffs"] = [t] if wrapped else t
+            row["evses"][0]["connectors"].append(dict(location()["evses"][0]["connectors"][0]))
+            self.store.ingest(self.feed, "locations", [row], 1, 100, True)
+            connectors = self.view()["locations"][0]["connectors"]
+            self.assertEqual(connectors[0]["pencePerKwh"], 60)
+            self.assertEqual(connectors[0]["priceCheckedAt"], 100)
+            self.assertNotIn("embeddedPrice", connectors[0])
+            self.assertNotIn("pencePerKwh", connectors[1])
+            self.assertNotIn("pencePerKwh", self.view(200)["locations"][0]["connectors"][0])
+        row = location()
+        row["evses"][0]["connectors"][0]["tariffs"] = tariff()
+        self.store.ingest(self.feed, "locations", [row], 1, 100, True)
+        self.assertNotIn("pencePerKwh", self.view(86501)["locations"][0]["connectors"][0])
+
+    def test_invalid_embedded_tariffs_never_fall_back_to_separate_price(self):
+        self.store.ingest(self.feed, "tariffs", [tariff()], 1, 100, True)
+        cases = [
+            None,
+            [],
+            [tariff(), tariff()],
+            "invalid",
+            {},
+            dict(tariff(), id="different"),
+            dict(tariff(), party_id="OTHER"),
+            dict(tariff(), currency="EUR"),
+            dict(tariff(), elements=None),
+            dict(tariff(), elements=[{"price_components": None}]),
+            dict(tariff(), elements=[{"price_components": [{"type": "ENERGY", "price": 0.5}]}]),
+            dict(tariff(), end_date_time="1970-01-01T00:00:10Z"),
+        ]
+        for value in cases:
+            with self.subTest(value=value):
+                row = location()
+                row["evses"][0]["connectors"][0]["tariffs"] = value
+                self.store.ingest(self.feed, "locations", [row], 1, 100, True)
+                conn = self.view()["locations"][0]["connectors"][0]
+                self.assertNotIn("pencePerKwh", conn)
+                self.assertNotIn("embeddedPrice", conn)
+
     def test_bad_coordinates_private_non_uk_removed_and_unknown_status(self):
         for mutation in [
             {"publish": False},
@@ -158,6 +203,31 @@ class CollectorTests(unittest.TestCase):
         collector.step(100)
         fetch.assert_not_called()
         self.assertEqual(self.view()["sources"][0]["outcome"], "credentials-missing")
+
+    def test_partial_dual_credentials_do_not_block_other_sources(self):
+        f = dict(
+            self.feed,
+            auth="token",
+            credential_env="TOKEN",
+            api_key_env="KEY",
+            auth_header="Authorization",
+            auth_scheme="Token",
+        )
+        other = dict(self.feed, id="other", locations_url="https://other.example/locations")
+        fetch = Mock(return_value=(200, [location()], 1))
+        collector = c.Collector(
+            self.store,
+            [f, other],
+            [{"id": "test"}, {"id": "other"}],
+            {"TOKEN": "synthetic-token"},
+            fetch,
+        )
+        collector.step(100)
+        self.assertEqual(fetch.call_count, 1)
+        self.assertTrue(fetch.call_args.args[0].startswith("https://other.example/"))
+        self.assertEqual(collector.jobs[0]["due"], 3700)
+        outcomes = {s["id"]: s["outcome"] for s in self.view()["sources"]}
+        self.assertEqual(outcomes["test"], "credential-configuration")
 
     def test_stale_or_expired_price_is_removed_without_losing_location(self):
         self.store.ingest(self.feed, "locations", [location()], 1, 100, True)

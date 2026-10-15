@@ -87,6 +87,20 @@ an additional per-address limit. The relay will be the app-facing interface.
 The identity header is abuse control, not a secret. This PR does not deploy,
 create a host, upload credentials or release a mobile build.
 
+## Connector-embedded tariffs
+
+The collector also accepts a connector's `tariffs` object or single-object list.
+It must contain one identifiable tariff, agree with any tariff reference and
+explicit operator namespace, and pass the existing unconditional GBP ENERGY,
+explicit VAT and expiry checks. The resulting price belongs only to that
+connector; it is never inserted into the shared tariff table. Multiple, malformed
+or conflicting embedded tariffs suppress price output, including fallback to a
+separate tariff record. Embedded observations expire after 24 hours or their
+explicit end time, whichever comes first. No raw tariff object is retained.
+
+This format support does not enable InstaVolt collection. Its endpoint, exact
+Authorization format, pagination and request budget still require verification.
+
 ## Verification
 
 `python3 -m unittest discover -s tools/charging/tests` uses synthetic data and

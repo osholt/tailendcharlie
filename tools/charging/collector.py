@@ -75,13 +75,18 @@ def simple_tariff(row, now):
     start, end = timestamp(row.get("start_date_time")), timestamp(row.get("end_date_time"))
     if (start is not None and start > now) or (end is not None and end <= now):
         return None
-    if len(row.get("elements", [])) != 1:
+    elements = row.get("elements")
+    if not isinstance(elements, list) or len(elements) != 1:
         return None
-    element = row["elements"][0]
+    element = elements[0]
     if not isinstance(element, dict) or element.get("restrictions"):
         return None
     components = element.get("price_components", [])
-    if len(components) != 1 or not isinstance(components[0], dict):
+    if (
+        not isinstance(components, list)
+        or len(components) != 1
+        or not isinstance(components[0], dict)
+    ):
         return None
     part = components[0]
     price, vat = number(part.get("price")), number(part.get("vat"))
@@ -90,6 +95,25 @@ def simple_tariff(row, now):
     if not 0 <= price <= 10 or not 0 <= vat <= 100:
         return None
     return round(price * (1 + vat / 100) * 100, 3)
+
+
+def embedded_price(conn, refs, location, now):
+    """Keep a connector-local price; never let embedded IDs price other connectors."""
+    value = conn.get("tariffs")
+    if isinstance(value, list):
+        value = value[0] if len(value) == 1 else None
+    if not isinstance(value, dict):
+        return None
+    ident = value.get("id")
+    if not isinstance(ident, str) or not ident or (refs and refs != [ident]):
+        return None
+    for key in ("country_code", "party_id"):
+        if key in value and value[key] != location.get(key):
+            return None
+    amount = simple_tariff(value, now)
+    if amount is None:
+        return None
+    return [amount, now, timestamp(value.get("end_date_time"))]
 
 
 def normalize(row, source, now):
@@ -126,6 +150,9 @@ def normalize(row, source, now):
                     "tariffIds": [text(r) for r in refs[:10] if isinstance(r, str)],
                 }
             )
+            if "tariffs" in conn:
+                # Presence prevents fallback to a stale/separate price when invalid.
+                connectors[-1]["embeddedPrice"] = embedded_price(conn, refs, row, now)
     return {
         "id": source + ":" + identity(row),
         "source": source,
@@ -252,14 +279,17 @@ class Store:
                 loc = json.loads(payload)
                 for conn in loc["connectors"]:
                     refs = conn.pop("tariffIds")
-                    # Multiple tariffs can represent contracts or conditional pricing.
-                    if len(refs) != 1:
-                        continue
-                    key = loc["countryCode"] + ":" + loc["partyId"] + ":" + refs[0]
-                    price = self.db.execute(
-                        "SELECT amount,observed,expires FROM tariffs WHERE source=? AND id=?",
-                        (loc["source"], key),
-                    ).fetchone()
+                    if "embeddedPrice" in conn:
+                        price = conn.pop("embeddedPrice")
+                    else:
+                        # Multiple tariffs can represent contracts or conditional pricing.
+                        if len(refs) != 1:
+                            continue
+                        key = loc["countryCode"] + ":" + loc["partyId"] + ":" + refs[0]
+                        price = self.db.execute(
+                            "SELECT amount,observed,expires FROM tariffs WHERE source=? AND id=?",
+                            (loc["source"], key),
+                        ).fetchone()
                     if (
                         price
                         and price[0] is not None
@@ -348,6 +378,12 @@ class Collector:
                 self.store.outcome(f, "credentials-missing", now)
                 job["due"] = now + 3600
                 continue
+            try:
+                headers = headers_for(f, self.environ)
+            except ValueError:
+                self.store.outcome(f, "credential-configuration", now)
+                job["due"] = now + 3600
+                continue
             gap = max(31, p.get("request_interval_seconds", 125))
             self.origin_due[origin] = now + gap
             job["due"] = now + gap
@@ -360,7 +396,7 @@ class Collector:
             if param == "per_page":
                 query = {param: PAGE_SIZE, "page": job["pages"] + 1}
             url = urlunsplit(urlsplit(job["url"])._replace(query=urlencode(query)))
-            status, rows, total = self.fetch(url, headers_for(f, self.environ))
+            status, rows, total = self.fetch(url, headers)
             if status != 200 or not isinstance(rows, list) or len(rows) > PAGE_SIZE:
                 self.store.outcome(f, "rate-limited" if status == 429 else "fetch-failed", now)
                 if status == 429:
