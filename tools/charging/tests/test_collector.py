@@ -89,6 +89,51 @@ class CollectorTests(unittest.TestCase):
         for t in cases:
             self.assertIsNone(c.simple_tariff(t, 100))
 
+    def test_embedded_tariff_is_connector_local_and_expires(self):
+        for wrapped in [False, True]:
+            row = location()
+            conn = row["evses"][0]["connectors"][0]
+            t = tariff()
+            t["end_date_time"] = "1970-01-01T00:03:20Z"
+            conn["tariffs"] = [t] if wrapped else t
+            row["evses"][0]["connectors"].append(dict(location()["evses"][0]["connectors"][0]))
+            self.store.ingest(self.feed, "locations", [row], 1, 100, True)
+            connectors = self.view()["locations"][0]["connectors"]
+            self.assertEqual(connectors[0]["pencePerKwh"], 60)
+            self.assertEqual(connectors[0]["priceCheckedAt"], 100)
+            self.assertNotIn("embeddedPrice", connectors[0])
+            self.assertNotIn("pencePerKwh", connectors[1])
+            self.assertNotIn("pencePerKwh", self.view(200)["locations"][0]["connectors"][0])
+        row = location()
+        row["evses"][0]["connectors"][0]["tariffs"] = tariff()
+        self.store.ingest(self.feed, "locations", [row], 1, 100, True)
+        self.assertNotIn("pencePerKwh", self.view(86501)["locations"][0]["connectors"][0])
+
+    def test_invalid_embedded_tariffs_never_fall_back_to_separate_price(self):
+        self.store.ingest(self.feed, "tariffs", [tariff()], 1, 100, True)
+        cases = [
+            None,
+            [],
+            [tariff(), tariff()],
+            "invalid",
+            {},
+            dict(tariff(), id="different"),
+            dict(tariff(), party_id="OTHER"),
+            dict(tariff(), currency="EUR"),
+            dict(tariff(), elements=None),
+            dict(tariff(), elements=[{"price_components": None}]),
+            dict(tariff(), elements=[{"price_components": [{"type": "ENERGY", "price": 0.5}]}]),
+            dict(tariff(), end_date_time="1970-01-01T00:00:10Z"),
+        ]
+        for value in cases:
+            with self.subTest(value=value):
+                row = location()
+                row["evses"][0]["connectors"][0]["tariffs"] = value
+                self.store.ingest(self.feed, "locations", [row], 1, 100, True)
+                conn = self.view()["locations"][0]["connectors"][0]
+                self.assertNotIn("pencePerKwh", conn)
+                self.assertNotIn("embeddedPrice", conn)
+
     def test_bad_coordinates_private_non_uk_removed_and_unknown_status(self):
         for mutation in [
             {"publish": False},

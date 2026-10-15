@@ -387,10 +387,12 @@ The probe detects embedded numeric ENERGY components, and the shared header
 builder supports an optional second API key from a named environment variable.
 Missing or invalid dual credentials make no request; the collector isolates a
 credential configuration error to that source. The exact InstaVolt header scheme
-is not configured until confirmed. The collector joins separate tariff records
-by ID; it does not ingest these
-connector-embedded tariff objects. InstaVolt remains absent from the collection
-allowlist until those gaps and access requirements are resolved. No provider
+is not configured until confirmed. The collector now accepts a single embedded
+tariff object (or a one-object list) on a connector, using the same conservative
+GBP/VAT/expiry checks as separate tariffs. Embedded prices remain local to that
+connector; ambiguous or invalid embedded data never falls back to a separate
+price. InstaVolt remains absent from the collection allowlist until credentials,
+endpoint, request budget and a live sample are verified. No provider
 requests were made for this document review.
 
 ## Unsent access-request drafts
