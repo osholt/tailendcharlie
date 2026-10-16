@@ -17,7 +17,15 @@ does not prevent another origin from progressing. Changes of status therefore
 can be delayed substantially, especially on larger networks; clients must show
 observation age and must not call an old observation current availability.
 
-Each page requests 100 records, reads at most 2 MiB within a 20-second deadline,
+Two operators publish their whole network in one response and ignore
+pagination: GRIDSERVE as a bare JSON array, Osprey as an object holding
+`locations[]`. Their register entries set `pagination = "none"` and a
+`response_shape` (`array` or `locations-key`; `ocpi` is the default envelope).
+Such a feed is fetched once per sweep with no query string, still within the
+2 MiB, 20-second and 20,000-record bounds, and that one response is a complete
+sweep. Osprey's tariffs are not OCPI objects, so its prices stay unknown.
+
+Otherwise each page requests 100 records, reads at most 2 MiB within a 20-second deadline,
 and never follows redirects or arbitrary Link URLs. Pagination uses bounded
 OCPI offset or Monta page parameters on the configured HTTPS endpoint only.
 Sweeps stop at 200 pages or 20,000 records. The SQLite snapshot retains at most

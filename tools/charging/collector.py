@@ -310,7 +310,28 @@ class Store:
         }
 
 
-def fetch_page(url, headers):
+RESPONSE_SHAPES = {"ocpi", "array", "locations-key"}
+
+
+def rows_from(body, shape):
+    """The record list for a response shape, or None when the body does not match it.
+
+    "ocpi" is the standard envelope; "array" is a bare JSON list of records;
+    "locations-key" is an object whose "locations" member is the list.
+    """
+    if shape == "array":
+        return body if isinstance(body, list) else None
+    if not isinstance(body, dict):
+        return None
+    if shape == "locations-key":
+        rows = body.get("locations")
+        return rows if isinstance(rows, list) else None
+    if body.get("status_code", 1000) != 1000:
+        return None
+    return body.get("data")
+
+
+def fetch_page(url, headers, shape="ocpi"):
     """No redirects, compressed bodies, body/error logging, or uncontrolled reads."""
     request = Request(url, headers=headers)  # noqa: S310 - configured HTTPS origins only
     try:
@@ -325,11 +346,11 @@ def fetch_page(url, headers):
             while len(data) < MAX_BYTES and time.monotonic() - start < 20:
                 chunk = response.read1(min(8192, MAX_BYTES - len(data)))
                 if not chunk:
-                    body = json.loads(data)
-                    if not isinstance(body, dict) or body.get("status_code", 1000) != 1000:
+                    rows = rows_from(json.loads(data), shape)
+                    if rows is None:
                         return 0, None, None
                     total = response.headers.get("X-Total-Count", "")
-                    return 200, body.get("data"), int(total) if total.isdigit() else None
+                    return 200, rows, int(total) if total.isdigit() else None
                 data.extend(chunk)
     except HTTPError as exc:
         code = exc.code
@@ -389,23 +410,35 @@ class Collector:
             job["due"] = now + gap
             if job["offset"] == 0:
                 job["generation"] = now
-            param = f.get("page_size_parameter", "limit")
-            if param not in {"limit", "per_page"}:
-                raise ValueError("Unknown pagination parameter")
-            query = {param: PAGE_SIZE, "offset": job["offset"]}
-            if param == "per_page":
-                query = {param: PAGE_SIZE, "page": job["pages"] + 1}
-            url = urlunsplit(urlsplit(job["url"])._replace(query=urlencode(query)))
-            status, rows, total = self.fetch(url, headers)
-            if status != 200 or not isinstance(rows, list) or len(rows) > PAGE_SIZE:
+            shape = f.get("response_shape", "ocpi")
+            if shape not in RESPONSE_SHAPES:
+                raise ValueError("Unknown response shape")
+            # An unpaginated feed returns its whole network in one bounded body
+            # (MAX_BYTES), so one response is the complete sweep.
+            unpaged = f.get("pagination") == "none"
+            if unpaged:
+                url, limit = job["url"], MAX_ROWS
+            else:
+                param = f.get("page_size_parameter", "limit")
+                if param not in {"limit", "per_page"}:
+                    raise ValueError("Unknown pagination parameter")
+                query = {param: PAGE_SIZE, "offset": job["offset"]}
+                if param == "per_page":
+                    query = {param: PAGE_SIZE, "page": job["pages"] + 1}
+                url = urlunsplit(urlsplit(job["url"])._replace(query=urlencode(query)))
+                limit = PAGE_SIZE
+            status, rows, total = self.fetch(url, headers, shape)
+            if status != 200 or not isinstance(rows, list) or len(rows) > limit:
                 self.store.outcome(f, "rate-limited" if status == 429 else "fetch-failed", now)
                 if status == 429:
                     self.origin_due[origin] = now + 3600
                 # An interrupted sweep restarts; never delete the old complete snapshot.
                 job.update(offset=0, pages=0, due=now + max(3600, p.get("refresh_seconds", 600)))
                 return True
-            complete = len(rows) < PAGE_SIZE or (
-                total is not None and job["offset"] + len(rows) >= total
+            complete = (
+                unpaged
+                or len(rows) < PAGE_SIZE
+                or (total is not None and job["offset"] + len(rows) >= total)
             )
             self.store.ingest(f, job["kind"], rows, job["generation"], now, complete)
             job["pages"] += 1
