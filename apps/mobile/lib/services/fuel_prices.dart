@@ -731,16 +731,11 @@ List<FuelStopOption> attachFuelPrices({
 ) {
   final charging = option.charging;
   if (charging != null) {
+    // A charger pin carries its price alone. Availability is too short-lived
+    // for the collector's refresh interval to keep current on a label, so it
+    // stays in the pin's detail with its observation age.
     final preference =
         option.chargingPreference ?? const FuelPreference(FuelKind.electric);
-    final fresh = charging.fresh(now);
-    final status = !fresh
-        ? 'Status stale'
-        : charging.available(preference, now)
-        ? 'Available'
-        : charging.unusable(preference, now)
-        ? 'Unavailable'
-        : 'Check status';
     final prices =
         charging
             .matching(preference)
@@ -755,17 +750,15 @@ List<FuelStopOption> attachFuelPrices({
             .map((s) => s.pencePerKwh!)
             .toList()
           ..sort();
-    final price = prices.isEmpty
-        ? ''
-        : 'from ${prices.first.toStringAsFixed(1)}p/kWh · ';
+    if (prices.isEmpty) return null;
+    final from = prices.first == prices.last ? '' : 'from ';
+    // Every price here was checked within the last 24 hours.
     return (
-      text: '$price$status · ${_clock(charging.checkedAt)}',
-      current: fresh,
+      text: '$from${prices.first.toStringAsFixed(1)}p/kWh',
+      current: true,
     );
   }
-  if (option.station.kind == FuelStationKind.charging) {
-    return (text: 'No live data', current: false);
-  }
+  if (option.station.kind == FuelStationKind.charging) return null;
   final quote = option.quote;
   final source = option.source;
   final fetchedAt = option.fetchedAt;
