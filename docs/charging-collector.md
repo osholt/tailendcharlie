@@ -2,8 +2,8 @@
 
 Refs #971, #969. The collector runs in its own container, separate from the relay
 process. The operator-approved first rollout co-hosts it on the existing TEC
-server with a 128 MiB memory limit and a quarter-CPU limit. `tools/charging/collection.toml` explicitly selects 18 sources: 13 with
-working Location samples, plus Blink, ChargePoint, GRIDSERVE, Osprey and Shell,
+server with a 128 MiB memory limit and a quarter-CPU limit. `tools/charging/collection.toml` explicitly selects 19 sources: 13 with
+working Location samples, plus Blink, ChargePoint, GRIDSERVE, Osprey, Shell and ubitricity,
 whose operators issued credentials in October 2026 but which have not yet been
 sampled with them. Believ's single-label lookup cannot
 enumerate a network and is excluded. Missing environment credentials skip that
