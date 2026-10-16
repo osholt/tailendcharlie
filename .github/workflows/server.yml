@@ -32,6 +32,8 @@ jobs:
             deploy/relay-smoke-retry.sh \
             deploy/tests/relay-self-heal-test.sh \
             deploy/tests/relay-smoke-retry-test.sh \
+            deploy/charging/put-credential.sh \
+            deploy/tests/put-credential-test.sh \
             deploy/routing/routing-deploy.sh \
             deploy/routing/routing-data-refresh.sh \
             deploy/routing/routing-host-setup.sh \
@@ -41,6 +43,8 @@ jobs:
         run: deploy/tests/relay-self-heal-test.sh
       - name: Exercise the deploy smoke-test retry policy
         run: deploy/tests/relay-smoke-retry-test.sh
+      - name: Exercise the charging credential helper
+        run: deploy/tests/put-credential-test.sh
       - name: Exercise routing data promotion and rollback
         run: deploy/routing/tests/routing-lib-test.sh
 
