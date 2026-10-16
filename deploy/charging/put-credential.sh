@@ -46,6 +46,10 @@ for arg in "$@"; do
   esac
 done
 
+if ! [[ "$env_path" =~ ^[A-Za-z0-9_./~-]+$ ]]; then
+  echo "put-credential: CHARGING_ENV_PATH contains unsupported characters" >&2
+  exit 2
+fi
 if ! [[ "$name" =~ ^OCPI_FEED_[A-Z0-9_]+$ ]]; then
   echo "put-credential: VARIABLE must look like OCPI_FEED_<ID>_<KIND>" >&2
   exit 2
@@ -109,8 +113,11 @@ finally:
 print(f"put-credential: {action} {name}")
 PY
 
+# Base64 keeps the program intact through whatever login shell the host runs;
+# the name and path are already restricted to shell-safe characters.
+program_b64="$(printf '%s' "$remote_program" | base64 | tr -d '\n')"
 printf '%s' "$value" | ssh -o BatchMode=yes "$host" \
-  "python3 -c $(printf '%q' "$remote_program") $(printf '%q' "$name") $(printf '%q' "$env_path")"
+  "python3 -c 'import base64; exec(base64.b64decode(\"$program_b64\"))' $name $env_path"
 unset value
 
 if test "$recreate" = 1; then
