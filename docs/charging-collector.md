@@ -2,8 +2,10 @@
 
 Refs #971, #969. The collector runs in its own container, separate from the relay
 process. The operator-approved first rollout co-hosts it on the existing TEC
-server with a 128 MiB memory limit and a quarter-CPU limit. `tools/charging/collection.toml` explicitly selects 13 sources with
-working Location samples from the register. Believ's single-label lookup cannot
+server with a 128 MiB memory limit and a quarter-CPU limit. `tools/charging/collection.toml` explicitly selects 18 sources: 13 with
+working Location samples, plus Blink, ChargePoint, GRIDSERVE, Osprey and Shell,
+whose operators issued credentials in October 2026 but which have not yet been
+sampled with them. Believ's single-label lookup cannot
 enumerate a network and is excluded. Missing environment credentials skip that
 source, without anonymous retries. No additional registrations are performed.
 
@@ -50,6 +52,24 @@ change the public Caddy configuration. The relay alone proxies viewport queries.
 5. Verify a bounded viewport through the public relay. To roll back, empty the
    collector URL and recreate the relay, then stop the collector. Keep its data
    and credentials private. Monitor host memory and container restarts.
+
+## Loading a credential
+
+Never paste a credential into a chat, an issue, a command line or a file in the
+checkout. From an operator's Mac with the `oracle-relay` SSH alias, run once per
+variable named in `feeds.toml` (`credential_env` or `api_key_env`):
+
+```bash
+deploy/charging/put-credential.sh --recreate OCPI_FEED_GRIDSERVE_TOKEN
+```
+
+The value is typed or pasted into a hidden prompt (`--clipboard` reads and then
+clears the macOS clipboard instead), travels on SSH stdin only, and replaces any
+previous entry in the host's owner-only env file atomically with mode 0600. The
+script prints only the variable name. `--recreate` restarts only the collector,
+loading the production env file explicitly, because Docker reads `env_file` only
+when a container is created. HTTP Basic variables (`*_BASIC`) take
+`username:password`.
 
 ## Alternative routing-host deployment
 

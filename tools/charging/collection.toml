@@ -12,12 +12,22 @@ request_interval_seconds = 125
 refresh_seconds = 600
 
 [[collect]]
+id = "blink"
+request_interval_seconds = 125
+refresh_seconds = 600
+
+[[collect]]
 id = "char-gy"
 request_interval_seconds = 125
 refresh_seconds = 600
 
 [[collect]]
 id = "chargeplace-scotland"
+request_interval_seconds = 125
+refresh_seconds = 600
+
+[[collect]]
+id = "chargepoint"
 request_interval_seconds = 125
 refresh_seconds = 600
 
@@ -42,6 +52,11 @@ request_interval_seconds = 125
 refresh_seconds = 600
 
 [[collect]]
+id = "gridserve"
+request_interval_seconds = 125
+refresh_seconds = 600
+
+[[collect]]
 id = "ionity"
 request_interval_seconds = 125
 refresh_seconds = 600
@@ -52,7 +67,17 @@ request_interval_seconds = 125
 refresh_seconds = 600
 
 [[collect]]
+id = "osprey"
+request_interval_seconds = 125
+refresh_seconds = 600
+
+[[collect]]
 id = "pogo"
+request_interval_seconds = 125
+refresh_seconds = 600
+
+[[collect]]
+id = "shell"
 request_interval_seconds = 125
 refresh_seconds = 600
 
