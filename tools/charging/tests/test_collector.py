@@ -184,6 +184,44 @@ class CollectorTests(unittest.TestCase):
         self.assertIn("offset=100", fetch.call_args.args[0])
         self.assertEqual(len(self.view(350)["locations"]), 201)
 
+    def test_response_shapes_select_only_their_own_record_list(self):
+        rows = [location()]
+        self.assertEqual(c.rows_from({"status_code": 1000, "data": rows}, "ocpi"), rows)
+        self.assertIsNone(c.rows_from({"status_code": 2001, "data": rows}, "ocpi"))
+        self.assertEqual(c.rows_from(rows, "array"), rows)
+        self.assertIsNone(c.rows_from({"data": rows}, "array"))
+        self.assertIsNone(c.rows_from(rows, "ocpi"))
+        self.assertEqual(c.rows_from({"locations": rows, "tariffs": []}, "locations-key"), rows)
+        self.assertIsNone(c.rows_from({"data": rows}, "locations-key"))
+        self.assertIsNone(c.rows_from(rows, "locations-key"))
+
+    def test_unpaged_feed_is_one_bounded_request_and_a_complete_sweep(self):
+        f = dict(self.feed, pagination="none", response_shape="array")
+        self.store.ingest(f, "locations", [location("gone")], 1, 50, True)
+        fetch = Mock(return_value=(200, [location(str(i)) for i in range(237)], None))
+        collector = c.Collector(self.store, [f], [{"id": "test"}], {}, fetch)
+        self.assertTrue(collector.step(100))
+        self.assertEqual(fetch.call_args.args[0], "https://example.com/locations")
+        self.assertEqual(fetch.call_args.args[2], "array")
+        ids = {loc["id"] for loc in self.view(100)["locations"]}
+        self.assertEqual(len(ids), 237)
+        self.assertNotIn("gone", ids)
+        self.assertEqual(collector.jobs[0]["offset"], 0)
+        self.assertGreaterEqual(collector.jobs[0]["due"], 700)
+
+    def test_paged_feed_still_rejects_a_page_larger_than_requested(self):
+        fetch = Mock(return_value=(200, [location(str(i)) for i in range(101)], None))
+        collector = c.Collector(self.store, [self.feed], [{"id": "test"}], {}, fetch)
+        collector.step(100)
+        self.assertEqual(self.view()["sources"][0]["outcome"], "fetch-failed")
+        self.assertEqual(self.view()["locations"], [])
+
+    def test_unknown_response_shape_is_a_configuration_error(self):
+        f = dict(self.feed, response_shape="guess")
+        collector = c.Collector(self.store, [f], [{"id": "test"}], {}, Mock())
+        with self.assertRaises(ValueError):
+            collector.step(100)
+
     def test_rate_limit_backoff_and_failure_does_not_block_another_origin(self):
         other = dict(self.feed, id="other", locations_url="https://other.example/locations")
         fetch = Mock(side_effect=[(429, None, None), (200, [location()], 1)])
