@@ -112,15 +112,35 @@ void main() {
     final painted = fuelMapDrawOrder(options);
     expect(painted.first.station.id, 'osm');
     expect(painted.last.charging, isNotNull);
-    expect(fuelPinLabel(painted.first, now)!.text, 'No live data');
-    expect(fuelPinLabel(painted.last, now)!.text, startsWith('from 60.0p/kWh'));
-
-    expect(fuelPinLabel(options.first, now)!.text, contains('Unavailable'));
+    // A charger pin shows its price alone: no status, no observation time.
+    expect(fuelPinLabel(painted.first, now), isNull);
+    expect(fuelPinLabel(painted.last, now)!.text, '60.0p/kWh');
+    // An old status does not dim or replace a price checked within 24 hours.
+    final later = fuelPinLabel(
+      options.first,
+      now.add(const Duration(minutes: 30)),
+    )!;
+    expect(later.text, '60.0p/kWh');
+    expect(later.current, isTrue);
+    // A price older than 24 hours is not shown at all.
     expect(
-      fuelPinLabel(options.first, now.add(const Duration(minutes: 3)))!.current,
-      false,
+      fuelPinLabel(options.first, now.add(const Duration(days: 2))),
+      isNull,
     );
   });
+  test(
+    'a charger pin says "from" only when matching sockets differ in price',
+    () {
+      const all = FuelPreference(FuelKind.electric);
+      final reading = parseChargers(response()).single;
+      final option = attachChargers(
+        stations: const [],
+        readings: [reading],
+        preference: all,
+      ).single;
+      expect(fuelPinLabel(option, now)!.text, 'from 60.0p/kWh');
+    },
+  );
   test('available compatible charger outranks unavailable one', () {
     final bad = parseChargers(response()).single;
     final good = ChargerReading(
