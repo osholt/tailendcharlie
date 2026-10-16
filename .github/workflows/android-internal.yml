@@ -415,13 +415,13 @@ jobs:
           cat "$notes" >> "$GITHUB_STEP_SUMMARY"
           cp "$notes" "$GITHUB_WORKSPACE/tester-release-notes.md"
       - if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: tailendcharlie-android-app-bundle
           path: ${{ env.MOBILE_DIR }}/build/app/outputs/bundle/release/*.aab
           if-no-files-found: ignore
       - if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: tailendcharlie-tester-release-notes
           path: tester-release-notes.md
