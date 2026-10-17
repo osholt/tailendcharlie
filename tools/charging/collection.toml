@@ -13,7 +13,7 @@ refresh_seconds = 600
 
 [[collect]]
 id = "blink"
-request_interval_seconds = 125
+request_interval_seconds = 240
 refresh_seconds = 600
 
 [[collect]]
@@ -28,7 +28,7 @@ refresh_seconds = 600
 
 [[collect]]
 id = "chargepoint"
-request_interval_seconds = 125
+request_interval_seconds = 240
 refresh_seconds = 600
 
 [[collect]]
@@ -38,7 +38,7 @@ refresh_seconds = 600
 
 [[collect]]
 id = "evyve"
-request_interval_seconds = 125
+request_interval_seconds = 240
 refresh_seconds = 600
 
 [[collect]]
@@ -58,7 +58,7 @@ refresh_seconds = 600
 
 [[collect]]
 id = "ionity"
-request_interval_seconds = 125
+request_interval_seconds = 240
 refresh_seconds = 600
 
 [[collect]]
@@ -78,17 +78,17 @@ refresh_seconds = 600
 
 [[collect]]
 id = "shell"
-request_interval_seconds = 125
+request_interval_seconds = 240
 refresh_seconds = 600
 
 [[collect]]
 id = "source"
-request_interval_seconds = 125
+request_interval_seconds = 240
 refresh_seconds = 600
 
 [[collect]]
 id = "ubitricity"
-request_interval_seconds = 125
+request_interval_seconds = 240
 refresh_seconds = 600
 
 [[collect]]

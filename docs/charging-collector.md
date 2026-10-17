@@ -11,7 +11,8 @@ source, without anonymous retries. No additional registrations are performed.
 
 This is partial coverage. It does not claim statutory freshness or historical
 uptime. Requests are serialized, at least 125 seconds apart per origin (also
-across tenants). Location and tariff sweeps share this budget. Completed sweeps
+across tenants); the seven tenants of Eco-Movement's shared open-chargepoints.com
+origin use 240 seconds, about 15 requests an hour, after its rate limit was hit at 125. Location and tariff sweeps share this budget. Completed sweeps
 repeat no sooner than ten minutes; a page failure backs off for an hour and
 does not prevent another origin from progressing. Changes of status therefore
 can be delayed substantially, especially on larger networks; clients must show
