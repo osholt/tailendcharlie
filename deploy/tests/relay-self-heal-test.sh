@@ -123,4 +123,9 @@ FAKE_FLOCK_EXIT=1 FAKE_CURL_EXIT=1 "$subject" && fail "a hung deploy hid a faile
 test "$(cat "$test_root/state/consecutive-failures")" = "1" || fail "a hung deploy stopped recovery"
 assert_file_contains "$test_root/docker.log" "up -d --no-build"
 
+# The recovery unit must be able to read the charging collector's env_file,
+# which lives in the operator's home; a hidden home silently drops it.
+unit="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/systemd/relay-self-heal.service"
+grep -qx 'ProtectHome=read-only' "$unit" || fail "relay-self-heal.service must use ProtectHome=read-only"
+
 echo "relay-self-heal tests passed"
