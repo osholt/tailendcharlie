@@ -10,7 +10,10 @@ User=root
 Group=root
 UMask=0027
 PrivateTmp=true
-ProtectHome=true
+# Read-only, not hidden: `up -d` resolves the charging collector's env_file,
+# which the runbook keeps in the operator's home. A hidden home made Compose
+# drop that optional file and recreate the collector with no credentials.
+ProtectHome=read-only
 ProtectSystem=full
 StateDirectory=relay-self-heal
 StateDirectoryMode=0755
