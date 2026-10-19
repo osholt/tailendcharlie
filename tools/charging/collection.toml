@@ -7,6 +7,11 @@ request_interval_seconds = 125
 refresh_seconds = 600
 
 [[collect]]
+id = "allego"
+request_interval_seconds = 240
+refresh_seconds = 600
+
+[[collect]]
 id = "arnold-clark"
 request_interval_seconds = 125
 refresh_seconds = 600

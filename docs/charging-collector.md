@@ -2,8 +2,8 @@
 
 Refs #971, #969. The collector runs in its own container, separate from the relay
 process. The operator-approved first rollout co-hosts it on the existing TEC
-server with a 128 MiB memory limit and a quarter-CPU limit. `tools/charging/collection.toml` explicitly selects 19 sources: 13 with
-working Location samples, plus Blink, ChargePoint, GRIDSERVE, Osprey, Shell and ubitricity,
+server with a 128 MiB memory limit and a quarter-CPU limit. `tools/charging/collection.toml` explicitly selects 20 sources: 13 with
+working Location samples, plus Allego, Blink, ChargePoint, GRIDSERVE, Osprey, Shell and ubitricity,
 whose operators issued credentials in October 2026 but which have not yet been
 sampled with them. Believ's single-label lookup cannot
 enumerate a network and is excluded. Missing environment credentials skip that
@@ -11,7 +11,7 @@ source, without anonymous retries. No additional registrations are performed.
 
 This is partial coverage. It does not claim statutory freshness or historical
 uptime. Requests are serialized, at least 125 seconds apart per origin (also
-across tenants); the seven tenants of Eco-Movement's shared open-chargepoints.com
+across tenants); the eight tenants of Eco-Movement's shared open-chargepoints.com
 origin use 240 seconds, about 15 requests an hour, after its rate limit was hit at 125. Location and tariff sweeps share this budget. Completed sweeps
 repeat no sooner than ten minutes; a page failure backs off for an hour and
 does not prevent another origin from progressing. Changes of status therefore
