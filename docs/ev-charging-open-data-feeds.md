@@ -134,7 +134,7 @@ not deduplicated physical sites; Be.EV's 600 is its published lower bound.
 | [ESB Energy / ESB ecars (UK and NI)](https://www.esbenergy.co.uk/ev) | — | — | unknown / unknown | unknown | unknown | unknown | unknown | Not found | unknown | 2026-10-11: not-published; No statutory feed URL found in reviewed sources; no feed request | [1](https://www.esbenergy.co.uk/ev) [2](https://data.gov.ie/en_GB/dataset/esb-ev-public-charging-network) |
 | [EV Dot (BMM Networks)](https://www.bmmnetworks.co.uk/) | [Page](https://www.bmmnetworks.co.uk/open-data/) | [https://api.evdot.clenergy.online/development/pcpr/](https://api.evdot.clenergy.online/development/pcpr/) | OCPI-shaped JSON / unknown | locations, tariffs | unknown | unknown | none | No feed-specific acceptance shown on publication page | unknown | 2026-10-11: published-not-sampled; HTTP 200; oversize-body-skipped | [1](https://www.bmmnetworks.co.uk/open-data/) |
 | [EVC](https://www.evc.co.uk/) | — | — | unknown / unknown | unknown | unknown | unknown | unknown | Not found | unknown | 2026-10-11: not-published; No statutory feed URL found in reviewed sources; no feed request | [1](https://www.evc.co.uk/) |
-| [Evology](https://evologyparking.com/) | [Page](https://evologyparking.com/open-data/) | — | unknown / unknown | unknown | unknown | unknown | emailed-key | Submission accepts Privacy Policy and Terms and Conditions and processing for the enquiry | unknown | 2026-10-11: needs-key; Operator publishes API-key request form; no endpoint or credentials yet | [1](https://evologyparking.com/open-data/) |
+| [Evology](https://evologyparking.com/) | [Page](https://evologyparking.com/open-data/) | [https://opendata.evologyparking.com/evcharging/](https://opendata.evologyparking.com/evcharging/) | OCPI-shaped JSON / unknown | locations | observed | references-only | emailed-key | Submission accepts Privacy Policy and Terms and Conditions and processing for the enquiry | 15 | 2026-10-28: needs-key; Issued token verified: HTTP 200; 15 UK Location objects with EVSE status and tariff references; 110051 bytes; no total-count or pagination header | [1](https://evologyparking.com/open-data/) |
 | [Evolt Network (SWARCO E.Connect)](https://evoltnetwork.co.uk/) | [Page](https://evoltnetwork.co.uk/faqs/) | [https://info.smartcharging.uk/public_feed/locations/3666](https://info.smartcharging.uk/public_feed/locations/3666) | OCPI-shaped JSON / unknown | locations, tariffs | observed | observed | none | No feed-specific acceptance shown on publication page | 710 | 2026-10-11: open-and-working; HTTP 200; one-location-observed; X-Total-Count 710 | [1](https://evoltnetwork.co.uk/faqs/) |
 | [EVPoint / EG on the move](https://www.eg-otm.com/ev-charging/) | [Page](https://www.chargepoint.com/en-gb/blog/navigating-uk-public-charging-regulations-guide-charge-point-operators) | — | unknown / unknown | unknown | unknown | unknown | unknown | Request form; access and reuse conditions not verified | unknown | 2026-10-11: needs-key; ChargePoint request form explicitly lists this network; endpoint and credentials pending | [1](https://www.eg-otm.com/ev-charging/) [2](https://www.chargepoint.com/en-gb/blog/navigating-uk-public-charging-regulations-guide-charge-point-operators) [3](https://docs.google.com/forms/d/e/1FAIpQLSeJ9Z3dyMdsBjaQ3pj9F3aOAXE4jstoHFBxwVq3wxs5lU5JLg/viewform) |
 | [EVYVE](https://evyve.co.uk/) | [Page](https://evyve.co.uk/) | [https://open-chargepoints.com/api/ocpi/cpo/2.2.1/](https://open-chargepoints.com/api/ocpi/cpo/2.2.1/) | OCPI JSON / 2.2.1 (URL; guide calls it 2.2) | locations, tariffs, statuses | observed | numeric ENERGY observed (separate sample; not joined) | emailed-key | Request form; data-use conditions not stated on homepage | 223 | 2026-10-15: needs-key; Location/status verified 13 October; tariff sample 15 October HTTP 307 then 200; numeric GBP ENERGY price with explicit VAT; tariff count 15; connector join not verified | [1](https://evyve.co.uk/) [2](https://developers.eco-movement.com/docs/eco-movement-pcpr-api-user-guide) [3](https://developers.eco-movement.com/reference/get-all-locations-pcpr-api) [4](https://developers.eco-movement.com/reference/getting-started-data-api) [5](https://developers.eco-movement.com/reference/get-tariffs-pcpr-api) [6](https://developers.eco-movement.com/reference/get-statuses-pcpr-api) |
@@ -420,6 +420,35 @@ connector; ambiguous or invalid embedded data never falls back to a separate
 price. InstaVolt remains absent from the collection allowlist until credentials,
 endpoint, request budget and a live sample are verified. No provider
 requests were made for this document review.
+
+## Correspondence and collection follow-up — 28 October 2026
+
+Evology replied on 27 October with an issued token, the exact
+`https://opendata.evologyparking.com/evcharging/locations.json` endpoint and
+`Authorization: Token` instructions. An authenticated request from the Mac on
+28 October returned HTTP 200, a 110,051-byte OCPI-shaped envelope and 15
+normalizable UK Location objects with EVSE status and connector tariff
+references. No total-count or pagination headers were present. The endpoint is
+also reachable from the collector host: a second bounded check returned the
+same HTTP status and 15 normalizable locations. It is configured as a bounded,
+unpaginated publication; no tariff URL or protocol
+version was guessed. Numeric prices, refresh latency and a provider request
+budget remain unverified. The token and private correspondence are excluded
+from this public register. The collection allowlist now includes Evology;
+production activation still requires an approved collector deployment.
+
+The project mailbox also contains the sent InstaVolt agreement response dated
+16 October. This supersedes the earlier statement that no agreement had been
+returned. No subsequent endpoint or credentials were found, so InstaVolt stays
+disabled. The other recent access replies (Allego, Shell/ubitricity and
+GRIDSERVE) are already represented in the register and their existing
+credential variables are present in the running collector.
+
+The deployed audit found 18 of 20 sources returning data, two failing sources
+(3ti and GeniePoint), and a char.gy page-size defect. See
+[the collector audit](charging-collector.md#deployed-audit--28-october-2026) for
+the failure boundaries and rollout status. Earlier survey counts and dates
+remain historical observations.
 
 ## Unsent access-request drafts
 
