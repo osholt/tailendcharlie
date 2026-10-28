@@ -428,17 +428,22 @@ class Collector:
                 url = urlunsplit(urlsplit(job["url"])._replace(query=urlencode(query)))
                 limit = PAGE_SIZE
             status, rows, total = self.fetch(url, headers, shape)
-            if status != 200 or not isinstance(rows, list) or len(rows) > limit:
+            if (
+                status != 200
+                or not isinstance(rows, list)
+                or len(rows) > limit
+                or (not unpaged and not rows and total is not None and job["offset"] < total)
+            ):
                 self.store.outcome(f, "rate-limited" if status == 429 else "fetch-failed", now)
                 if status == 429:
                     self.origin_due[origin] = now + 3600
                 # An interrupted sweep restarts; never delete the old complete snapshot.
                 job.update(offset=0, pages=0, due=now + max(3600, p.get("refresh_seconds", 600)))
                 return True
-            complete = (
-                unpaged
-                or len(rows) < PAGE_SIZE
-                or (total is not None and job["offset"] + len(rows) >= total)
+            # A provider may cap pages below our requested size. Its total takes
+            # precedence over a short page (char.gy returns at most 50 rows).
+            complete = unpaged or (
+                job["offset"] + len(rows) >= total if total is not None else len(rows) < PAGE_SIZE
             )
             self.store.ingest(f, job["kind"], rows, job["generation"], now, complete)
             job["pages"] += 1

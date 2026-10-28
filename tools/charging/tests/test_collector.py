@@ -1,6 +1,7 @@
 """Synthetic-only collector tests. No provider HTTP or real station records."""
 
 import sys
+import tomllib
 import unittest
 from pathlib import Path
 from unittest.mock import Mock
@@ -194,6 +195,73 @@ class CollectorTests(unittest.TestCase):
         self.assertEqual(c.rows_from({"locations": rows, "tariffs": []}, "locations-key"), rows)
         self.assertIsNone(c.rows_from({"data": rows}, "locations-key"))
         self.assertIsNone(c.rows_from(rows, "locations-key"))
+
+    def test_server_capped_pages_continue_to_total_before_removing_old_rows(self):
+        self.store.ingest(self.feed, "locations", [location("old")], 1, 50, True)
+        fetch = Mock(
+            side_effect=[
+                (200, [location(str(i)) for i in range(50)], 101),
+                (200, [location(str(i)) for i in range(50, 100)], 101),
+                (200, [location("last")], 101),
+            ]
+        )
+        collector = c.Collector(self.store, [self.feed], [{"id": "test"}], {}, fetch)
+        for now, offset in [(100, 0), (225, 50)]:
+            self.assertTrue(collector.step(now))
+            self.assertIn(f"offset={offset}", fetch.call_args.args[0])
+            view = self.view(now)
+            self.assertFalse(view["sources"][0]["complete"])
+            self.assertIn("test:GB:TST:old", {loc["id"] for loc in view["locations"]})
+        self.assertTrue(collector.step(350))
+        self.assertIn("offset=100", fetch.call_args.args[0])
+        view = self.view(350)
+        self.assertTrue(view["sources"][0]["complete"])
+        self.assertEqual(len(view["locations"]), 101)
+        self.assertNotIn("test:GB:TST:old", {loc["id"] for loc in view["locations"]})
+
+    def test_empty_page_before_reported_total_preserves_snapshot_and_backs_off(self):
+        self.store.ingest(self.feed, "locations", [location("old")], 1, 50, True)
+        fetch = Mock(return_value=(200, [], 101))
+        collector = c.Collector(self.store, [self.feed], [{"id": "test"}], {}, fetch)
+        self.assertTrue(collector.step(100))
+        self.assertEqual(self.view()["sources"][0]["outcome"], "fetch-failed")
+        self.assertEqual(self.view()["locations"][0]["id"], "test:GB:TST:old")
+        self.assertGreaterEqual(collector.jobs[0]["due"], 3700)
+
+    def test_evology_register_collects_static_envelope_with_token_and_unknown_price(self):
+        root = Path(__file__).resolve().parents[1]
+        feed = next(
+            f
+            for f in tomllib.loads((root / "feeds.toml").read_text())["feed"]
+            if f["id"] == "evology"
+        )
+        profile = next(
+            p
+            for p in tomllib.loads((root / "collection.toml").read_text())["collect"]
+            if p["id"] == "evology"
+        )
+        # The observed publication omits the CPO namespace and uses the older
+        # singular tariff_id field; these remain source-local, unpriced records.
+        row = location()
+        row.pop("country_code")
+        row.pop("party_id")
+        connector = row["evses"][0]["connectors"][0]
+        connector["tariff_id"] = connector.pop("tariff_ids")[0]
+        fetch = Mock(return_value=(200, [row], None))
+        collector = c.Collector(
+            self.store, [feed], [profile], {feed["credential_env"]: "synthetic-token"}, fetch
+        )
+        self.assertTrue(collector.step(100))
+        url, headers, shape = fetch.call_args.args
+        self.assertEqual(url, "https://opendata.evologyparking.com/evcharging/locations.json")
+        self.assertEqual(headers["Authorization"], "Token synthetic-token")
+        self.assertEqual(shape, "ocpi")
+        view = self.view()
+        self.assertTrue(view["sources"][0]["complete"])
+        self.assertEqual(view["locations"][0]["source"], "evology")
+        self.assertEqual(view["locations"][0]["connectors"][0]["status"], "AVAILABLE")
+        self.assertEqual(view["locations"][0]["connectors"][0]["type"], 2)
+        self.assertNotIn("pencePerKwh", view["locations"][0]["connectors"][0])
 
     def test_unpaged_feed_is_one_bounded_request_and_a_complete_sweep(self):
         f = dict(self.feed, pagination="none", response_shape="array")

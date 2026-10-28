@@ -2,10 +2,13 @@
 
 Refs #971, #969. The collector runs in its own container, separate from the relay
 process. The operator-approved first rollout co-hosts it on the existing TEC
-server with a 128 MiB memory limit and a quarter-CPU limit. `tools/charging/collection.toml` explicitly selects 20 sources: 13 with
-working Location samples, plus Allego, Blink, ChargePoint, GRIDSERVE, Osprey, Shell and ubitricity,
-whose operators issued credentials in October 2026 but which have not yet been
-sampled with them. Believ's single-label lookup cannot
+server with a 128 MiB memory limit and a quarter-CPU limit.
+`tools/charging/collection.toml` explicitly selects 21 sources: the initial 13
+with working Location samples; Allego, Blink, ChargePoint, GRIDSERVE, Osprey,
+Shell and ubitricity, whose issued credentials were not tested in the initial
+survey; and Evology's operator-issued feed.
+The 28 October deployed audit below supersedes the initial sample status.
+Believ's single-label lookup cannot
 enumerate a network and is excluded. Missing environment credentials skip that
 source, without anonymous retries. No additional registrations are performed.
 
@@ -18,17 +21,25 @@ does not prevent another origin from progressing. Changes of status therefore
 can be delayed substantially, especially on larger networks; clients must show
 observation age and must not call an old observation current availability.
 
-Two operators publish their whole network in one response and ignore
+GRIDSERVE and Osprey publish their whole network in one response and ignore
 pagination: GRIDSERVE as a bare JSON array, Osprey as an object holding
 `locations[]`. Their register entries set `pagination = "none"` and a
 `response_shape` (`array` or `locations-key`; `ocpi` is the default envelope).
 Such a feed is fetched once per sweep with no query string, still within the
 2 MiB, 20-second and 20,000-record bounds, and that one response is a complete
-sweep. Osprey's tariffs are not OCPI objects, so its prices stay unknown.
+sweep. Evology's operator-supplied `locations.json` is also fetched once per
+sweep without query parameters, using the default OCPI envelope and its issued
+`Authorization: Token` credential. Its bounded sample contained 15 UK locations;
+only tariff references were provided, so its prices stay unknown. Osprey's
+tariffs are not OCPI objects, so its prices stay unknown.
 
 Otherwise each page requests 100 records, reads at most 2 MiB within a 20-second deadline,
 and never follows redirects or arbitrary Link URLs. Pagination uses bounded
 OCPI offset or Monta page parameters on the configured HTTPS endpoint only.
+When `X-Total-Count` is present, a short page does not finish the sweep until
+the reported total is reached. Offsets advance by the rows actually received.
+An empty page before the total is reached fails the sweep, retains old rows and
+backs off. Without a reported total, a short page still ends the sweep.
 Sweeps stop at 200 pages or 20,000 records. The SQLite snapshot retains at most
 20,000 locations and tariffs per source and excludes records older than 48 hours
 from responses. An incomplete sweep keeps old rows and is labelled incomplete;
@@ -132,11 +143,53 @@ Authorization format, pagination and request budget still require verification.
 
 ## Verification
 
+### Deployed audit — 28 October 2026
+
+The running collector reported `ok` and recently ingested locations for 18 of
+20 configured sources: Allego, Arnold Clark, Blink, char.gy, ChargePlace Scotland,
+ChargePoint, Evolt, EVYVE, Fastned, GRIDSERVE, IONITY, Monta, Osprey, PoGo, Shell,
+Source EV, ubitricity and Urban Fox. Several were partway through paginated
+sweeps; this is evidence of collection, not complete network coverage or
+two-minute status freshness. Eleven existing credential variables were present;
+their values were neither logged nor copied to the repository.
+
+The public relay advertised `charging-status-v1` and returned HTTP 200, schema
+version 1, 20 source summaries and 12 locations in a bounded test viewport.
+No provider requests are triggered by these viewport checks.
+
+Fresh, conservatively usable numeric tariffs were also present for ChargePlace
+Scotland, Evolt, EVYVE, Fastned, IONITY, PoGo and Urban Fox. This checks stored
+tariff health, not price coverage at every connector.
+
+Two sources were failing with no retained locations: 3ti returned non-JSON to a
+local check and failed the collector's bounded fetch from the host. GeniePoint
+returned HTTP 403 from the collector host, while the identical documented URL
+returned HTTP 200 with 100 valid UK locations from the development Mac. These
+remain provider/access failures; do not describe them as working in production.
+
+char.gy's HTTP 200 sample returned 50 locations despite `limit=100`, with
+`X-Total-Count: 6019`. The deployed code incorrectly declared that first short
+page complete and retained only 50 locations. The collector fix above continues
+by actual row count until the advertised total is reached. Its rollout requires
+an approved collector deployment; this audit does not claim the fix or Evology
+is already running.
+
+Evology also returned HTTP 200 with 15 normalizable locations when checked from
+the collector host. Its credential is staged in the existing private env file
+with mode 0600; the running container has not been recreated. No key belongs in
+the app, image or repository.
+
 `python3 -m unittest discover -s tools/charging/tests` uses synthetic data and
 mocked HTTP. Tests cover source isolation, rate-limit backoff, credential gates,
 partial sweep retention/removal, bounds, expiry, connector status and conservative
 VAT-aware tariff joins. Existing Server CI runs these and Ruff. Physical-device
 and deployed-host evidence remain deployment gates, not claims of these tests.
+
+For this change, 43 collector/register tests, 13 relay charging tests and seven
+mobile charging tests passed, together with the pinned Ruff checks. Regression
+tests caught mutations that (1) restored short-page completion before the total
+and (2) accepted an empty page before the total. The worktree source was not
+modified by the mutation run.
 
 ## Relay and mobile rollout (Refs #973)
 
